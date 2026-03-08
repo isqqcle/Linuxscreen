@@ -1,0 +1,89 @@
+configVersion = 2
+defaultMode = "WinPrimary"
+guiHotkey = [162, 73]
+mouseSensitivity = 1.25
+keyRepeatStartDelay = 45
+keyRepeatDelay = 20
+keyRepeatAffectsMouseButtons = true
+image = [{ name = "Reference Image", path = "ref.png", onlyOnMyScreen = false }]
+windowOverlay = [{ name = "Unused Overlay", source = "dummy" }]
+
+[debug]
+showProfiler = true
+
+[appearance]
+theme = "Custom"
+
+    [appearance.customColors]
+    WindowBg = [12, 34, 56, 200]
+
+[keyRebinds]
+enabled = true
+resolveRebindTargetsForHotkeys = false
+toggleHotkey = [162, 84]
+rebinds = []
+
+[eyezoom]
+cloneWidth = 30
+overlayWidth = 10
+cloneHeight = 1200
+stretchWidth = 300
+windowWidth = 384
+windowHeight = 16384
+zoomAreaWidth = 450
+zoomAreaHeight = 600
+useCustomSizePosition = true
+positionX = 123
+positionY = 456
+slideZoomIn = true
+slideMirrorsIn = true
+activeOverlayIndex = 0
+gridColor1 = [255, 182, 193]
+gridColor2 = [173, 216, 230]
+centerLineColor = [255, 255, 255]
+textColor = [0, 0, 0]
+overlay = [
+    { name = "Crosshair", path = "crosshair.png", displayMode = "manual", manualWidth = 320, manualHeight = 240, opacity = 0.5 }
+]
+
+[[mirror]]
+name = "WinMirror"
+captureWidth = 14
+captureHeight = 7
+colorSensitivity = 0.001
+fps = 30
+opacity = 1.0
+rawOutput = false
+colorPassthrough = false
+onlyOnMyScreen = false
+gammaMode = "Linear"
+input = [{ relativeTo = "topLeftViewport", x = 14, y = 38, enabled = true }]
+output = { relativeTo = "centerViewport", x = 362, y = 169, useRelativePosition = false, relativeX = 0.5, relativeY = 0.5, useRelativeSize = false, relativeWidth = 0.5, relativeHeight = 0.5, preserveAspectRatio = true, aspectFitMode = "contain", scale = 8.0, separateScale = false, scaleX = 1.0, scaleY = 1.0 }
+colors = { border = [0, 0, 0], output = [255, 255, 255], targetColors = [[221, 221, 221]] }
+
+    [mirror.border]
+    type = "Dynamic"
+    dynamicThickness = 2
+
+[[mirrorGroup]]
+name = "WinGroup"
+mirrors = [{ mirrorId = "WinMirror", enabled = true, widthPercent = 1.0, heightPercent = 1.0, offsetX = 0, offsetY = 0 }]
+output = { relativeTo = "centerViewport", x = 0, y = 0, useRelativePosition = false, relativeX = 0.0, relativeY = 0.0, useRelativeSize = false, relativeWidth = 1.0, relativeHeight = 1.0, preserveAspectRatio = true, aspectFitMode = "contain", scale = 1.0, separateScale = false, scaleX = 1.0, scaleY = 1.0 }
+
+[[mode]]
+id = "WinPrimary"
+mirrorIds = ["WinMirror"]
+mirrorGroupIds = ["WinGroup"]
+imageIds = ["Reference Image"]
+windowOverlayIds = ["Unused Overlay"]
+width = 0.5
+height = 720
+modeSensitivity = 1.0
+modeSensitivityX = 1.0
+modeSensitivityY = 1.0
+sensitivityOverrideEnabled = false
+separateXYSensitivity = false
+background = { selectedMode = "color", image = "", color = [0, 0, 0], gradientStops = [{ color = [0, 0, 0], position = 0.0 }, { color = [255, 255, 255], position = 1.0 }], gradientAngle = 0.0, gradientAnimation = "None", gradientAnimationSpeed = 0.5, gradientColorFade = false }
+
+    [mode.transition]
+    slideMirrorsIn = true

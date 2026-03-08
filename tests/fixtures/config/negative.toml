@@ -1,0 +1,41 @@
+configVersion = 2
+guiHotkey = []
+mouseSensitivity = 1.0
+
+[keyRebinds]
+enabled = false
+toggleHotkey = []
+rebinds = []
+
+[eyezoom]
+cloneWidth = 30
+cloneHeight = 1000
+gridColor1 = [255, 182, 193]
+gridColor2 = [173, 216, 230]
+centerLineColor = [255, 255, 255]
+textColor = [0, 0, 0]
+outputX = 0.25
+outputY = 320.5
+outputAspectFitMode = "nonsense"
+overlay = []
+
+[[mirror]]
+name = "NegativeMirror"
+captureWidth = 16
+captureHeight = 8
+colorSensitivity = 0.001
+fps = 30
+opacity = 1.0
+rawOutput = false
+colorPassthrough = false
+input = [{ relativeTo = "topLeftScreen", x = 0, y = 0, enabled = true }]
+output = { relativeTo = "centerScreen", x = 0.25, y = 320.5, useRelativePosition = false, relativeX = 0.5, relativeY = 0.5, useRelativeSize = false, relativeWidth = 0.5, relativeHeight = 0.5, preserveAspectRatio = true, aspectFitMode = "unknown", scale = 1.0, separateScale = false, scaleX = 1.0, scaleY = 1.0 }
+colors = { border = [255, 255, 255], output = [255, 255, 255], targetColors = [] }
+
+[[mode]]
+id = "BrokenButLoadable"
+mirrorIds = ["MissingMirror"]
+mirrorGroupIds = ["MissingGroup"]
+width = 0.75
+height = 1440.5
+background = { selectedMode = "gradient", image = "", color = [0, 0, 0], gradientStops = [{ color = [0, 0, 0], position = 0.0 }, { color = [255, 255, 255], position = 1.0 }], gradientAngle = 45.0, gradientAnimation = "Bogus", gradientAnimationSpeed = 0.0, gradientColorFade = false }

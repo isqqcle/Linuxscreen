@@ -1,0 +1,32 @@
+*
+!.gitignore
+!LICENSE
+!README.md
+!CMakeLists.txt
+!build.sh
+!patches
+!patches/**
+!src
+!src/platform/
+!src/platform/**
+!tests
+!tests/**
+
+# Build outputs
+build/
+cmake-build-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log

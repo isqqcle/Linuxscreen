@@ -1,0 +1,8 @@
+#include "config/toml_helpers.cpp"
+#include "config/toml_color.cpp"
+#include "config/toml_mirror.cpp"
+#include "config/toml_mode.cpp"
+#include "config/toml_hotkey.cpp"
+#include "config/toml_key_rebind.cpp"
+#include "config/toml_eyezoom.cpp"
+#include "config/toml_root.cpp"

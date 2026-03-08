@@ -1,0 +1,35 @@
+configVersion = 1
+defaultMode = "LegacyMode"
+guiTheme = "LegacyDark"
+rebindToggleHotkey = [164, 82]
+
+[keyRebinds]
+enabled = true
+rebinds = []
+
+[[mirror]]
+name = "LegacyMirror"
+captureWidth = 12
+captureHeight = 6
+colorSensitivity = 0.001
+fps = 30
+opacity = 1.0
+rawOutput = false
+colorPassthrough = false
+dynamicBorderThickness = 9
+input = [{ relativeTo = "topLeftScreen", x = 10, y = 20, enabled = true }]
+output = { relativeTo = "centerScreen", x = 100, y = 200, useRelativePosition = false, relativeX = 0.5, relativeY = 0.5, useRelativeSize = false, relativeWidth = 0.5, relativeHeight = 0.5, preserveAspectRatio = true, aspectFitMode = "contain", scale = 1.0, separateScale = false, scaleX = 1.0, scaleY = 1.0 }
+colors = { border = [255, 255, 255], output = [255, 255, 255], targetColors = [[255, 0, 0]] }
+
+[[mirrorGroup]]
+name = "LegacyGroup"
+mirrorIds = ["LegacyMirror"]
+output = { relativeTo = "centerScreen", x = 0, y = 0, useRelativePosition = false, relativeX = 0.0, relativeY = 0.0, useRelativeSize = false, relativeWidth = 1.0, relativeHeight = 1.0, preserveAspectRatio = true, aspectFitMode = "contain", scale = 1.0, separateScale = false, scaleX = 1.0, scaleY = 1.0 }
+
+[[mode]]
+name = "LegacyMode"
+mirrorIds = ["LegacyMirror"]
+groupIds = ["LegacyGroup"]
+width = 640
+height = 480
+background = { selectedMode = "color", image = "", color = [0, 0, 0], gradientStops = [{ color = [0, 0, 0], position = 0.0 }, { color = [255, 255, 255], position = 1.0 }], gradientAngle = 0.0, gradientAnimation = "None", gradientAnimationSpeed = 0.5, gradientColorFade = false }
