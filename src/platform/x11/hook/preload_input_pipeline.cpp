@@ -2128,7 +2128,8 @@ bool ShouldSuppressPendingSyntheticCursorPosCallback(GLFWwindow* window,
 
     if (deltaX > 32.0 || deltaY > 32.0) {
         outReason = "stale";
-        return true;
+        g_pendingSyntheticCursorPosCallback.valid.store(false, std::memory_order_release);
+        return false;
     }
 
     g_pendingSyntheticCursorPosCallback.valid.store(false, std::memory_order_release);
@@ -2272,6 +2273,27 @@ void DispatchSyntheticGlfwCursorPosCallback(GLFWwindow* window, double xpos, dou
     DispatchGlfwCursorPosCallback(window, xpos, ypos, false, "synthetic");
 }
 
+void RefreshTrackedCursorPositionAfterFocusGain(GLFWwindow* window) {
+    ClearPendingSyntheticCursorPosCallbackState();
+    if (!window) {
+        return;
+    }
+
+    GlfwGetCursorPosProc realGetCursorPos = GetRealGlfwGetCursorPos();
+    if (!realGetCursorPos) {
+        return;
+    }
+
+    double rawX = 0.0;
+    double rawY = 0.0;
+    realGetCursorPos(window, &rawX, &rawY);
+    StoreTrackedRawCursorPosition(rawX, rawY);
+
+    if (platform::x11::IsGuiVisible()) {
+        DispatchSyntheticGlfwCursorPosCallback(window, rawX, rawY);
+    }
+}
+
 void HookedGlfwCursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     DispatchGlfwCursorPosCallback(window, xpos, ypos, true, "real");
 }
@@ -2320,9 +2342,14 @@ void HookedGlfwWindowFocusCallback(GLFWwindow* window, int focused) {
     }
 
     if (!event.focused) {
+        ClearPendingSyntheticCursorPosCallbackState();
         ClearSyntheticRebindWindow(window);
         ClearPendingCharRemaps();
         ClearManagedRepeatStatesForWindow(window);
+        ResetCursorSensitivityState();
+    } else {
+        RefreshTrackedCursorPositionAfterFocusGain(window);
+        ResetCursorSensitivityState();
     }
 
     PublishImGuiInputEvent(event, "glfwWindowFocusCallback");
