@@ -2,8 +2,6 @@
 !.gitignore
 !LICENSE
 !README.md
-!CMakeLists.txt
-!build.sh
 !patches
 !patches/**
 !src
