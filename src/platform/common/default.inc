@@ -526,7 +526,7 @@ rawOutput = false
     y = 0
 
     [[mirror.input]]
-    enabled = false
+    enabled = true
     relativeTo = 'pieLeft'
     x = -238
     y = 8
