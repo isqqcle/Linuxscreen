@@ -46,6 +46,7 @@ void ClearManagedRepeatStateForSource(GLFWwindow* window, const platform::input:
 void ClearManagedRepeatStatesForWindow(GLFWwindow* window);
 void ArmPendingSyntheticCursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 void ClearPendingSyntheticCursorPosCallbackState();
+void DispatchCurrentFreeCursorPosition(GLFWwindow* window);
 
 void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
     std::vector<platform::input::VkCode> downKeys;
@@ -181,6 +182,7 @@ bool ProcessInputEventForGuiToggle(GLFWwindow* sourceWindow, const platform::inp
         ReleaseAllHeldInputsForGuiOpen(targetWindow);
     } else {
         RestoreCursorDisabledAfterGuiClose(targetWindow);
+        DispatchCurrentFreeCursorPosition(targetWindow);
     }
 
     const std::uint64_t toggleCount = platform::x11::GetGuiToggleCount();
@@ -2292,6 +2294,23 @@ void RefreshTrackedCursorPositionAfterFocusGain(GLFWwindow* window) {
     if (platform::x11::IsGuiVisible()) {
         DispatchSyntheticGlfwCursorPosCallback(window, rawX, rawY);
     }
+}
+
+void DispatchCurrentFreeCursorPosition(GLFWwindow* window) {
+    if (!window || IsCursorDisabledForGameInput()) {
+        return;
+    }
+
+    GlfwGetCursorPosProc realGetCursorPos = GetRealGlfwGetCursorPos();
+    if (!realGetCursorPos) {
+        return;
+    }
+
+    double rawX = 0.0;
+    double rawY = 0.0;
+    realGetCursorPos(window, &rawX, &rawY);
+    StoreTrackedRawCursorPosition(rawX, rawY);
+    DispatchSyntheticGlfwCursorPosCallback(window, rawX, rawY);
 }
 
 void HookedGlfwCursorPosCallback(GLFWwindow* window, double xpos, double ypos) {

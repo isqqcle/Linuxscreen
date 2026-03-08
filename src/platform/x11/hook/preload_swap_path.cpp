@@ -13,6 +13,7 @@ void RenderGuiOverlay(GLFWwindow* preferredWindow, const char* sourceLabel) {
         // cursor mode restoration stays consistent.
         GLFWwindow* targetWindow = ResolveGuiToggleWindow(preferredWindow);
         RestoreCursorDisabledAfterGuiClose(targetWindow);
+        DispatchCurrentFreeCursorPosition(targetWindow);
     }
 
     switch (result.status) {
