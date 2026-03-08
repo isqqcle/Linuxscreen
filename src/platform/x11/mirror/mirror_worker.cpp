@@ -379,6 +379,13 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
     g_gl.bindBuffer(GL_ARRAY_BUFFER, g_shaders.quadVbo);
 
     const auto now = std::chrono::steady_clock::now();
+    struct PendingMirrorPublish {
+        X11MirrorInstance* instance = nullptr;
+        int backIdx = 0;
+        bool hasFrameContent = false;
+    };
+    std::vector<PendingMirrorPublish> pendingPublishes;
+    pendingPublishes.reserve(localConfigs.size());
 
     for (auto& mirrorRender : localConfigs) {
         const auto& config = mirrorRender.config;
@@ -511,7 +518,13 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
 
         glDisable(GL_BLEND);
 
-        const bool hasFrameContent = useRaw ? true : DetectMirrorFrameContent(inst, inst.filterFbo, fboW, fboH);
+        const bool needsFrameContentDetection =
+            !useRaw &&
+            config.border.type == platform::config::MirrorBorderType::Static &&
+            config.border.staticThickness > 0;
+        const bool hasFrameContent = needsFrameContentDetection
+            ? DetectMirrorFrameContent(inst, inst.filterFbo, fboW, fboH)
+            : true;
 
         // ===== PASS 2: Border/render pass =====
         // Write to back buffer (will be flipped after processing)
@@ -578,15 +591,20 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
 
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // Ensure render pass completes before publishing front buffer
-        // glFinish blocks until GPU completes; acceptable on worker thread (not swap hot path)
+        inst.lastCaptureTime = now;
+        pendingPublishes.push_back(PendingMirrorPublish{ &inst, backIdx, hasFrameContent });
+    }
+
+    if (!pendingPublishes.empty()) {
+        // Finish the batch once before publishing new front buffers so readers never
+        // sample partially rendered textures from a shared context.
         glFinish();
 
-        // Flip front buffer index (publish the newly rendered frame)
-        inst.frontIdx.store(backIdx, std::memory_order_release);
-        inst.hasValidContent = true;
-        inst.hasFrameContent = hasFrameContent;
-        inst.lastCaptureTime = now;
+        for (const PendingMirrorPublish& pending : pendingPublishes) {
+            pending.instance->frontIdx.store(pending.backIdx, std::memory_order_release);
+            pending.instance->hasValidContent = true;
+            pending.instance->hasFrameContent = pending.hasFrameContent;
+        }
     }
 
     RestoreGlState(savedState);
