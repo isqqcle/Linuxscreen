@@ -9,7 +9,7 @@ void InitializeHotkeyDispatcherFromConfig() {
         hotkeys.push_back(hk);
     }
 
-    g_hotkeyDispatcher.SetHotkeys(std::move(hotkeys));
+    g_hotkeyDispatcher().SetHotkeys(std::move(hotkeys));
     ApplyGuiHotkeyFromConfig(*config);
     ApplyRebindToggleHotkeyFromConfig(*config);
     g_hotkeyDispatcherInitialized.store(true, std::memory_order_release);
@@ -29,7 +29,7 @@ void RefreshHotkeyDispatcherIfNeeded() {
     uint64_t lastVersion = g_lastHotkeyConfigVersion.load(std::memory_order_relaxed);
     bool hotkeysOutOfSync = false;
     if (g_hotkeyDispatcherInitialized.load(std::memory_order_acquire)) {
-        const auto runtimeHotkeys = g_hotkeyDispatcher.GetHotkeys();
+        const auto runtimeHotkeys = g_hotkeyDispatcher().GetHotkeys();
         if (runtimeHotkeys.size() != config->hotkeys.size()) {
             hotkeysOutOfSync = true;
         } else {
@@ -49,7 +49,7 @@ void RefreshHotkeyDispatcherIfNeeded() {
         for (const auto& hk : config->hotkeys) {
             hotkeys.push_back(hk);
         }
-        g_hotkeyDispatcher.SetHotkeys(std::move(hotkeys));
+        g_hotkeyDispatcher().SetHotkeys(std::move(hotkeys));
         ApplyGuiHotkeyFromConfig(*config);
         ApplyRebindToggleHotkeyFromConfig(*config);
         g_hotkeyDispatcherInitialized.store(true, std::memory_order_release);
@@ -258,7 +258,7 @@ void MaybeApplyGameStateTransitionReset() {
         return;
     }
 
-    g_hotkeyDispatcher.ResetSecondaryModes();
+    g_hotkeyDispatcher().ResetSecondaryModes();
 
     if (!shouldSwitchToDefault) {
         return;

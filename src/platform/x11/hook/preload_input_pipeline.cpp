@@ -58,7 +58,7 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
     }
 
     if (const auto configSnapshot = platform::config::GetConfigSnapshot()) {
-        modeToRestore = g_hotkeyDispatcher.ReleaseHeldModeForInputReset(
+        modeToRestore = g_hotkeyDispatcher().ReleaseHeldModeForInputReset(
             platform::x11::GetMirrorModeState().GetActiveModeName());
         (void)platform::x11::ReleaseHeldSensitivityOverrideForInputReset();
 
@@ -968,6 +968,7 @@ void EnsureNativeRepeatDefaultsInitialized() {
     int startDelayMs = 400;
     int repeatDelayMs = 33;
 
+#ifndef __APPLE__
     Display* dpy = glXGetCurrentDisplay();
     if (dpy == nullptr) {
         dpy = reinterpret_cast<Display*>(g_lastDisplay.load(std::memory_order_acquire));
@@ -985,6 +986,7 @@ void EnsureNativeRepeatDefaultsInitialized() {
             }
         }
     }
+#endif
 
     g_nativeRepeatStartDelayMs = std::max(1, startDelayMs);
     g_nativeRepeatDelayMs = std::max(1, repeatDelayMs);
@@ -1652,11 +1654,11 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
             event.vk != platform::input::VK_NONE &&
             !toggledGui &&
             !guiVisibleNow) {
-            hotkeyResult = g_hotkeyDispatcher.Evaluate(g_keyStateTracker,
-                                                       event,
-                                                       gameState,
-                                                       platform::x11::GetMirrorModeState().GetActiveModeName(),
-                                                       configSnapshot->defaultMode);
+            hotkeyResult = g_hotkeyDispatcher().Evaluate(g_keyStateTracker,
+                                                        event,
+                                                        gameState,
+                                                        platform::x11::GetMirrorModeState().GetActiveModeName(),
+                                                        configSnapshot->defaultMode);
             if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
@@ -1983,11 +1985,11 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
             event.vk != platform::input::VK_NONE &&
             !toggledGui &&
             !guiVisibleNow) {
-            hotkeyResult = g_hotkeyDispatcher.Evaluate(g_keyStateTracker,
-                                                       event,
-                                                       gameState,
-                                                       platform::x11::GetMirrorModeState().GetActiveModeName(),
-                                                       configSnapshot->defaultMode);
+            hotkeyResult = g_hotkeyDispatcher().Evaluate(g_keyStateTracker,
+                                                        event,
+                                                        gameState,
+                                                        platform::x11::GetMirrorModeState().GetActiveModeName(),
+                                                        configSnapshot->defaultMode);
             if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
@@ -2445,7 +2447,11 @@ void HookedGlfwWindowSizeCallback(GLFWwindow* window, int width, int height) {
     if (userCallback) {
         int dispatchWidth = width;
         int dispatchHeight = height;
-        (void)ResolveResizeDispatchDimensionsForActiveMode(width, height, dispatchWidth, dispatchHeight);
+        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                          height,
+                                                          ManagedDimensionSpace::WindowLogical,
+                                                          dispatchWidth,
+                                                          dispatchHeight);
         userCallback(window, dispatchWidth, dispatchHeight);
     } else {
         LogDebugOnce(g_loggedMissingGlfwWindowSizeUserCallback,
@@ -2483,7 +2489,11 @@ void HookedGlfwFramebufferSizeCallback(GLFWwindow* window, int width, int height
     if (userCallback) {
         int dispatchWidth = width;
         int dispatchHeight = height;
-        (void)ResolveResizeDispatchDimensionsForActiveMode(width, height, dispatchWidth, dispatchHeight);
+        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                          height,
+                                                          ManagedDimensionSpace::FramebufferPhysical,
+                                                          dispatchWidth,
+                                                          dispatchHeight);
         userCallback(window, dispatchWidth, dispatchHeight);
     } else {
         LogDebugOnce(g_loggedMissingGlfwFramebufferSizeUserCallback,

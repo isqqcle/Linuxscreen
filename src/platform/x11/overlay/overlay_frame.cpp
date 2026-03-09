@@ -16,7 +16,11 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
     if (!guiVisible && !needsEyeZoomText) {
         // Keep the ImGui context alive so that tab selection and scroll positions are
         // preserved across open/close cycles within the same session.
+#ifdef __APPLE__
+        if (CGLGetCurrentContext() == nullptr) {
+#else
         if (glXGetCurrentContext() == nullptr) {
+#endif
             std::lock_guard<std::mutex> lock(g_imguiOverlayMutex);
             if (g_imguiOverlayState.context) { ShutdownImGuiOverlayLocked(false); }
         }
@@ -40,7 +44,11 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
         return result;
     }
 
+#ifdef __APPLE__
+    void* currentGlContext = reinterpret_cast<void*>(CGLGetCurrentContext());
+#else
     void* currentGlContext = reinterpret_cast<void*>(glXGetCurrentContext());
+#endif
     if (!currentGlContext) {
         result.status = ImGuiOverlayRenderStatus::MissingGlContext;
         return result;
@@ -453,13 +461,20 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
 #endif
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
+#ifdef __APPLE__
+    using BindBufferProc = void (*)(GLenum, GLuint);
+    static auto pfnBindBuffer = reinterpret_cast<BindBufferProc>(dlsym(RTLD_NEXT, "glBindBuffer"));
+#else
     static auto pfnBindBuffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(
         glXGetProcAddressARB(reinterpret_cast<const GLubyte*>("glBindBuffer")));
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
     GLint lastPixelUnpackBuffer = 0;
     glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &lastPixelUnpackBuffer);
     if (lastPixelUnpackBuffer != 0 && pfnBindBuffer) {
         pfnBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     }
+#endif
 
     GLboolean lastColorMask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
     glGetBooleanv(GL_COLOR_WRITEMASK, lastColorMask);
@@ -477,9 +492,11 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
         glEnable(GL_FRAMEBUFFER_SRGB);
     }
     glColorMask(lastColorMask[0], lastColorMask[1], lastColorMask[2], lastColorMask[3]);
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
     if (lastPixelUnpackBuffer != 0 && pfnBindBuffer) {
         pfnBindBuffer(GL_PIXEL_UNPACK_BUFFER, lastPixelUnpackBuffer);
     }
+#endif
     glPixelStorei(GL_UNPACK_ALIGNMENT, lastUnpackAlignment);
 #ifdef GL_UNPACK_ROW_LENGTH
     glPixelStorei(GL_UNPACK_ROW_LENGTH, lastUnpackRowLength);

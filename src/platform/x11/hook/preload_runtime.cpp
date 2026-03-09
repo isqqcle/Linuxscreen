@@ -19,8 +19,20 @@
 #include "../common/input/key_state_tracker.h"
 #include "../common/input/vk_codes.h"
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <OpenGL/OpenGL.h>
+#include <OpenGL/gl.h>
+#include <limits.h>
+using Display = void;
+using GLXContext = void*;
+using GLXDrawable = unsigned long;
+using Bool = int;
+using __GLXextFuncPtr = void (*)();
+#else
 #include <GL/glx.h>
 #include <X11/XKBlib.h>
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -42,6 +54,11 @@
 #include <unistd.h>
 
 struct GLFWwindow;
+struct GLFWimage {
+    int width;
+    int height;
+    unsigned char* pixels;
+};
 
 using GlfwKeyCallback = void (*)(GLFWwindow*, int, int, int, int);
 using GlfwCharCallback = void (*)(GLFWwindow*, unsigned int);
@@ -68,20 +85,29 @@ extern "C" GlfwFramebufferSizeCallback glfwSetFramebufferSizeCallback(GLFWwindow
 extern "C" void glfwSetInputMode(GLFWwindow* window, int mode, int value);
 extern "C" void glfwGetCursorPos(GLFWwindow* window, double* xpos, double* ypos);
 extern "C" void glfwSetCursorPos(GLFWwindow* window, double xpos, double ypos);
+extern "C" void glfwSetWindowIcon(GLFWwindow* window, int count, const GLFWimage* images);
+#ifdef __APPLE__
+extern "C" void glfwMakeContextCurrent(GLFWwindow* window);
+extern "C" void glfwDestroyWindow(GLFWwindow* window);
+#endif
 
+#ifndef __APPLE__
 extern "C" void glXSwapBuffers(Display* dpy, GLXDrawable drawable);
 extern "C" Bool glXSwapBuffersMscOML(Display* dpy, GLXDrawable drawable, int64_t target_msc, int64_t divisor, int64_t remainder);
 extern "C" void glfwSwapBuffers(GLFWwindow* window);
+extern "C" __GLXextFuncPtr glXGetProcAddress(const GLubyte* procName);
+extern "C" __GLXextFuncPtr glXGetProcAddressARB(const GLubyte* procName);
+#endif
 extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
 extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer);
-extern "C" __GLXextFuncPtr glXGetProcAddress(const GLubyte* procName);
-extern "C" __GLXextFuncPtr glXGetProcAddressARB(const GLubyte* procName);
 
 namespace {
 
+#ifndef __APPLE__
 using GlXSwapBuffersFn = void (*)(Display*, GLXDrawable);
 using GlXSwapBuffersMscOMLFn = Bool (*)(Display*, GLXDrawable, int64_t, int64_t, int64_t);
+#endif
 using GlfwSwapBuffersFn = void (*)(GLFWwindow*);
 using GlfwSetKeyCallbackFn = GlfwKeyCallback (*)(GLFWwindow*, GlfwKeyCallback);
 using GlfwSetCharCallbackFn = GlfwCharCallback (*)(GLFWwindow*, GlfwCharCallback);
@@ -93,8 +119,13 @@ using GlfwSetWindowFocusCallbackFn = GlfwWindowFocusCallback (*)(GLFWwindow*, Gl
 using GlfwSetWindowSizeCallbackFn = GlfwWindowSizeCallback (*)(GLFWwindow*, GlfwWindowSizeCallback);
 using GlfwSetFramebufferSizeCallbackFn = GlfwFramebufferSizeCallback (*)(GLFWwindow*, GlfwFramebufferSizeCallback);
 using GlfwSetWindowSizeFn = void (*)(GLFWwindow*, int, int);
+using GlfwSetWindowIconFn = void (*)(GLFWwindow*, int, const GLFWimage*);
 using GlfwGetWindowSizeFn = void (*)(GLFWwindow*, int*, int*);
 using GlfwGetFramebufferSizeFn = void (*)(GLFWwindow*, int*, int*);
+#ifdef __APPLE__
+using GlfwMakeContextCurrentFn = void (*)(GLFWwindow*);
+using GlfwDestroyWindowFn = void (*)(GLFWwindow*);
+#endif
 using GlfwGetKeyFn = int (*)(GLFWwindow*, int);
 using GlfwGetKeyScancodeFn = int (*)(int);
 using GlfwGetCursorPosProc = void (*)(GLFWwindow*, double*, double*);
@@ -103,7 +134,9 @@ using GlfwSetInputModeFn = void (*)(GLFWwindow*, int, int);
 using GlViewportFn = void (*)(GLint, GLint, GLsizei, GLsizei);
 using GlScissorFn = void (*)(GLint, GLint, GLsizei, GLsizei);
 using GlBindFramebufferFn = void (*)(GLenum, GLuint);
+#ifndef __APPLE__
 using GlXGetProcAddressFn = __GLXextFuncPtr (*)(const GLubyte*);
+#endif
 using DlSymFn = void* (*)(void*, const char*);
 
 enum class SwapHookSource : std::uint8_t {
@@ -111,11 +144,20 @@ enum class SwapHookSource : std::uint8_t {
     GlXSwapBuffers = 1,
     GlXSwapBuffersMscOML = 2,
     GlfwSwapBuffers = 3,
+#ifdef __APPLE__
+    CGLFlushDrawable = 4,
+#endif
 };
 
+#ifdef __APPLE__
+using CGLFlushDrawableFn = CGLError (*)(CGLContextObj);
+#endif
+
+#ifndef __APPLE__
 std::atomic<GlXSwapBuffersFn> g_realGlXSwapBuffers{ nullptr };
 
 std::atomic<GlXSwapBuffersMscOMLFn> g_realGlXSwapBuffersMscOML{ nullptr };
+#endif
 
 std::atomic<GlfwSwapBuffersFn> g_realGlfwSwapBuffers{ nullptr };
 
@@ -129,8 +171,13 @@ std::atomic<GlfwSetWindowFocusCallbackFn> g_realGlfwSetWindowFocusCallback{ null
 std::atomic<GlfwSetWindowSizeCallbackFn> g_realGlfwSetWindowSizeCallback{ nullptr };
 std::atomic<GlfwSetFramebufferSizeCallbackFn> g_realGlfwSetFramebufferSizeCallback{ nullptr };
 std::atomic<GlfwSetWindowSizeFn> g_realGlfwSetWindowSize{ nullptr };
+std::atomic<GlfwSetWindowIconFn> g_realGlfwSetWindowIcon{ nullptr };
 std::atomic<GlfwGetWindowSizeFn> g_realGlfwGetWindowSize{ nullptr };
 std::atomic<GlfwGetFramebufferSizeFn> g_realGlfwGetFramebufferSize{ nullptr };
+#ifdef __APPLE__
+std::atomic<GlfwMakeContextCurrentFn> g_realGlfwMakeContextCurrent{ nullptr };
+std::atomic<GlfwDestroyWindowFn> g_realGlfwDestroyWindow{ nullptr };
+#endif
 std::atomic<GlfwGetKeyFn> g_realGlfwGetKey{ nullptr };
 std::atomic<GlfwGetKeyScancodeFn> g_realGlfwGetKeyScancode{ nullptr };
 std::atomic<GlfwGetCursorPosProc> g_realGlfwGetCursorPos{ nullptr };
@@ -140,9 +187,11 @@ std::atomic<GlViewportFn> g_realGlViewport{ nullptr };
 std::atomic<GlScissorFn> g_realGlScissor{ nullptr };
 std::atomic<GlBindFramebufferFn> g_realGlBindFramebuffer{ nullptr };
 
+#ifndef __APPLE__
 std::atomic<GlXGetProcAddressFn> g_realGlXGetProcAddress{ nullptr };
 
 std::atomic<GlXGetProcAddressFn> g_realGlXGetProcAddressARB{ nullptr };
+#endif
 
 std::atomic<void*> g_libGlHandle{ nullptr };
 std::once_flag g_libGlOpenOnce;
@@ -189,6 +238,7 @@ std::atomic<bool> g_loggedGlfwSetScrollHook{ false };
 std::atomic<bool> g_loggedGlfwSetFocusHook{ false };
 std::atomic<bool> g_loggedGlfwSetWindowSizeHook{ false };
 std::atomic<bool> g_loggedGlfwSetFramebufferSizeHook{ false };
+std::atomic<bool> g_loggedGlfwSetWindowIconBypass{ false };
 std::atomic<bool> g_loggedGlfwInputHookDisabled{ false };
 std::atomic<bool> g_loggedImGuiInputBridgeNoImGui{ false };
 std::atomic<bool> g_loggedImGuiInputBridgeNoContext{ false };
@@ -220,6 +270,10 @@ std::atomic<std::uintptr_t> g_lastContext{ 0 };
 std::atomic<SwapHookSource> g_firstSwapSource{ SwapHookSource::Unknown };
 
 std::mutex g_glfwCallbackMutex;
+#ifdef __APPLE__
+std::mutex g_glfwContextWindowMutex;
+std::map<void*, GLFWwindow*> g_glfwContextWindowMap;
+#endif
 
 struct GlfwCallbackState {
     GlfwKeyCallback key = nullptr;
@@ -286,15 +340,17 @@ struct ManagedRepeatState {
     std::chrono::steady_clock::time_point nextRepeatTime{};
 };
 
-enum class PlacementResolveOrder {
-    FramebufferFirst,
-    WindowFirst,
+enum class ManagedDimensionSpace : std::uint8_t {
+    WindowLogical,
+    FramebufferPhysical,
 };
 
 struct PlacementTransform {
     bool valid = false;
     int logicalWidth = 0;
     int logicalHeight = 0;
+    int physicalWidth = 0;
+    int physicalHeight = 0;
     int windowWidth = 0;
     int windowHeight = 0;
     int framebufferWidth = 0;
@@ -354,7 +410,13 @@ std::atomic<double> g_captureEntrySuppressCenterY{ 0.0 };
 TrackedCursorState g_trackedCursorState;
 PendingSyntheticCursorPosCallback g_pendingSyntheticCursorPosCallback;
 
-platform::input::HotkeyDispatcher g_hotkeyDispatcher;
+// HotkeyDispatcher for mode-switch hotkeys — lazily initialized via function
+// to avoid static init order issues on macOS (mutex must be constructed before
+// the __attribute__((constructor)) runs).
+platform::input::HotkeyDispatcher& g_hotkeyDispatcher() {
+    static platform::input::HotkeyDispatcher instance;
+    return instance;
+}
 std::atomic<bool> g_hotkeyDispatcherInitialized{ false };
 
 struct TempSensitivityOverrideState {
@@ -401,6 +463,9 @@ thread_local bool g_inSwapHook = false;
 thread_local bool g_inDlsymHook = false;
 thread_local bool g_bypassViewportPlacement = false;
 thread_local bool g_dispatchingManagedSyntheticRepeat = false;
+#ifdef __APPLE__
+thread_local bool g_bypassDlsymInterpose = false;
+#endif
 
 struct ViewportPlacementBypassGuard {
     explicit ViewportPlacementBypassGuard(bool enabled) : previous(g_bypassViewportPlacement) {
@@ -476,10 +541,27 @@ pid_t GetCachedPid() {
 
 std::string GetProcessExePath() {
     char pathBuffer[4096];
+#ifdef __APPLE__
+    uint32_t bufSize = sizeof(pathBuffer);
+    if (_NSGetExecutablePath(pathBuffer, &bufSize) != 0) { return std::string("<unknown>"); }
+    char realPath[PATH_MAX];
+    if (realpath(pathBuffer, realPath)) { return std::string(realPath); }
+    return std::string(pathBuffer);
+#else
     ssize_t n = readlink("/proc/self/exe", pathBuffer, sizeof(pathBuffer) - 1);
     if (n <= 0) { return std::string("<unknown>"); }
     pathBuffer[n] = '\0';
     return std::string(pathBuffer);
+#endif
+}
+
+std::string GetProcessBaseName() {
+    const std::string exePath = GetProcessExePath();
+    const std::size_t slashPos = exePath.find_last_of('/');
+    if (slashPos == std::string::npos) {
+        return exePath;
+    }
+    return exePath.substr(slashPos + 1);
 }
 
 const char* SwapHookSourceToString(SwapHookSource source) {
@@ -490,6 +572,10 @@ const char* SwapHookSourceToString(SwapHookSource source) {
         return "glXSwapBuffersMscOML";
     case SwapHookSource::GlfwSwapBuffers:
         return "glfwSwapBuffers";
+#ifdef __APPLE__
+    case SwapHookSource::CGLFlushDrawable:
+        return "CGLFlushDrawable";
+#endif
     case SwapHookSource::Unknown:
         break;
     }
@@ -517,8 +603,13 @@ bool IsResizeEnabled() { return true; }
 bool IsPhysicalWindowResizeFallbackEnabled() { return false; }
 
 GlfwSetWindowSizeFn GetRealGlfwSetWindowSize();
+GlfwSetWindowIconFn GetRealGlfwSetWindowIcon();
 GlfwGetWindowSizeFn GetRealGlfwGetWindowSize();
 GlfwGetFramebufferSizeFn GetRealGlfwGetFramebufferSize();
+#ifdef __APPLE__
+GlfwMakeContextCurrentFn GetRealGlfwMakeContextCurrent();
+GlfwDestroyWindowFn GetRealGlfwDestroyWindow();
+#endif
 GlfwGetKeyFn GetRealGlfwGetKey();
 GlfwSetWindowSizeCallbackFn GetRealGlfwSetWindowSizeCallback();
 GlfwSetFramebufferSizeCallbackFn GetRealGlfwSetFramebufferSizeCallback();
@@ -528,6 +619,29 @@ GlfwGetCursorPosProc GetRealGlfwGetCursorPos();
 GlfwSetCursorPosProc GetRealGlfwSetCursorPos();
 GlfwSetInputModeFn GetRealGlfwSetInputMode();
 void ResetCursorSensitivityState();
+void RefreshTrackedGlfwWindowMetrics(GLFWwindow* window);
+#ifdef __APPLE__
+void TrackGlfwWindowForCurrentContext(GLFWwindow* window, void* glContext);
+GLFWwindow* FindTrackedGlfwWindowForContext(void* glContext);
+void ForgetTrackedGlfwWindow(GLFWwindow* window);
+bool ShouldBypassGlfwSetWindowIconOnMac();
+#endif
+bool GetCurrentPlacementContainerMetrics(int& outWindowWidth,
+                                         int& outWindowHeight,
+                                         int& outFramebufferWidth,
+                                         int& outFramebufferHeight);
+bool ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace space,
+                                               int windowWidth,
+                                               int windowHeight,
+                                               int framebufferWidth,
+                                               int framebufferHeight,
+                                               int& outWidth,
+                                               int& outHeight);
+bool ResolveResizeDispatchDimensionsForActiveMode(int incomingWidth,
+                                                  int incomingHeight,
+                                                  ManagedDimensionSpace space,
+                                                  int& outWidth,
+                                                  int& outHeight);
 
 bool GetSizeFromLatestGlfwWindow(int& outWidth, int& outHeight) {
     outWidth = 0;
@@ -556,6 +670,90 @@ bool GetFramebufferSizeFromLatestGlfwWindow(int& outWidth, int& outHeight) {
     getFramebufferSize(window, &outWidth, &outHeight);
     return outWidth > 0 && outHeight > 0;
 }
+
+void RefreshTrackedGlfwWindowMetrics(GLFWwindow* window) {
+    if (!window) {
+        return;
+    }
+
+    g_lastSwapWindow.store(window, std::memory_order_release);
+
+    int windowWidth = 0;
+    int windowHeight = 0;
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+    GlfwGetWindowSizeFn getWindowSize = GetRealGlfwGetWindowSize();
+    GlfwGetFramebufferSizeFn getFramebufferSize = GetRealGlfwGetFramebufferSize();
+    if (getWindowSize) {
+        getWindowSize(window, &windowWidth, &windowHeight);
+    }
+    if (getFramebufferSize) {
+        getFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    }
+    platform::x11::RecordGlfwWindowMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight);
+}
+
+#ifdef __APPLE__
+void TrackGlfwWindowForCurrentContext(GLFWwindow* window, void* glContext) {
+    if (!window || !glContext) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_glfwContextWindowMutex);
+    g_glfwContextWindowMap[glContext] = window;
+}
+
+GLFWwindow* FindTrackedGlfwWindowForContext(void* glContext) {
+    if (!glContext) {
+        return nullptr;
+    }
+
+    std::lock_guard<std::mutex> lock(g_glfwContextWindowMutex);
+    auto it = g_glfwContextWindowMap.find(glContext);
+    if (it == g_glfwContextWindowMap.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
+
+void ForgetTrackedGlfwWindow(GLFWwindow* window) {
+    if (!window) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_glfwContextWindowMutex);
+        for (auto it = g_glfwContextWindowMap.begin(); it != g_glfwContextWindowMap.end();) {
+            if (it->second == window) {
+                it = g_glfwContextWindowMap.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    GLFWwindow* expectedWindow = window;
+    (void)g_lastSwapWindow.compare_exchange_strong(expectedWindow, nullptr, std::memory_order_acq_rel);
+}
+
+bool IsJavaProcess() {
+    static std::once_flag once;
+    static bool isJava = false;
+    std::call_once(once, []() {
+        const std::string baseName = GetProcessBaseName();
+        isJava = (baseName == "java" || baseName == "javaw");
+    });
+    return isJava;
+}
+
+bool ShouldBypassGlfwSetWindowIconOnMac() {
+    const char* env = std::getenv("LINUXSCREEN_MACOS_BYPASS_GLFW_ICON");
+    if (env && env[0] != '\0') {
+        return IsTruthyEnvValue(env);
+    }
+    return IsJavaProcess();
+}
+#endif
 
 bool GetCurrentPhysicalContainerSize(int& outWidth, int& outHeight) {
     outWidth = 0;
@@ -643,56 +841,53 @@ bool DispatchResizeEventToGame(int width, int height) {
     }
 
     if (windowSizeCallback) {
-        windowSizeCallback(window, width, height);
+        int dispatchWidth = width;
+        int dispatchHeight = height;
+        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                           height,
+                                                           ManagedDimensionSpace::WindowLogical,
+                                                           dispatchWidth,
+                                                           dispatchHeight);
+        windowSizeCallback(window, dispatchWidth, dispatchHeight);
     }
     if (framebufferSizeCallback) {
-        framebufferSizeCallback(window, width, height);
+        int dispatchWidth = width;
+        int dispatchHeight = height;
+        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                           height,
+                                                           ManagedDimensionSpace::FramebufferPhysical,
+                                                           dispatchWidth,
+                                                           dispatchHeight);
+        framebufferSizeCallback(window, dispatchWidth, dispatchHeight);
     }
     return true;
 }
 
 bool ResolveResizeDispatchDimensionsForActiveMode(int incomingWidth,
                                                   int incomingHeight,
+                                                  ManagedDimensionSpace space,
                                                   int& outWidth,
                                                   int& outHeight) {
     outWidth = incomingWidth;
     outHeight = incomingHeight;
 
-    auto& modeState = platform::x11::GetMirrorModeState();
-    auto config = modeState.GetConfigSnapshot();
-    if (!config) {
-        return false;
-    }
-
-    const std::string activeModeName = modeState.GetActiveModeName();
-    if (activeModeName.empty()) {
-        return false;
-    }
-
-    const platform::config::ModeConfig* activeMode = nullptr;
-    for (const auto& mode : config->modes) {
-        if (mode.name == activeModeName) {
-            activeMode = &mode;
-            break;
-        }
-    }
-    if (!activeMode) {
-        return false;
-    }
-
-    int basisWidth = 0;
-    int basisHeight = 0;
-    if (!GetCurrentContainerSizeForModeTarget(basisWidth, basisHeight)) {
-        basisWidth = incomingWidth;
-        basisHeight = incomingHeight;
-    }
-    if (basisWidth <= 0 || basisHeight <= 0) {
+    int windowWidth = 0;
+    int windowHeight = 0;
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+    if (!GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
         return false;
     }
 
     int targetWidth = 0;
     int targetHeight = 0;
-    if (!modeState.GetActiveModeTargetDimensions(basisWidth, basisHeight, targetWidth, targetHeight)) {
+    if (!ResolveActiveModeTargetDimensionsForSpace(space,
+                                                   windowWidth,
+                                                   windowHeight,
+                                                   framebufferWidth,
+                                                   framebufferHeight,
+                                                   targetWidth,
+                                                   targetHeight)) {
         return false;
     }
     if (targetWidth <= 0 || targetHeight <= 0) {
@@ -804,8 +999,57 @@ bool ResolveActiveModeTargetDimensionsForContainer(int containerWidth, int conta
            outWidth > 0 && outHeight > 0;
 }
 
-bool ResolvePlacementTransform(PlacementTransform& outTransform,
-                               PlacementResolveOrder order = PlacementResolveOrder::FramebufferFirst) {
+double ResolveFramebufferScaleAxis(int windowAxis, int framebufferAxis) {
+    if (windowAxis <= 0 || framebufferAxis <= 0) {
+        return 1.0;
+    }
+
+    const double scale = static_cast<double>(framebufferAxis) / static_cast<double>(windowAxis);
+    return scale > 0.0 ? scale : 1.0;
+}
+
+int ConvertFramebufferDimensionToWindowDimension(int framebufferDimension, double framebufferScale) {
+    if (framebufferDimension <= 0) {
+        return 0;
+    }
+    if (!(framebufferScale > 0.0)) {
+        framebufferScale = 1.0;
+    }
+
+    return std::max(1, static_cast<int>(std::lround(static_cast<double>(framebufferDimension) / framebufferScale)));
+}
+
+bool ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace space,
+                                               int windowWidth,
+                                               int windowHeight,
+                                               int framebufferWidth,
+                                               int framebufferHeight,
+                                               int& outWidth,
+                                               int& outHeight) {
+    outWidth = 0;
+    outHeight = 0;
+
+    if (space == ManagedDimensionSpace::FramebufferPhysical) {
+        if (ResolveActiveModeTargetDimensionsForContainer(framebufferWidth, framebufferHeight, outWidth, outHeight)) {
+            return true;
+        }
+        return ResolveActiveModeTargetDimensionsForContainer(windowWidth, windowHeight, outWidth, outHeight);
+    }
+
+    int framebufferTargetWidth = 0;
+    int framebufferTargetHeight = 0;
+    if (ResolveActiveModeTargetDimensionsForContainer(framebufferWidth, framebufferHeight, framebufferTargetWidth, framebufferTargetHeight)) {
+        const double framebufferScaleX = ResolveFramebufferScaleAxis(windowWidth, framebufferWidth);
+        const double framebufferScaleY = ResolveFramebufferScaleAxis(windowHeight, framebufferHeight);
+        outWidth = ConvertFramebufferDimensionToWindowDimension(framebufferTargetWidth, framebufferScaleX);
+        outHeight = ConvertFramebufferDimensionToWindowDimension(framebufferTargetHeight, framebufferScaleY);
+        return outWidth > 0 && outHeight > 0;
+    }
+
+    return ResolveActiveModeTargetDimensionsForContainer(windowWidth, windowHeight, outWidth, outHeight);
+}
+
+bool ResolvePlacementTransform(PlacementTransform& outTransform) {
     outTransform = PlacementTransform{};
 
     int windowWidth = 0;
@@ -818,16 +1062,29 @@ bool ResolvePlacementTransform(PlacementTransform& outTransform,
 
     int logicalWidth = 0;
     int logicalHeight = 0;
-    if (order == PlacementResolveOrder::FramebufferFirst) {
-        if (!ResolveActiveModeTargetDimensionsForContainer(framebufferWidth, framebufferHeight, logicalWidth, logicalHeight) &&
-            !ResolveActiveModeTargetDimensionsForContainer(windowWidth, windowHeight, logicalWidth, logicalHeight)) {
-            return false;
-        }
-    } else {
-        if (!ResolveActiveModeTargetDimensionsForContainer(windowWidth, windowHeight, logicalWidth, logicalHeight) &&
-            !ResolveActiveModeTargetDimensionsForContainer(framebufferWidth, framebufferHeight, logicalWidth, logicalHeight)) {
-            return false;
-        }
+    if (!ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace::WindowLogical,
+                                                   windowWidth,
+                                                   windowHeight,
+                                                   framebufferWidth,
+                                                   framebufferHeight,
+                                                   logicalWidth,
+                                                   logicalHeight)) {
+        return false;
+    }
+
+    int physicalWidth = 0;
+    int physicalHeight = 0;
+    if (!ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace::FramebufferPhysical,
+                                                   windowWidth,
+                                                   windowHeight,
+                                                   framebufferWidth,
+                                                   framebufferHeight,
+                                                   physicalWidth,
+                                                   physicalHeight)) {
+        return false;
+    }
+    if (logicalWidth <= 0 || logicalHeight <= 0 || physicalWidth <= 0 || physicalHeight <= 0) {
+        return false;
     }
 
     GLint windowBottomLeftX = 0;
@@ -843,8 +1100,8 @@ bool ResolvePlacementTransform(PlacementTransform& outTransform,
 
     GLint framebufferBottomLeftX = 0;
     GLint framebufferBottomLeftY = 0;
-    if (!ResolveActiveModeViewportPlacement(logicalWidth,
-                                            logicalHeight,
+    if (!ResolveActiveModeViewportPlacement(physicalWidth,
+                                            physicalHeight,
                                             framebufferWidth,
                                             framebufferHeight,
                                             framebufferBottomLeftX,
@@ -855,6 +1112,8 @@ bool ResolvePlacementTransform(PlacementTransform& outTransform,
     outTransform.valid = true;
     outTransform.logicalWidth = logicalWidth;
     outTransform.logicalHeight = logicalHeight;
+    outTransform.physicalWidth = physicalWidth;
+    outTransform.physicalHeight = physicalHeight;
     outTransform.windowWidth = windowWidth;
     outTransform.windowHeight = windowHeight;
     outTransform.framebufferWidth = framebufferWidth;
@@ -875,7 +1134,7 @@ bool WindowToGame(double windowX, double windowY, double& outGameX, double& outG
     outGameY = windowY;
 
     PlacementTransform transform;
-    if (!ResolvePlacementTransform(transform, PlacementResolveOrder::WindowFirst)) {
+    if (!ResolvePlacementTransform(transform)) {
         return false;
     }
 
@@ -892,7 +1151,7 @@ bool GameToWindow(double gameX, double gameY, double& outWindowX, double& outWin
     outWindowY = gameY;
 
     PlacementTransform transform;
-    if (!ResolvePlacementTransform(transform, PlacementResolveOrder::WindowFirst)) {
+    if (!ResolvePlacementTransform(transform)) {
         return false;
     }
 
@@ -906,7 +1165,7 @@ bool GameToWindow(double gameX, double gameY, double& outWindowX, double& outWin
 
 bool ResolveCurrentWindowCursorCenter(double& outX, double& outY) {
     PlacementTransform transform;
-    if (!ResolvePlacementTransform(transform, PlacementResolveOrder::WindowFirst) ||
+    if (!ResolvePlacementTransform(transform) ||
         transform.logicalWidth <= 0 || transform.logicalHeight <= 0) {
         return false;
     }
@@ -945,8 +1204,8 @@ bool IsCanonicalMainContentRect(GLint x, GLint y, GLsizei width, GLsizei height)
         return false;
     }
 
-    return width == static_cast<GLsizei>(transform.logicalWidth) &&
-           height == static_cast<GLsizei>(transform.logicalHeight);
+    return width == static_cast<GLsizei>(transform.physicalWidth) &&
+           height == static_cast<GLsizei>(transform.physicalHeight);
 }
 
 bool TranslateMainScissor(GLint x, GLint y, GLsizei width, GLsizei height, GLint& outX, GLint& outY) {
@@ -987,7 +1246,7 @@ bool LoadTrackedCapturedCursorPosition(double& outX, double& outY) {
 
 bool ResolveCurrentLogicalCursorCenter(double& outX, double& outY) {
     PlacementTransform transform;
-    if (!ResolvePlacementTransform(transform, PlacementResolveOrder::WindowFirst) || transform.logicalWidth <= 0 || transform.logicalHeight <= 0) {
+    if (!ResolvePlacementTransform(transform) || transform.logicalWidth <= 0 || transform.logicalHeight <= 0) {
         return false;
     }
 
@@ -1106,9 +1365,13 @@ void ApplyRebindToggleHotkeyFromConfig(const platform::config::LinuxscreenConfig
     platform::x11::SetRebindToggleHotkey(toggleHotkey);
 }
 
-void MaybeInitSharedGlxContexts(Display* dpy, GLXDrawable drawable, GLXContext context, const char* sourceLabel) {
+void MaybeInitSharedGlxContexts(void* dpy, std::uint64_t drawable, void* context, const char* sourceLabel) {
     if (!IsGlxSharedContextEnabled()) { return; }
+#ifdef __APPLE__
+    if (!context) { return; }
+#else
     if (!dpy || !drawable || !context) { return; }
+#endif
 
     static std::atomic<int64_t> nextRetryMs{ 0 };
     static std::atomic<int64_t> lastFailureLogMs{ 0 };

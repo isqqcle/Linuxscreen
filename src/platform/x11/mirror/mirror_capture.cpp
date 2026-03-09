@@ -6,14 +6,23 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     if (!IsGlxMirrorPipelineEnabledInternal()) { return; }
     if (width <= 0 || height <= 0) { return; }
 
-    std::call_once(g_workerStartOnce, []() {
-        if (EnsureGlFunctions() && AreSharedGlxContextsReady()) {
-            StartMirrorWorker();
-        }
-    });
+    const bool useInlineMirrorProcessing =
+#ifdef __APPLE__
+        true;
+#else
+        false;
+#endif
 
-    if (!g_workerStarted.load(std::memory_order_acquire)) {
-        return;
+    if (!useInlineMirrorProcessing) {
+        std::call_once(g_workerStartOnce, []() {
+            if (EnsureGlFunctions() && AreSharedGlxContextsReady()) {
+                StartMirrorWorker();
+            }
+        });
+
+        if (!g_workerStarted.load(std::memory_order_acquire)) {
+            return;
+        }
     }
 
     if (!EnsureGlFunctions()) { return; }
@@ -25,7 +34,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
             if (!activeMode.empty()) {
                 auto config = platform::config::GetConfigSnapshot();
                 if (config) {
-                    g_modeState.ApplyModeSwitch(activeMode, *config, width, height);
+                    ApplyModeSwitchWithResolvedContainer(activeMode, *config, width, height);
                 }
             }
 
@@ -51,6 +60,10 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         if (activeMode != g_currentActiveMode) {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             g_currentActiveMode = activeMode;
+            auto config = platform::config::GetConfigSnapshot();
+            if (!activeMode.empty() && config) {
+                ApplyModeSwitchWithResolvedContainer(activeMode, *config, width, height);
+            }
             g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
             if (IsDebugEnabled()) {
                 fprintf(stderr, "[Linuxscreen][mirror] Mode switch detected in capture: '%s', %zu mirror(s)\n",
@@ -63,6 +76,12 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
 
     const std::uint64_t generation = GetSharedGlxContextGeneration();
     if (generation != 0 && generation != g_lastGeneration.load(std::memory_order_acquire)) {
+#ifdef __APPLE__
+        DrainStaleFenceQueue();
+        DestroyAllInstances();
+        CleanupMirrorShaders();
+        g_workerGeneration.store(generation, std::memory_order_release);
+#else
         PostFrameSlot(width,
                       height,
                       nullptr,
@@ -77,6 +96,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
                       height,
                       0,
                       0);
+#endif
         g_lastGeneration.store(generation, std::memory_order_release);
 
         if (g_gameFrameTexture) {
@@ -88,50 +108,37 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         g_configsLoaded = false;
 
         if (IsDebugEnabled()) {
+#ifdef __APPLE__
+            fprintf(stderr, "[Linuxscreen][mirror] Inline path generation changed (%llu), cleared mirror resources\n",
+                    static_cast<unsigned long long>(generation));
+#else
             fprintf(stderr, "[Linuxscreen][mirror] Swap thread: generation changed (%llu), posted sentinel\n",
                     static_cast<unsigned long long>(generation));
+#endif
         }
         return;
     }
 
     const bool overscan = IsOverscanActiveInternal() && g_overscanFboRendered;
     OverscanDimensions overscanSnap = overscan ? g_overscanDims : OverscanDimensions{};
-    const int captureW = overscan ? g_overscanDims.totalWidth : width;
-    const int captureH = overscan ? g_overscanDims.totalHeight : height;
 
     GLint currentViewport[4] = { 0, 0, 0, 0 };
     glGetIntegerv(GL_VIEWPORT, currentViewport);
 
     int containerWidth = width;
     int containerHeight = height;
-    auto handles = platform::x11::GetRuntimeHandles();
-    if (handles.nativeDisplay && handles.nativeWindow) {
-        unsigned int physicalW = 0;
-        unsigned int physicalH = 0;
-        glXQueryDrawable(reinterpret_cast<Display*>(handles.nativeDisplay),
-                         handles.nativeWindow,
-                         GLX_WIDTH,
-                         &physicalW);
-        glXQueryDrawable(reinterpret_cast<Display*>(handles.nativeDisplay),
-                         handles.nativeWindow,
-                         GLX_HEIGHT,
-                         &physicalH);
-        if (physicalW > 0 && physicalH > 0) {
-            containerWidth = static_cast<int>(physicalW);
-            containerHeight = static_cast<int>(physicalH);
-        }
-    }
+    ResolveMirrorConfigContainerSize(width, height, containerWidth, containerHeight);
     if (overscan && overscanSnap.windowWidth > 0 && overscanSnap.windowHeight > 0) {
         containerWidth = overscanSnap.windowWidth;
         containerHeight = overscanSnap.windowHeight;
     }
     if (containerWidth <= 0 || containerHeight <= 0) {
-        (void)GetGameWindowSize(containerWidth, containerHeight);
-    }
-    if (containerWidth <= 0 || containerHeight <= 0) {
         containerWidth = width;
         containerHeight = height;
     }
+
+    const int captureW = overscan ? g_overscanDims.totalWidth : containerWidth;
+    const int captureH = overscan ? g_overscanDims.totalHeight : containerHeight;
 
     // Ensure game frame texture sized to capture dimensions
     EnsureGameFrameTexture(captureW, captureH);
@@ -163,11 +170,12 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     if (overscan) {
         glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
     } else {
-        // Capture from the current viewport origin so modes that intentionally offset
-        // the game viewport (e.g. Thin/Preemptive layouts) still sample the correct
-        // game region.
-        const int viewportX = std::max(0, currentViewport[0]);
-        const int viewportY = std::max(0, currentViewport[1]);
+        // Mirror capture coordinates are resolved in full-container space. Copy the
+        // whole drawable so the non-overscan path matches the oversized/OOB path and
+        // larger capture rectangles do not sample past the edge of a viewport-sized
+        // texture.
+        const int viewportX = 0;
+        const int viewportY = 0;
         int safeW = copyW;
         int safeH = copyH;
         if (containerWidth > 0 && containerHeight > 0) {
@@ -187,7 +195,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     glActiveTexture(prevActiveUnit);
 
     GLsync fence = nullptr;
-    if (g_gl.fenceSync) {
+    if (!useInlineMirrorProcessing && g_gl.fenceSync) {
         fence = g_gl.fenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
 
@@ -208,6 +216,35 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     } else {
         textureOriginTopLeftX = copySrcX;
         textureOriginTopLeftY = containerHeight - (copySrcY + copiedH);
+    }
+
+    if (useInlineMirrorProcessing) {
+        MirrorFrameSlot slot;
+        slot.width = copyW;
+        slot.height = copyH;
+        slot.generation = generation;
+        slot.containerWidth = containerWidth;
+        slot.containerHeight = containerHeight;
+        slot.viewportTopLeftX = viewportTopLeftX;
+        slot.viewportTopLeftY = viewportTopLeftY;
+        slot.viewportWidth = currentViewport[2];
+        slot.viewportHeight = currentViewport[3];
+        slot.textureOriginTopLeftX = textureOriginTopLeftX;
+        slot.textureOriginTopLeftY = textureOriginTopLeftY;
+        slot.overscanActive = overscan;
+        slot.overscanWindowWidth = overscanSnap.windowWidth;
+        slot.overscanWindowHeight = overscanSnap.windowHeight;
+        slot.overscanMarginLeft = overscanSnap.marginLeft;
+        slot.overscanMarginBottom = overscanSnap.marginBottom;
+
+        DrainStaleFenceQueue();
+        if (!InitMirrorShaders()) {
+            fprintf(stderr, "[Linuxscreen][mirror] Inline path failed to initialize shaders\n");
+            return;
+        }
+        g_workerGeneration.store(generation, std::memory_order_release);
+        ProcessAllMirrorsWorker(slot.width, slot.height, slot);
+        return;
     }
 
     PostFrameSlot(copyW,

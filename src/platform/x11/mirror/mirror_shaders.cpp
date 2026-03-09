@@ -1,6 +1,94 @@
+#ifdef __APPLE__
+static std::string ConvertShaderToGLSL120(GLenum type, const char* src) {
+    if (!src) { return {}; }
+    std::string s(src);
+
+    // Version line
+    {
+        auto pos = s.find("#version 330 core");
+        if (pos != std::string::npos) { s.replace(pos, 17, "#version 120"); }
+        else {
+            pos = s.find("#version 330");
+            if (pos != std::string::npos) { s.replace(pos, 12, "#version 120"); }
+        }
+    }
+
+    // layout(location = N) in vecN name → attribute vecN name
+    for (;;) {
+        auto pos = s.find("layout(location");
+        if (pos == std::string::npos) break;
+        auto endParen = s.find(')', pos);
+        if (endParen == std::string::npos) break;
+        size_t afterParen = endParen + 1;
+        while (afterParen < s.size() && (s[afterParen] == ' ' || s[afterParen] == '\t')) afterParen++;
+        if (s.compare(afterParen, 3, "in ") == 0) {
+            s.replace(pos, afterParen + 3 - pos, "attribute ");
+        } else {
+            s.erase(pos, afterParen - pos);
+        }
+    }
+
+    if (type == GL_VERTEX_SHADER) {
+        // out vecN name → varying vecN name (vertex shader outputs)
+        for (size_t pos = 0;;) {
+            pos = s.find("\nout ", pos);
+            if (pos == std::string::npos) break;
+            s.replace(pos + 1, 3, "varying");
+            pos += 8;
+        }
+        if (s.compare(0, 4, "out ") == 0) { s.replace(0, 3, "varying"); }
+    } else {
+        // Fragment shader: in vecN name → varying vecN name
+        for (size_t pos = 0;;) {
+            pos = s.find("\nin ", pos);
+            if (pos == std::string::npos) break;
+            s.replace(pos + 1, 2, "varying");
+            pos += 8;
+        }
+        if (s.compare(0, 3, "in ") == 0) { s.replace(0, 2, "varying"); }
+
+        // Remove "out vec4 FragColor;" declaration
+        {
+            auto pos = s.find("out vec4 FragColor;");
+            if (pos != std::string::npos) {
+                auto lineEnd = s.find('\n', pos);
+                if (lineEnd != std::string::npos) { s.erase(pos, lineEnd - pos + 1); }
+                else { s.erase(pos); }
+            }
+        }
+
+        // Replace FragColor with gl_FragColor
+        for (size_t pos = 0;;) {
+            pos = s.find("FragColor", pos);
+            if (pos == std::string::npos) break;
+            if (pos > 0 && (std::isalnum(static_cast<unsigned char>(s[pos - 1])) || s[pos - 1] == '_')) { pos += 9; continue; }
+            size_t end = pos + 9;
+            if (end < s.size() && (std::isalnum(static_cast<unsigned char>(s[end])) || s[end] == '_')) { pos += 9; continue; }
+            s.replace(pos, 9, "gl_FragColor");
+            pos += 12;
+        }
+    }
+
+    // texture( → texture2D(
+    for (size_t pos = 0;;) {
+        pos = s.find("texture(", pos);
+        if (pos == std::string::npos) break;
+        if (pos > 0 && (std::isalnum(static_cast<unsigned char>(s[pos - 1])) || s[pos - 1] == '_')) { pos += 8; continue; }
+        s.replace(pos, 8, "texture2D(");
+        pos += 10;
+    }
+
+    return s;
+}
+#endif
+
 GLuint CompileShader(GLenum type, const char* source) {
     GLuint shader = g_gl.createShader(type);
     if (!shader) { return 0; }
+#ifdef __APPLE__
+    std::string converted = ConvertShaderToGLSL120(type, source);
+    source = converted.c_str();
+#endif
     g_gl.shaderSource(shader, 1, &source, nullptr);
     g_gl.compileShader(shader);
 
@@ -22,6 +110,12 @@ GLuint CreateProgram(GLuint vert, GLuint frag) {
     if (!prog) { return 0; }
     g_gl.attachShader(prog, vert);
     g_gl.attachShader(prog, frag);
+#ifdef __APPLE__
+    if (g_gl.bindAttribLocation) {
+        g_gl.bindAttribLocation(prog, 0, "aPos");
+        g_gl.bindAttribLocation(prog, 1, "aTexCoord");
+    }
+#endif
     g_gl.linkProgram(prog);
 
     GLint status = 0;

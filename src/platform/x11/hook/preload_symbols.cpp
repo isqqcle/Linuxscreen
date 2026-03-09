@@ -61,6 +61,7 @@ void LogResolveFailureDetail(const char* source, const char* errorText) {
 }
 
 void EnsureLibGlHandle() {
+#ifndef __APPLE__
     std::call_once(g_libGlOpenOnce, []() {
         void* handle = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
         g_libGlHandle.store(handle, std::memory_order_release);
@@ -69,9 +70,11 @@ void EnsureLibGlHandle() {
             LogResolveFailureDetail("dlopen(libGL.so.1)", openErr);
         }
     });
+#endif
 }
 
 void EnsureLibGlfwHandle() {
+#ifndef __APPLE__
     std::call_once(g_libGlfwOpenOnce, []() {
         void* handle = dlopen("libglfw.so.3", RTLD_NOW | RTLD_LOCAL);
         if (!handle) { handle = dlopen("libglfw.so", RTLD_NOW | RTLD_LOCAL); }
@@ -82,6 +85,7 @@ void EnsureLibGlfwHandle() {
             LogResolveFailureDetail("dlopen(libglfw.so.3/libglfw.so)", openErr);
         }
     });
+#endif
 }
 
 void* GetGlfwFallbackHandle(const char*& label) {
@@ -108,6 +112,7 @@ void* GetGlfwCapturedHandle(const char*& label) {
 }
 
 void EnsureLibDlHandle() {
+#ifndef __APPLE__
     std::call_once(g_libDlOpenOnce, []() {
         void* handle = dlopen("libdl.so.2", RTLD_NOW | RTLD_LOCAL);
         if (!handle) { handle = dlopen("libdl.so", RTLD_NOW | RTLD_LOCAL); }
@@ -118,13 +123,18 @@ void EnsureLibDlHandle() {
             LogResolveFailureDetail("dlopen(libdl.so.2/libdl.so)", openErr);
         }
     });
+#endif
 }
 
 void ResolveRealDlSym() {
     if (g_realDlSym.load(std::memory_order_acquire) != nullptr) { return; }
 
     DlSymFn resolved = nullptr;
-#if defined(__GLIBC__)
+#if defined(__APPLE__)
+    g_bypassDlsymInterpose = true;
+    resolved = reinterpret_cast<DlSymFn>(dlsym(RTLD_NEXT, "dlsym"));
+    g_bypassDlsymInterpose = false;
+#elif defined(__GLIBC__)
     static const char* kVersions[] = { "GLIBC_2.34", "GLIBC_2.33", "GLIBC_2.32", "GLIBC_2.2.5" };
     for (const char* version : kVersions) {
         resolved = reinterpret_cast<DlSymFn>(dlvsym(RTLD_NEXT, "dlsym", version));
@@ -134,8 +144,8 @@ void ResolveRealDlSym() {
 
     if (!resolved) {
         EnsureLibDlHandle();
-        void* libdl = g_libDlHandle.load(std::memory_order_acquire);
 #if defined(__GLIBC__)
+        void* libdl = g_libDlHandle.load(std::memory_order_acquire);
         if (libdl) {
             static const char* kVersions[] = { "GLIBC_2.34", "GLIBC_2.33", "GLIBC_2.32", "GLIBC_2.2.5" };
             for (const char* version : kVersions) {
@@ -161,9 +171,16 @@ DlSymFn GetRealDlSym() {
 }
 
 void* CallRealDlSym(void* handle, const char* symbolName) {
+#ifdef __APPLE__
+    g_bypassDlsymInterpose = true;
+    void* symbol = dlsym(handle, symbolName);
+    g_bypassDlsymInterpose = false;
+    return symbol;
+#else
     DlSymFn realFn = GetRealDlSym();
     if (!realFn) { return nullptr; }
     return realFn(handle, symbolName);
+#endif
 }
 
 void* ResolveSymbol(const char* symbolName, void* fallbackHandle, const char* fallbackLabel) {
@@ -208,6 +225,7 @@ const char* RuntimeStateToString(platform::RuntimeState state) {
     return "Unknown";
 }
 
+#ifndef __APPLE__
 void ResolveRealGlXSwapBuffers() {
     EnsureLibGlHandle();
     void* symbol = ResolveSymbol("glXSwapBuffers", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
@@ -232,6 +250,7 @@ void ResolveRealGlXSwapBuffersMscOML() {
         LogDebug("glXSwapBuffersMscOML symbol unavailable in current process");
     }
 }
+#endif
 
 void ResolveRealGlfwSwapBuffers() {
     const char* fallbackLabel = nullptr;
@@ -367,6 +386,44 @@ void ResolveRealGlfwSetWindowSize() {
     }
 }
 
+void ResolveRealGlfwSetWindowIcon() {
+    const char* fallbackLabel = nullptr;
+    void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
+    void* symbol = ResolveSymbol("glfwSetWindowIcon", fallbackHandle, fallbackLabel);
+    g_realGlfwSetWindowIcon.store(reinterpret_cast<GlfwSetWindowIconFn>(symbol), std::memory_order_release);
+    if (symbol) {
+        LogDebug("resolved real glfwSetWindowIcon symbol at %p", symbol);
+    } else {
+        LogDebug("glfwSetWindowIcon symbol unavailable in current process");
+    }
+}
+
+#ifdef __APPLE__
+void ResolveRealGlfwMakeContextCurrent() {
+    const char* fallbackLabel = nullptr;
+    void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
+    void* symbol = ResolveSymbol("glfwMakeContextCurrent", fallbackHandle, fallbackLabel);
+    g_realGlfwMakeContextCurrent.store(reinterpret_cast<GlfwMakeContextCurrentFn>(symbol), std::memory_order_release);
+    if (symbol) {
+        LogDebug("resolved real glfwMakeContextCurrent symbol at %p", symbol);
+    } else {
+        LogDebug("glfwMakeContextCurrent symbol unavailable in current process");
+    }
+}
+
+void ResolveRealGlfwDestroyWindow() {
+    const char* fallbackLabel = nullptr;
+    void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
+    void* symbol = ResolveSymbol("glfwDestroyWindow", fallbackHandle, fallbackLabel);
+    g_realGlfwDestroyWindow.store(reinterpret_cast<GlfwDestroyWindowFn>(symbol), std::memory_order_release);
+    if (symbol) {
+        LogDebug("resolved real glfwDestroyWindow symbol at %p", symbol);
+    } else {
+        LogDebug("glfwDestroyWindow symbol unavailable in current process");
+    }
+}
+#endif
+
 void ResolveRealGlfwGetWindowSize() {
     const char* fallbackLabel = nullptr;
     void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
@@ -451,6 +508,7 @@ void ResolveRealGlfwSetInputMode() {
     }
 }
 
+#ifndef __APPLE__
 void ResolveRealGlXGetProcAddress() {
     EnsureLibGlHandle();
     void* symbol = ResolveSymbol("glXGetProcAddress", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
@@ -464,36 +522,51 @@ void ResolveRealGlXGetProcAddressARB() {
     g_realGlXGetProcAddressARB.store(reinterpret_cast<GlXGetProcAddressFn>(symbol), std::memory_order_release);
     if (symbol) { LogDebug("resolved real glXGetProcAddressARB symbol at %p", symbol); }
 }
+#endif
 
 void ResolveRealGlViewport() {
+#ifdef __APPLE__
+    void* symbol = ResolveSymbol("glViewport", nullptr, nullptr);
+#else
     EnsureLibGlHandle();
     void* symbol = ResolveSymbol("glViewport", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
+#endif
     g_realGlViewport.store(reinterpret_cast<GlViewportFn>(symbol), std::memory_order_release);
     if (symbol) { LogDebug("resolved real glViewport symbol at %p", symbol); }
 }
 
 void ResolveRealGlScissor() {
+#ifdef __APPLE__
+    void* symbol = ResolveSymbol("glScissor", nullptr, nullptr);
+#else
     EnsureLibGlHandle();
     void* symbol = ResolveSymbol("glScissor", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
+#endif
     g_realGlScissor.store(reinterpret_cast<GlScissorFn>(symbol), std::memory_order_release);
     if (symbol) { LogDebug("resolved real glScissor symbol at %p", symbol); }
 }
 
 void ResolveRealGlBindFramebuffer() {
+#ifdef __APPLE__
+    void* symbol = ResolveSymbol("glBindFramebuffer", nullptr, nullptr);
+#else
     EnsureLibGlHandle();
     void* symbol = ResolveSymbol("glBindFramebuffer", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
     if (!symbol) {
         auto getProc = g_realGlXGetProcAddress.load(std::memory_order_acquire);
         if (getProc) { symbol = reinterpret_cast<void*>(getProc(reinterpret_cast<const GLubyte*>("glBindFramebuffer"))); }
     }
+#endif
     g_realGlBindFramebuffer.store(reinterpret_cast<GlBindFramebufferFn>(symbol), std::memory_order_release);
     if (symbol) { LogDebug("resolved real glBindFramebuffer symbol at %p", symbol); }
 }
 
+#ifndef __APPLE__
 GlXSwapBuffersFn GetRealGlXSwapBuffers() {
     if (!g_realGlXSwapBuffers.load(std::memory_order_acquire)) { ResolveRealGlXSwapBuffers(); }
     return g_realGlXSwapBuffers.load(std::memory_order_acquire);
 }
+#endif
 
 GlViewportFn GetRealGlViewport() {
     if (!g_realGlViewport.load(std::memory_order_acquire)) { ResolveRealGlViewport(); }
@@ -510,10 +583,12 @@ GlBindFramebufferFn GetRealGlBindFramebuffer() {
     return g_realGlBindFramebuffer.load(std::memory_order_acquire);
 }
 
+#ifndef __APPLE__
 GlXSwapBuffersMscOMLFn GetRealGlXSwapBuffersMscOML() {
     if (!g_realGlXSwapBuffersMscOML.load(std::memory_order_acquire)) { ResolveRealGlXSwapBuffersMscOML(); }
     return g_realGlXSwapBuffersMscOML.load(std::memory_order_acquire);
 }
+#endif
 
 GlfwSwapBuffersFn GetRealGlfwSwapBuffers() {
     if (!g_realGlfwSwapBuffers.load(std::memory_order_acquire)) { ResolveRealGlfwSwapBuffers(); }
@@ -570,6 +645,23 @@ GlfwSetWindowSizeFn GetRealGlfwSetWindowSize() {
     return g_realGlfwSetWindowSize.load(std::memory_order_acquire);
 }
 
+GlfwSetWindowIconFn GetRealGlfwSetWindowIcon() {
+    if (!g_realGlfwSetWindowIcon.load(std::memory_order_acquire)) { ResolveRealGlfwSetWindowIcon(); }
+    return g_realGlfwSetWindowIcon.load(std::memory_order_acquire);
+}
+
+#ifdef __APPLE__
+GlfwMakeContextCurrentFn GetRealGlfwMakeContextCurrent() {
+    if (!g_realGlfwMakeContextCurrent.load(std::memory_order_acquire)) { ResolveRealGlfwMakeContextCurrent(); }
+    return g_realGlfwMakeContextCurrent.load(std::memory_order_acquire);
+}
+
+GlfwDestroyWindowFn GetRealGlfwDestroyWindow() {
+    if (!g_realGlfwDestroyWindow.load(std::memory_order_acquire)) { ResolveRealGlfwDestroyWindow(); }
+    return g_realGlfwDestroyWindow.load(std::memory_order_acquire);
+}
+#endif
+
 GlfwGetWindowSizeFn GetRealGlfwGetWindowSize() {
     if (!g_realGlfwGetWindowSize.load(std::memory_order_acquire)) { ResolveRealGlfwGetWindowSize(); }
     return g_realGlfwGetWindowSize.load(std::memory_order_acquire);
@@ -605,6 +697,7 @@ GlfwSetInputModeFn GetRealGlfwSetInputMode() {
     return g_realGlfwSetInputMode.load(std::memory_order_acquire);
 }
 
+#ifndef __APPLE__
 GlXGetProcAddressFn GetRealGlXGetProcAddress() {
     if (!g_realGlXGetProcAddress.load(std::memory_order_acquire)) { ResolveRealGlXGetProcAddress(); }
     return g_realGlXGetProcAddress.load(std::memory_order_acquire);
@@ -614,7 +707,9 @@ GlXGetProcAddressFn GetRealGlXGetProcAddressARB() {
     if (!g_realGlXGetProcAddressARB.load(std::memory_order_acquire)) { ResolveRealGlXGetProcAddressARB(); }
     return g_realGlXGetProcAddressARB.load(std::memory_order_acquire);
 }
+#endif
 
+#ifndef __APPLE__
 void RecordAndLogSwap(SwapHookSource source, Display* dpy, GLXDrawable drawable, GLXContext ctx) {
     platform::x11::RecordSwapHandles(reinterpret_cast<void*>(dpy), static_cast<unsigned long>(drawable), reinterpret_cast<void*>(ctx));
 
@@ -653,11 +748,13 @@ void RecordAndLogSwap(SwapHookSource source, Display* dpy, GLXDrawable drawable,
                  reinterpret_cast<void*>(ctx));
     }
 }
+#endif
 
 constexpr int kGlfwCursorMode = 0x00033001;
 constexpr int kGlfwCursorNormal = 0x00034001;
 constexpr int kGlfwCursorDisabled = 0x00034003;
 
+#ifndef __APPLE__
 __GLXextFuncPtr ResolveProcAddressRequest(const GLubyte* procName, GlXGetProcAddressFn resolver) {
     if (!procName) { return resolver ? resolver(procName) : nullptr; }
 
@@ -688,5 +785,6 @@ __GLXextFuncPtr ResolveProcAddressRequest(const GLubyte* procName, GlXGetProcAdd
 
     return resolver ? resolver(procName) : nullptr;
 }
+#endif
 
 } // namespace

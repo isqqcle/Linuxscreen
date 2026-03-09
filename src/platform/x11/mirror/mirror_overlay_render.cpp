@@ -461,7 +461,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         // Re-apply current mode to pick up mirror definition changes
         const std::string refreshMode = g_modeState.GetActiveModeName();
         if (!refreshMode.empty() && configSnapshot) {
-            g_modeState.ApplyModeSwitch(refreshMode, *configSnapshot, viewportWidth, viewportHeight);
+            ApplyModeSwitchWithResolvedContainer(refreshMode, *configSnapshot, viewportWidth, viewportHeight);
         }
 
         // Refresh mirror configs from mode state
@@ -480,6 +480,9 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
     std::string activeMode = g_modeState.GetActiveModeName();
     if (activeMode != g_currentActiveMode) {
         g_currentActiveMode = activeMode;
+        if (!activeMode.empty() && configSnapshot) {
+            ApplyModeSwitchWithResolvedContainer(activeMode, *configSnapshot, viewportWidth, viewportHeight);
+        }
         g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
         if (IsDebugEnabled()) {
             fprintf(stderr, "[Linuxscreen][mirror] Mode changed to '%s', loaded %zu mirror(s)\n",
@@ -492,7 +495,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         g_lastOverlayViewportWidth = viewportWidth;
         g_lastOverlayViewportHeight = viewportHeight;
         if (!activeMode.empty() && configSnapshot) {
-            g_modeState.ApplyModeSwitch(activeMode, *configSnapshot, viewportWidth, viewportHeight);
+            ApplyModeSwitchWithResolvedContainer(activeMode, *configSnapshot, viewportWidth, viewportHeight);
             g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
             if (IsDebugEnabled()) {
                 fprintf(stderr,
@@ -637,9 +640,35 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
     g_stickyBackgroundPending = false;
 
+    // On Linux, the worker thread uses a separate GL context. Insert a GPU-side
+    // wait on the worker's publish fence so the GPU won't read mirror textures
+    // until the worker's rendering is complete. glWaitSync does NOT block the
+    // CPU — it only inserts a dependency in the GPU command queue.
+#ifndef __APPLE__
+    {
+        std::lock_guard<std::mutex> lock(g_publishFenceMutex);
+        if (g_publishFence && g_gl.waitSync) {
+            g_gl.waitSync(g_publishFence, 0, GL_TIMEOUT_IGNORED);
+        }
+    }
+#endif
+
     int renderedCount = 0;
     std::vector<PendingStaticMirrorBorder> pendingStaticBorders;
     pendingStaticBorders.reserve(g_mirrorConfigs.size());
+
+    // Set up common GL state once before the mirror loop.
+    g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, viewportWidth, viewportHeight);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    g_gl.activeTexture(GL_TEXTURE0);
+    g_gl.useProgram(g_overlayProgram);
+    g_gl.uniform1i(g_overlayLocScreenTexture, 0);
+    g_gl.uniform4f(g_overlayLocSourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
+    g_gl.bindVertexArray(g_overlayVao);
+    g_gl.bindBuffer(GL_ARRAY_BUFFER, g_overlayVbo);
+
     for (const auto& mirrorRender : g_mirrorConfigs) {
         const auto& config = mirrorRender.config;
         auto it = g_instances.find(config.name);
@@ -669,19 +698,9 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
         int f = inst.frontIdx.load(std::memory_order_acquire);
 
-        g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, viewportWidth, viewportHeight);
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        g_gl.activeTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, inst.finalTexture[f]);
-
-        g_gl.useProgram(g_overlayProgram);
-        g_gl.uniform1i(g_overlayLocScreenTexture, 0);
-        g_gl.uniform4f(g_overlayLocSourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
         g_gl.uniform1f(g_overlayLocOpacity, config.opacity);
+
         float ndcL = (2.0f * static_cast<float>(destX) / static_cast<float>(viewportWidth)) - 1.0f;
         float ndcR = (2.0f * static_cast<float>(destX + outW) / static_cast<float>(viewportWidth)) - 1.0f;
         float ndcB = (2.0f * static_cast<float>(destY) / static_cast<float>(viewportHeight)) - 1.0f;
@@ -697,19 +716,17 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
             ndcL, ndcT,  0.0f, 1.0f,
         };
 
-        g_gl.bindVertexArray(g_overlayVao);
-        g_gl.bindBuffer(GL_ARRAY_BUFFER, g_overlayVbo);
         g_gl.bufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quadVerts), quadVerts);
         glDrawArrays(GL_TRIANGLES, 0, 6);
-        g_gl.bindVertexArray(0);
 
-        glDisable(GL_BLEND);
         if (config.border.type == platform::config::MirrorBorderType::Static &&
             config.border.staticThickness > 0) {
             pendingStaticBorders.push_back(PendingStaticMirrorBorder{ &config, screenX, screenY, outW, outH, inst.hasFrameContent });
         }
         renderedCount++;
     }
+    g_gl.bindVertexArray(0);
+    glDisable(GL_BLEND);
 
     if (!pendingStaticBorders.empty()) {
         g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -742,7 +759,11 @@ void ShutdownGlxMirrorPipeline() {
     StopBackgroundDecodeWorker();
 
     std::lock_guard<std::mutex> lock(g_stateMutex);
+#ifdef __APPLE__
+    if (g_glReady.load(std::memory_order_acquire) && CGLGetCurrentContext() != nullptr) {
+#else
     if (g_glReady.load(std::memory_order_acquire) && glXGetCurrentContext() != nullptr) {
+#endif
         DestroyAllInstances();
         CleanupMirrorShaders();
         ClearAllModeBackgroundGpuTextures();
@@ -785,13 +806,30 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
     g_slotCV.notify_all();
 
     if (g_workerThread.joinable()) {
-        g_workerThread.detach();
+        // Wait briefly for the worker to exit cleanly before detaching.
+        // Without this, the thread may still be accessing global mutexes
+        // when static destructors run, causing EINVAL on mutex lock.
+        bool workerExited = false;
+        {
+            std::unique_lock<std::mutex> lock(g_workerExitMutex);
+            workerExited = g_workerExitCV.wait_for(lock, std::chrono::seconds(2),
+                                                   []() { return g_workerExited; });
+        }
+        if (workerExited) {
+            g_workerThread.join();
+        } else {
+            std::fprintf(stderr,
+                         "[Linuxscreen][mirror][WARNING] worker thread did not exit within process shutdown timeout; detaching\n");
+            g_workerThread.detach();
+        }
     }
 
     g_backgroundDecodeStop.store(true, std::memory_order_release);
     g_backgroundDecodeCv.notify_all();
     if (g_backgroundDecodeThread.joinable()) {
-        g_backgroundDecodeThread.detach();
+        // Join (not detach) so the thread fully exits before static destructors
+        // destroy g_backgroundDecodeMutex, preventing EINVAL on mutex lock.
+        g_backgroundDecodeThread.join();
     }
     g_backgroundDecodeStarted.store(false, std::memory_order_release);
     {

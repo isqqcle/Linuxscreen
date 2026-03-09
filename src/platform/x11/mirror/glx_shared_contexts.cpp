@@ -1,5 +1,253 @@
 #include "glx_shared_contexts.h"
 
+#ifdef __APPLE__
+
+#include <OpenGL/OpenGL.h>
+#include <OpenGL/gl.h>
+
+#include <atomic>
+#include <cstdint>
+#include <mutex>
+#include <string>
+
+namespace platform::x11 {
+
+namespace {
+
+struct SharedCglState {
+    CGLContextObj gameContext = nullptr;
+    CGLContextObj renderContext = nullptr;
+    CGLContextObj mirrorContext = nullptr;
+    bool ready = false;
+};
+
+struct SharedCglGlobals {
+    std::mutex sharedMutex;
+    SharedCglState sharedState;
+    std::mutex errorMutex;
+    std::string lastError;
+    std::mutex infoMutex;
+    std::string lastInitInfo;
+    std::atomic<std::uint64_t> sharedGeneration{ 0 };
+};
+
+SharedCglGlobals& SharedGlobals() {
+    // Keep teardown state alive through process exit. macOS can invoke the
+    // preload destructor after namespace-scope mutex destructors have already
+    // run, which turns any later lock attempt into EINVAL/std::system_error.
+    static SharedCglGlobals* globals = new SharedCglGlobals();
+    return *globals;
+}
+
+void SetLastError(const std::string& msg) {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lk(globals.errorMutex);
+    globals.lastError = msg;
+}
+
+void ClearLastError() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lk(globals.errorMutex);
+    globals.lastError.clear();
+}
+
+void SetLastInitInfo(const std::string& msg) {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lk(globals.infoMutex);
+    globals.lastInitInfo = msg;
+}
+
+void ClearLastInitInfo() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lk(globals.infoMutex);
+    globals.lastInitInfo.clear();
+}
+
+void ShutdownSharedGlxContextsLocked(SharedCglGlobals& globals, bool processExit) {
+    if (!processExit) {
+        if (globals.sharedState.renderContext) { CGLDestroyContext(globals.sharedState.renderContext); }
+        if (globals.sharedState.mirrorContext) { CGLDestroyContext(globals.sharedState.mirrorContext); }
+    }
+    globals.sharedState = SharedCglState{};
+    globals.sharedGeneration.fetch_add(1, std::memory_order_acq_rel);
+    ClearLastInitInfo();
+}
+
+} // namespace
+
+bool EnsureSharedGlxContexts(void* /*nativeDisplay*/, std::uint64_t /*drawable*/, void* gameContext) {
+    CGLContextObj cglCtx = reinterpret_cast<CGLContextObj>(gameContext);
+    if (!cglCtx) {
+        SetLastError("missing CGL game context");
+        return false;
+    }
+
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.sharedMutex);
+
+    std::string recreateReason;
+    if (globals.sharedState.ready && globals.sharedState.gameContext != cglCtx) { recreateReason = "context changed"; }
+
+    if (globals.sharedState.ready && recreateReason.empty()) { return true; }
+    if (globals.sharedState.ready) { ShutdownSharedGlxContextsLocked(globals, false); }
+
+    ClearLastError();
+    ClearLastInitInfo();
+
+    CGLPixelFormatObj pix = CGLGetPixelFormat(cglCtx);
+    if (!pix) { SetLastError("CGLGetPixelFormat returned null"); return false; }
+
+    CGLContextObj renderCtx = nullptr;
+    CGLContextObj mirrorCtx = nullptr;
+    if (CGLCreateContext(pix, cglCtx, &renderCtx) != kCGLNoError || !renderCtx) {
+        SetLastError("CGLCreateContext failed for render context");
+        return false;
+    }
+    if (CGLCreateContext(pix, cglCtx, &mirrorCtx) != kCGLNoError || !mirrorCtx) {
+        CGLDestroyContext(renderCtx);
+        SetLastError("CGLCreateContext failed for mirror context");
+        return false;
+    }
+
+    // Verify texture sharing: create a texture in the game context and check
+    // visibility from the shared contexts.
+    {
+        GlxContextRestoreState preVerifyState;
+        preVerifyState.context = CGLGetCurrentContext();
+        preVerifyState.valid = true;
+
+        CGLSetCurrentContext(cglCtx);
+
+        GLint prevActiveTexUnit = 0;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexUnit);
+        glActiveTexture(GL_TEXTURE0);
+        GLint prevBinding = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevBinding);
+
+        GLuint testTexture = 0;
+        glGenTextures(1, &testTexture);
+        glBindTexture(GL_TEXTURE_2D, testTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        const std::uint32_t pixel = 0xFF00FFFFu;
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &pixel);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevBinding));
+        glActiveTexture(static_cast<GLenum>(prevActiveTexUnit));
+
+        bool renderOk = false;
+        bool mirrorOk = false;
+
+        CGLSetCurrentContext(renderCtx);
+        renderOk = (glIsTexture(testTexture) == GL_TRUE);
+
+        CGLSetCurrentContext(mirrorCtx);
+        mirrorOk = (glIsTexture(testTexture) == GL_TRUE);
+
+        // Restore game context and clean up test texture
+        CGLSetCurrentContext(cglCtx);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevBinding));
+        glActiveTexture(static_cast<GLenum>(prevActiveTexUnit));
+        if (testTexture != 0) { glDeleteTextures(1, &testTexture); }
+
+        // Restore original context
+        CGLSetCurrentContext(reinterpret_cast<CGLContextObj>(preVerifyState.context));
+
+        if (!renderOk || !mirrorOk) {
+            CGLDestroyContext(renderCtx);
+            CGLDestroyContext(mirrorCtx);
+            SetLastError("shared CGL context texture probe failed");
+            return false;
+        }
+    }
+
+    globals.sharedState.gameContext = cglCtx;
+    globals.sharedState.renderContext = renderCtx;
+    globals.sharedState.mirrorContext = mirrorCtx;
+    globals.sharedState.ready = true;
+    globals.sharedGeneration.fetch_add(1, std::memory_order_acq_rel);
+
+    std::string info = "CGL shared contexts initialized";
+    if (!recreateReason.empty()) { info.append(" (recreated: "); info.append(recreateReason); info.append(")"); }
+    SetLastInitInfo(info);
+    return true;
+}
+
+bool AreSharedGlxContextsReady() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.sharedMutex);
+    return globals.sharedState.ready;
+}
+
+GlxSharedContextHandles GetSharedGlxContextHandles() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.sharedMutex);
+    GlxSharedContextHandles handles;
+    handles.nativeDisplay = nullptr;
+    handles.renderContext = globals.sharedState.renderContext;
+    handles.renderDrawable = 0;
+    handles.mirrorContext = globals.sharedState.mirrorContext;
+    handles.mirrorDrawable = 0;
+    return handles;
+}
+
+std::string GetSharedGlxContextLastError() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.errorMutex);
+    return globals.lastError;
+}
+
+std::string GetSharedGlxContextLastInitInfo() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.infoMutex);
+    return globals.lastInitInfo;
+}
+
+std::uint64_t GetSharedGlxContextGeneration() {
+    return SharedGlobals().sharedGeneration.load(std::memory_order_acquire);
+}
+
+bool MakeSharedGlxContextCurrent(GlxSharedContextRole role, GlxContextRestoreState& outRestore) {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.sharedMutex);
+    if (!globals.sharedState.ready) { return false; }
+
+    CGLContextObj targetContext =
+        (role == GlxSharedContextRole::Mirror) ? globals.sharedState.mirrorContext : globals.sharedState.renderContext;
+    if (!targetContext) { return false; }
+
+    outRestore.display = nullptr;
+    outRestore.drawDrawable = 0;
+    outRestore.readDrawable = 0;
+    outRestore.context = CGLGetCurrentContext();
+    outRestore.valid = true;
+
+    if (CGLSetCurrentContext(targetContext) != kCGLNoError) { outRestore.valid = false; return false; }
+    return true;
+}
+
+bool RestoreGlxContext(const GlxContextRestoreState& restore) {
+    if (!restore.valid) { return false; }
+    CGLContextObj ctx = reinterpret_cast<CGLContextObj>(restore.context);
+    return CGLSetCurrentContext(ctx) == kCGLNoError;
+}
+
+void ShutdownSharedGlxContexts() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.sharedMutex);
+    ShutdownSharedGlxContextsLocked(globals, false);
+}
+
+void ShutdownSharedGlxContextsForProcessExit() {
+    auto& globals = SharedGlobals();
+    std::lock_guard<std::mutex> lock(globals.sharedMutex);
+    ShutdownSharedGlxContextsLocked(globals, true);
+}
+
+} // namespace platform::x11
+
+#else // !__APPLE__
+
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <X11/Xlib.h>
@@ -494,3 +742,5 @@ void ShutdownSharedGlxContextsForProcessExit() {
 }
 
 } // namespace platform::x11
+
+#endif // !__APPLE__

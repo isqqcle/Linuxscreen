@@ -143,6 +143,34 @@ void TriggerImmediateModeResizeEnforcement() {
 
 } // namespace platform::x11
 
+#ifdef __APPLE__
+CGLError my_CGLFlushDrawable(CGLContextObj ctx) {
+    ReentryGuard guard;
+    if (!guard.entered) { return CGLFlushDrawable(ctx); }
+
+    GLFWwindow* window = FindTrackedGlfwWindowForContext(reinterpret_cast<void*>(ctx));
+    if (window) {
+        RefreshTrackedGlfwWindowMetrics(window);
+        platform::x11::RegisterImGuiOverlayWindow(window);
+    }
+
+    MaybeInitSharedGlxContexts(nullptr, 0, reinterpret_cast<void*>(ctx), "CGLFlushDrawable");
+    MaybeApplyGameStateTransitionReset();
+    TickModeResolutionTransition();
+    PumpManagedRepeatScheduler(window);
+    ViewportPlacementBypassGuard bypassGuard(true);
+    SubmitMirrorPipelineCapture();
+    BlitOverscanAndPrepareWindow();
+    PrepareDefaultFramebufferForSwap();
+    RenderMirrorPipelineOverlay();
+    RenderGuiOverlay(window, "CGLFlushDrawable");
+    RenderRebindToggleIndicatorOverlay();
+
+    return CGLFlushDrawable(ctx);
+}
+#endif
+
+#ifndef __APPLE__
 extern "C" void glXSwapBuffers(Display* dpy, GLXDrawable drawable) {
     GlXSwapBuffersFn realFn = GetRealGlXSwapBuffers();
     if (!realFn) { return; }
@@ -259,6 +287,7 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window) {
 
     realFn(window);
 }
+#endif // !__APPLE__
 
 bool IsMainFramebufferDrawTarget() {
     GLint drawFramebuffer = 0;

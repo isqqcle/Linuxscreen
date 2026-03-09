@@ -1034,6 +1034,8 @@ int GetNativeRepeatDelayMsForWarning() {
     }
 
     int repeatDelayMs = 33;
+    bool shouldCache = true;
+#ifndef __APPLE__
     Display* dpy = glXGetCurrentDisplay();
     if (dpy != nullptr) {
         unsigned int delay = 0;
@@ -1042,10 +1044,12 @@ int GetNativeRepeatDelayMsForWarning() {
             repeatDelayMs = static_cast<int>(interval);
         }
     }
+    shouldCache = (dpy != nullptr);
+#endif
 
     repeatDelayMs = std::max(1, repeatDelayMs);
 
-    if (dpy != nullptr) {
+    if (shouldCache) {
         std::lock_guard<std::mutex> lock(cacheMutex);
         cachedRepeatDelayMs = repeatDelayMs;
     }

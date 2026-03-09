@@ -2,7 +2,11 @@
 
 #include "mirror/mirror_mode_state.h"
 
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#else
 #include <GL/gl.h>
+#endif
 #include <cstdint>
 
 namespace platform::x11 {

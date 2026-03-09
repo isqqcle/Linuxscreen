@@ -18,6 +18,7 @@ void DestroyMirrorInstance(X11MirrorInstance& inst) {
     inst.contentPboH = 0;
     inst.hasValidContent = false;
     inst.hasFrameContent = false;
+    inst.contentDetectionPending = false;
 }
 
 void DestroyAllInstances() {
@@ -128,15 +129,12 @@ void EnsureMirrorResources(const ResolvedMirrorRender& resolved, X11MirrorInstan
     }
 }
 
-bool DetectMirrorFrameContent(X11MirrorInstance& inst, int sourceFbo, int sourceW, int sourceH) {
+// Ensure the downsample FBO/texture and PBO exist at the right size for
+// content detection.  Shared setup used by both the async and sync paths.
+void EnsureContentDetectionResources(X11MirrorInstance& inst, int sourceW, int sourceH) {
     constexpr int kDetectMax = 64;
-    constexpr int kDetectStep = 4;
-
     const int detW = std::min(sourceW, kDetectMax);
     const int detH = std::min(sourceH, kDetectMax);
-    if (detW <= 0 || detH <= 0) {
-        return false;
-    }
 
     if (inst.contentDownsampleFbo == 0 || inst.contentDownsampleTex == 0 ||
         inst.contentDownW != detW || inst.contentDownH != detH) {
@@ -173,6 +171,18 @@ bool DetectMirrorFrameContent(X11MirrorInstance& inst, int sourceFbo, int source
         inst.contentPboW = detW;
         inst.contentPboH = detH;
     }
+}
+
+// Initiate an async PBO read for content detection.  The blit + glReadPixels
+// into the PBO return immediately (GPU-side async).  The result is consumed
+// on the *next* frame via ReadContentDetectionResult().
+void InitiateContentDetectionRead(X11MirrorInstance& inst, int sourceFbo, int sourceW, int sourceH) {
+    constexpr int kDetectMax = 64;
+    const int detW = std::min(sourceW, kDetectMax);
+    const int detH = std::min(sourceH, kDetectMax);
+    if (detW <= 0 || detH <= 0) { return; }
+
+    EnsureContentDetectionResources(inst, sourceW, sourceH);
 
     g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(sourceFbo));
     g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, inst.contentDownsampleFbo);
@@ -181,6 +191,32 @@ bool DetectMirrorFrameContent(X11MirrorInstance& inst, int sourceFbo, int source
     g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, inst.contentDownsampleFbo);
     g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, inst.contentDetectionPbo);
     glReadPixels(0, 0, detW, detH, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+
+    inst.contentDetectionPending = true;
+}
+
+// Map the PBO that was written in a previous frame and check alpha.
+// Because the GPU work is from a previous frame, this should complete
+// without stalling (or with a negligible stall).
+bool ReadContentDetectionResult(X11MirrorInstance& inst) {
+    constexpr int kDetectStep = 4;
+
+    if (!inst.contentDetectionPending || !inst.contentDetectionPbo) {
+        return inst.hasFrameContent;
+    }
+
+    const int detW = inst.contentPboW;
+    const int detH = inst.contentPboH;
+    if (detW <= 0 || detH <= 0) {
+        inst.contentDetectionPending = false;
+        return false;
+    }
+
+    g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, inst.contentDetectionPbo);
 
     bool hasContent = false;
     const unsigned char* mapped = static_cast<const unsigned char*>(
@@ -199,9 +235,7 @@ bool DetectMirrorFrameContent(X11MirrorInstance& inst, int sourceFbo, int source
     }
 
     g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-
+    inst.contentDetectionPending = false;
     return hasContent;
 }
 
@@ -522,9 +556,18 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             !useRaw &&
             config.border.type == platform::config::MirrorBorderType::Static &&
             config.border.staticThickness > 0;
-        const bool hasFrameContent = needsFrameContentDetection
-            ? DetectMirrorFrameContent(inst, inst.filterFbo, fboW, fboH)
-            : true;
+
+        // Async content detection: read the *previous* frame's PBO result
+        // (should be ready by now, no stall), then initiate this frame's read.
+        bool hasFrameContent = true;
+        if (needsFrameContentDetection) {
+            if (inst.contentDetectionPending) {
+                hasFrameContent = ReadContentDetectionResult(inst);
+            } else {
+                hasFrameContent = inst.hasFrameContent;
+            }
+            InitiateContentDetectionRead(inst, inst.filterFbo, fboW, fboH);
+        }
 
         // ===== PASS 2: Border/render pass =====
         // Write to back buffer (will be flipped after processing)
@@ -596,9 +639,37 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
     }
 
     if (!pendingPublishes.empty()) {
-        // Finish the batch once before publishing new front buffers so readers never
-        // sample partially rendered textures from a shared context.
-        glFinish();
+#ifdef __APPLE__
+        // macOS inline path: same GL context as the game thread. GL guarantees
+        // command ordering within a single context, so glFinish is unnecessary.
+        // glFlush submits the commands to the GPU without blocking the CPU.
+        glFlush();
+#else
+        // Linux worker thread: the worker and game thread use separate GL
+        // contexts that share textures. We need to ensure the game thread's
+        // overlay renderer doesn't sample textures that are still being
+        // rendered to.
+        //
+        // If glWaitSync is available, use glFlush + fence. The overlay
+        // renderer will call glWaitSync (a non-blocking GPU-side wait) before
+        // reading the textures. This avoids blocking either CPU thread.
+        //
+        // Fall back to glFinish when glWaitSync is not available.
+        if (g_gl.waitSync && g_gl.fenceSync) {
+            glFlush();
+            GLsync newFence = g_gl.fenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            {
+                std::lock_guard<std::mutex> lock(g_publishFenceMutex);
+                GLsync oldFence = g_publishFence;
+                g_publishFence = newFence;
+                if (oldFence) {
+                    EnqueueStaleFence(oldFence);
+                }
+            }
+        } else {
+            glFinish();
+        }
+#endif
 
         for (const PendingMirrorPublish& pending : pendingPublishes) {
             pending.instance->frontIdx.store(pending.backIdx, std::memory_order_release);
@@ -680,6 +751,9 @@ void WorkerThreadMain() {
         }
 
         // Wait on fence for texture data to be ready
+#ifdef __APPLE__
+        (void)slot; // CGL shared contexts have implicit sync; no fence needed
+#else
         if (slot.fence && g_gl.clientWaitSync) {
             GLenum waitResult = g_gl.clientWaitSync(slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 16'000'000); // 16ms
             g_gl.deleteSync(slot.fence);
@@ -699,6 +773,7 @@ void WorkerThreadMain() {
                 continue; // Skip this frame
             }
         }
+#endif
 
         if (!shadersInitialized) {
             if (!InitMirrorShaders()) {
@@ -709,6 +784,15 @@ void WorkerThreadMain() {
         }
 
         ProcessAllMirrorsWorker(slot.width, slot.height, slot);
+    }
+
+    // Clean up publish fence
+    {
+        std::lock_guard<std::mutex> lock(g_publishFenceMutex);
+        if (g_publishFence && g_gl.deleteSync) {
+            g_gl.deleteSync(g_publishFence);
+            g_publishFence = nullptr;
+        }
     }
 
     DrainStaleFenceQueue();

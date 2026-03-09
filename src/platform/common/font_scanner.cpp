@@ -36,10 +36,16 @@ std::map<std::string, std::string> ScanForFonts() {
     std::map<std::string, std::string> discoveredFonts;
     
     std::vector<std::string> searchPaths = {
+#ifdef __APPLE__
+        "/System/Library/Fonts",
+        "/Library/Fonts",
+        "~/Library/Fonts",
+#else
         "/usr/share/fonts",
         "/usr/local/share/fonts",
         "~/.local/share/fonts",
-        "~/.fonts"
+        "~/.fonts",
+#endif
     };
 
     for (const auto& rawPath : searchPaths) {

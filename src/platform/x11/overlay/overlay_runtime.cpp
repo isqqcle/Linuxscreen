@@ -25,9 +25,15 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#include <OpenGL/glext.h>
+#include <OpenGL/OpenGL.h>
+#else
 #include <GL/glx.h>
 #include <GL/glext.h>
 #include <X11/XKBlib.h>
+#endif
 #include <array>
 #include <algorithm>
 #include <atomic>

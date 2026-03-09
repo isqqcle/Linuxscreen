@@ -2,7 +2,7 @@
 
 #include "game_state_monitor.h"
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include "../x11/x11_runtime.h"
 #endif
 
@@ -32,7 +32,7 @@ void ClearLastErrorMessage() {
 bool Initialize(const BootstrapConfig& config) {
     ClearLastErrorMessage();
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     if (!x11::Initialize(config)) {
         g_backend.store(PlatformBackend::Unknown, std::memory_order_release);
         g_runtimeState.store(RuntimeState::Failed, std::memory_order_release);
@@ -53,7 +53,7 @@ bool Initialize(const BootstrapConfig& config) {
 }
 
 bool InstallHooks() {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     if (g_backend.load(std::memory_order_acquire) != PlatformBackend::X11) {
         g_runtimeState.store(RuntimeState::Failed, std::memory_order_release);
         SetLastErrorMessage("InstallHooks failed: X11 backend not initialized");
@@ -80,7 +80,7 @@ void Shutdown() {
 
     config::StopGameStateMonitor();
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     if (g_backend.load(std::memory_order_acquire) == PlatformBackend::X11) {
         x11::Shutdown();
         g_runtimeState.store(x11::GetRuntimeState(), std::memory_order_release);
@@ -96,7 +96,7 @@ void Shutdown() {
 }
 
 RuntimeHandles GetRuntimeHandles() {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     if (g_backend.load(std::memory_order_acquire) == PlatformBackend::X11) { return x11::GetRuntimeHandles(); }
 #endif
     return RuntimeHandles{};
