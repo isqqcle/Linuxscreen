@@ -276,6 +276,19 @@ void DrainImGuiInputBridgeQueue(const char* sourceLabel) {
     }
 }
 
+bool HasShortcutModifiersThatSuppressText(int nativeMods) {
+    const int suppressMask = static_cast<int>(platform::input::GlfwMod::Control) |
+                             static_cast<int>(platform::input::GlfwMod::Super);
+    return (nativeMods & suppressMask) != 0;
+}
+
+bool AreShortcutModifiersCurrentlyDown() {
+    std::lock_guard<std::mutex> lock(g_inputStateMutex);
+    return g_keyStateTracker.IsDown(platform::input::VK_CONTROL) ||
+           g_keyStateTracker.IsDown(platform::input::VK_LWIN) ||
+           g_keyStateTracker.IsDown(platform::input::VK_RWIN);
+}
+
 void ClearScissoredRect(int x, int y, int width, int height, float r, float g, float b, float a) {
     if (width <= 0 || height <= 0) { return; }
     glScissor(x, y, width, height);
@@ -880,6 +893,9 @@ void QueuePendingCharRemap(const ResolvedRebindOutput& rebindOutput, const platf
     if (event.action != platform::input::InputAction::Press && event.action != platform::input::InputAction::Repeat) {
         return;
     }
+    if (HasShortcutModifiersThatSuppressText(event.nativeMods)) {
+        return;
+    }
 
     std::lock_guard<std::mutex> lock(g_pendingCharRemapMutex);
     constexpr std::size_t kMaxPendingCharRemaps = 32;
@@ -897,6 +913,9 @@ void QueuePendingCharConsume(const platform::input::InputEvent& event) {
         return;
     }
     if (event.action != platform::input::InputAction::Press && event.action != platform::input::InputAction::Repeat) {
+        return;
+    }
+    if (HasShortcutModifiersThatSuppressText(event.nativeMods)) {
         return;
     }
 
@@ -1260,6 +1279,9 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
 
 void DispatchManagedSyntheticCharacter(GLFWwindow* window, std::uint32_t codepoint, int mods) {
     if (!window || codepoint == 0) {
+        return;
+    }
+    if (HasShortcutModifiersThatSuppressText(mods)) {
         return;
     }
 
@@ -1787,7 +1809,8 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
                     (event.action == platform::input::InputAction::Press ||
                      event.action == platform::input::InputAction::Repeat)) {
                     std::uint32_t remappedCodepoint = 0;
-                    if (TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
+                    if (!HasShortcutModifiersThatSuppressText(mods) &&
+                        TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
                         if (userCharCallback) {
                             userCharCallback(window, remappedCodepoint);
                         } else if (userCharModsCallback) {
@@ -1826,6 +1849,10 @@ void HookedGlfwCharCallback(GLFWwindow* window, unsigned int codepoint) {
     event.charCodepoint = codepoint;
     event.nativeKey = static_cast<int>(codepoint);
     PublishImGuiInputEvent(event, "glfwCharCallback");
+
+    if (AreShortcutModifiersCurrentlyDown()) {
+        return;
+    }
 
     if (platform::x11::IsGuiVisible()) { return; }
     if (platform::x11::ShouldConsumeInputForOverlay(event)) { return; }
@@ -1870,6 +1897,10 @@ void HookedGlfwCharModsCallback(GLFWwindow* window, unsigned int codepoint, int 
     event.nativeMods = mods;
     if (!g_charCallbackInstalled.load(std::memory_order_acquire)) {
         PublishImGuiInputEvent(event, "glfwCharModsCallback");
+    }
+
+    if (HasShortcutModifiersThatSuppressText(mods)) {
+        return;
     }
 
     if (platform::x11::IsGuiVisible()) { return; }
@@ -2100,7 +2131,8 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                 if (event.action == platform::input::InputAction::Press ||
                     event.action == platform::input::InputAction::Repeat) {
                     std::uint32_t remappedCodepoint = 0;
-                    if (TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
+                    if (!HasShortcutModifiersThatSuppressText(mods) &&
+                        TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
                         if (userCharCallback) {
                             userCharCallback(window, remappedCodepoint);
                         } else if (userCharModsCallback) {
