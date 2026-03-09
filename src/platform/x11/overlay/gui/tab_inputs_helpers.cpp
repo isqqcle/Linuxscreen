@@ -830,6 +830,11 @@ std::string CodepointToPreviewDisplay(std::uint32_t codepoint) {
     return CodepointToDisplay(codepoint);
 }
 
+std::string FormatCannotTypePreview(platform::input::VkCode textVk, uint32_t originalVk) {
+    const uint32_t displayVk = (textVk != platform::input::VK_NONE) ? static_cast<uint32_t>(textVk) : originalVk;
+    return "Cannot type (" + FormatSingleVk(displayVk) + ")";
+}
+
 std::string ResolveRebindTextPreview(const platform::config::KeyRebind& rebind, uint32_t originalVk, bool shiftDown) {
     const platform::input::VkCode textVk = ResolvePreviewTextVk(rebind, originalVk);
 
@@ -850,10 +855,13 @@ std::string ResolveRebindTextPreview(const platform::config::KeyRebind& rebind, 
         return CodepointToPreviewDisplay(translated);
     }
 
+    if (platform::input::IsNonTextVk(textVk)) {
+        return FormatCannotTypePreview(textVk, originalVk);
+    }
     if (textVk != platform::input::VK_NONE) {
         return FormatSingleVk(textVk);
     }
-    return FormatSingleVk(originalVk);
+    return FormatCannotTypePreview(textVk, originalVk);
 }
 
 std::string TypesValueForRebind(const platform::config::KeyRebind* rebind, uint32_t originalVk) {
@@ -869,11 +877,12 @@ std::string TypesValueForRebind(const platform::config::KeyRebind* rebind, uint3
         return baseDisplay + " / " + shiftDisplay;
     }
 
-    uint32_t textVk = (rebind->useCustomOutput && rebind->customOutputVK != 0) ? rebind->customOutputVK : rebind->toKey;
-    if (textVk == 0) {
-        textVk = originalVk;
+    const platform::input::VkCode textVk = ResolvePreviewTextVk(*rebind, originalVk);
+    if (platform::input::IsNonTextVk(textVk)) {
+        return FormatCannotTypePreview(textVk, originalVk);
     }
-    return FormatSingleVk(textVk);
+    const uint32_t displayVk = (textVk != platform::input::VK_NONE) ? static_cast<uint32_t>(textVk) : originalVk;
+    return FormatSingleVk(displayVk);
 }
 
 std::string TriggersValueForRebind(const platform::config::KeyRebind* rebind, uint32_t originalVk) {
