@@ -362,10 +362,12 @@ struct TempSensitivityOverrideState {
     float sensitivityX = 1.0f;
     float sensitivityY = 1.0f;
     int activeSensHotkeyIndex = -1;
+    bool triggerOnHold = false;
 };
 
 std::mutex g_tempSensitivityMutex;
 TempSensitivityOverrideState g_tempSensitivityOverride;
+std::vector<TempSensitivityOverrideState> g_tempSensitivityOverrideStack;
 std::mutex g_sensitivityDebounceMutex;
 std::vector<std::chrono::steady_clock::time_point> g_sensitivityHotkeyLastTriggerTimes;
 
@@ -417,6 +419,7 @@ struct ViewportPlacementBypassGuard {
 void ClearTempSensitivityOverrideInternal();
 void UpdateSensitivityStateForModeSwitchInternal(const std::string& targetMode,
                                                  const platform::config::LinuxscreenConfig& config);
+void ResetCursorSensitivityState();
 
 } // namespace
 
@@ -428,6 +431,34 @@ void SetViewportPlacementBypass(bool bypass) {
 
 void ClearTempSensitivityOverride() {
     ClearTempSensitivityOverrideInternal();
+}
+
+bool ReleaseHeldSensitivityOverrideForInputReset() {
+    bool overrideChanged = false;
+    {
+        std::lock_guard<std::mutex> lock(g_tempSensitivityMutex);
+        if (!g_tempSensitivityOverride.active || !g_tempSensitivityOverride.triggerOnHold) {
+            return false;
+        }
+
+        const TempSensitivityOverrideState restoredState =
+            g_tempSensitivityOverrideStack.empty() ? TempSensitivityOverrideState{} : g_tempSensitivityOverrideStack.back();
+        if (!g_tempSensitivityOverrideStack.empty()) {
+            g_tempSensitivityOverrideStack.pop_back();
+        }
+
+        overrideChanged = g_tempSensitivityOverride.active != restoredState.active ||
+                          std::fabs(g_tempSensitivityOverride.sensitivityX - restoredState.sensitivityX) > 0.000001f ||
+                          std::fabs(g_tempSensitivityOverride.sensitivityY - restoredState.sensitivityY) > 0.000001f ||
+                          g_tempSensitivityOverride.activeSensHotkeyIndex != restoredState.activeSensHotkeyIndex ||
+                          g_tempSensitivityOverride.triggerOnHold != restoredState.triggerOnHold;
+        g_tempSensitivityOverride = restoredState;
+    }
+
+    if (overrideChanged) {
+        ResetCursorSensitivityState();
+    }
+    return overrideChanged;
 }
 
 void UpdateSensitivityStateForModeSwitch(const std::string& targetMode, const config::LinuxscreenConfig& config) {
@@ -1171,6 +1202,8 @@ void ClearTempSensitivityOverrideInternal() {
         g_tempSensitivityOverride.sensitivityX = 1.0f;
         g_tempSensitivityOverride.sensitivityY = 1.0f;
         g_tempSensitivityOverride.activeSensHotkeyIndex = -1;
+        g_tempSensitivityOverride.triggerOnHold = false;
+        g_tempSensitivityOverrideStack.clear();
     }
     ResetCursorSensitivityState();
 }
@@ -1325,7 +1358,7 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
                                 const platform::input::InputEvent& event,
                                 const std::string& gameState,
                                 platform::input::VkCode rebindTargetVk) {
-    if (event.vk == platform::input::VK_NONE || event.action != platform::input::InputAction::Press) {
+    if (event.vk == platform::input::VK_NONE) {
         return false;
     }
 
@@ -1335,29 +1368,125 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
             continue;
         }
 
-        const bool stateAllowed = sensitivityHotkey.conditions.gameState.empty() ||
-                                  gameState.empty() ||
-                                  platform::config::HasMatchingGameStateCondition(sensitivityHotkey.conditions.gameState, gameState);
-        if (!stateAllowed) {
-            continue;
-        }
+        auto matchesHotkeyWithFallback = [&](bool triggerOnRelease, bool& matchedViaRebind) {
+            matchedViaRebind = false;
+            bool matched = platform::input::MatchesHotkey(tracker,
+                                                          sensitivityHotkey.keys,
+                                                          event,
+                                                          sensitivityHotkey.conditions.exclusions,
+                                                          triggerOnRelease);
+            if (matched || rebindTargetVk == platform::input::VK_NONE) {
+                return matched;
+            }
 
-        bool matchedViaRebind = false;
-        bool matched = platform::input::MatchesHotkey(tracker,
-                                                      sensitivityHotkey.keys,
-                                                      event,
-                                                      sensitivityHotkey.conditions.exclusions,
-                                                      false);
-        if (!matched && rebindTargetVk != platform::input::VK_NONE) {
             platform::input::InputEvent fallbackEvent = event;
             fallbackEvent.vk = rebindTargetVk;
             matched = platform::input::MatchesHotkey(tracker,
                                                      sensitivityHotkey.keys,
                                                      fallbackEvent,
                                                      sensitivityHotkey.conditions.exclusions,
-                                                     false);
+                                                     triggerOnRelease);
             matchedViaRebind = matched;
+            return matched;
+        };
+
+        if (sensitivityHotkey.triggerOnHold) {
+            if (event.action == platform::input::InputAction::Press) {
+                const bool stateAllowed = sensitivityHotkey.conditions.gameState.empty() ||
+                                          gameState.empty() ||
+                                          platform::config::HasMatchingGameStateCondition(sensitivityHotkey.conditions.gameState, gameState);
+                if (!stateAllowed) {
+                    continue;
+                }
+
+                bool matchedViaRebind = false;
+                if (!matchesHotkeyWithFallback(false, matchedViaRebind)) {
+                    continue;
+                }
+
+                if (!CheckSensitivityHotkeyDebounce(sensIndex, sensitivityHotkey.debounce)) {
+                    continue;
+                }
+
+                float nextSensitivityX = sensitivityHotkey.sensitivity;
+                float nextSensitivityY = sensitivityHotkey.sensitivity;
+                if (sensitivityHotkey.separateXY) {
+                    nextSensitivityX = sensitivityHotkey.sensitivityX;
+                    nextSensitivityY = sensitivityHotkey.sensitivityY;
+                }
+
+                bool overrideChanged = false;
+                {
+                    std::lock_guard<std::mutex> lock(g_tempSensitivityMutex);
+                    const bool sensitivityChanged = !g_tempSensitivityOverride.active ||
+                                                   std::fabs(g_tempSensitivityOverride.sensitivityX - nextSensitivityX) > 0.000001f ||
+                                                   std::fabs(g_tempSensitivityOverride.sensitivityY - nextSensitivityY) > 0.000001f;
+                    const bool hotkeyIndexChanged = !g_tempSensitivityOverride.active ||
+                                                   g_tempSensitivityOverride.activeSensHotkeyIndex != static_cast<int>(sensIndex) ||
+                                                   !g_tempSensitivityOverride.triggerOnHold;
+                    overrideChanged = sensitivityChanged || hotkeyIndexChanged;
+
+                    g_tempSensitivityOverrideStack.push_back(g_tempSensitivityOverride);
+                    g_tempSensitivityOverride.active = true;
+                    g_tempSensitivityOverride.sensitivityX = nextSensitivityX;
+                    g_tempSensitivityOverride.sensitivityY = nextSensitivityY;
+                    g_tempSensitivityOverride.activeSensHotkeyIndex = static_cast<int>(sensIndex);
+                    g_tempSensitivityOverride.triggerOnHold = true;
+                }
+
+                if (overrideChanged) {
+                    ResetCursorSensitivityState();
+                }
+                return matchedViaRebind;
+            }
+
+            if (event.action != platform::input::InputAction::Release) {
+                continue;
+            }
+
+            bool matchedViaRebind = false;
+            if (!matchesHotkeyWithFallback(true, matchedViaRebind)) {
+                continue;
+            }
+
+            bool overrideChanged = false;
+            {
+                std::lock_guard<std::mutex> lock(g_tempSensitivityMutex);
+                if (!g_tempSensitivityOverride.active ||
+                    !g_tempSensitivityOverride.triggerOnHold ||
+                    g_tempSensitivityOverride.activeSensHotkeyIndex != static_cast<int>(sensIndex)) {
+                    continue;
+                }
+
+                const TempSensitivityOverrideState restoredState =
+                    g_tempSensitivityOverrideStack.empty() ? TempSensitivityOverrideState{} : g_tempSensitivityOverrideStack.back();
+                if (!g_tempSensitivityOverrideStack.empty()) {
+                    g_tempSensitivityOverrideStack.pop_back();
+                }
+
+                overrideChanged = g_tempSensitivityOverride.active != restoredState.active ||
+                                  std::fabs(g_tempSensitivityOverride.sensitivityX - restoredState.sensitivityX) > 0.000001f ||
+                                  std::fabs(g_tempSensitivityOverride.sensitivityY - restoredState.sensitivityY) > 0.000001f ||
+                                  g_tempSensitivityOverride.activeSensHotkeyIndex != restoredState.activeSensHotkeyIndex ||
+                                  g_tempSensitivityOverride.triggerOnHold != restoredState.triggerOnHold;
+                g_tempSensitivityOverride = restoredState;
+            }
+
+            if (overrideChanged) {
+                ResetCursorSensitivityState();
+            }
+            return matchedViaRebind;
         }
+
+        const bool stateAllowed = sensitivityHotkey.conditions.gameState.empty() ||
+                                  gameState.empty() ||
+                                  platform::config::HasMatchingGameStateCondition(sensitivityHotkey.conditions.gameState, gameState);
+        if (!stateAllowed || event.action != platform::input::InputAction::Press) {
+            continue;
+        }
+
+        bool matchedViaRebind = false;
+        const bool matched = matchesHotkeyWithFallback(false, matchedViaRebind);
         if (!matched) {
             continue;
         }
@@ -1372,7 +1501,8 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
             std::lock_guard<std::mutex> lock(g_tempSensitivityMutex);
             if (sensitivityHotkey.toggle &&
                 g_tempSensitivityOverride.active &&
-                g_tempSensitivityOverride.activeSensHotkeyIndex == static_cast<int>(sensIndex)) {
+                g_tempSensitivityOverride.activeSensHotkeyIndex == static_cast<int>(sensIndex) &&
+                !g_tempSensitivityOverride.triggerOnHold) {
                 clearOverride = true;
             } else {
                 float nextSensitivityX = sensitivityHotkey.sensitivity;
@@ -1388,10 +1518,12 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
                 const bool hotkeyIndexChanged = g_tempSensitivityOverride.activeSensHotkeyIndex != nextHotkeyIndex;
                 overrideChanged = !g_tempSensitivityOverride.active || sensitivityChanged || hotkeyIndexChanged;
 
+                g_tempSensitivityOverrideStack.clear();
                 g_tempSensitivityOverride.active = true;
                 g_tempSensitivityOverride.sensitivityX = nextSensitivityX;
                 g_tempSensitivityOverride.sensitivityY = nextSensitivityY;
                 g_tempSensitivityOverride.activeSensHotkeyIndex = nextHotkeyIndex;
+                g_tempSensitivityOverride.triggerOnHold = false;
             }
         }
 
@@ -1416,8 +1548,10 @@ bool HotkeyConfigMatches(const platform::config::HotkeyConfig& lhs,
     if (lhs.keys != rhs.keys ||
         lhs.mainMode != rhs.mainMode ||
         lhs.secondaryMode != rhs.secondaryMode ||
+        lhs.returnMode != rhs.returnMode ||
         lhs.debounce != rhs.debounce ||
         lhs.triggerOnRelease != rhs.triggerOnRelease ||
+        lhs.triggerOnHold != rhs.triggerOnHold ||
         lhs.blockKeyFromGame != rhs.blockKeyFromGame ||
         lhs.returnToDefaultOnRepeat != rhs.returnToDefaultOnRepeat ||
         lhs.allowExitToFullscreenRegardlessOfGameState != rhs.allowExitToFullscreenRegardlessOfGameState ||

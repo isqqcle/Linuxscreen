@@ -147,8 +147,10 @@ HotkeyConfig CreateNewHotkey(const std::string& targetMode) {
     hk.keys = { 0x11 };  // Default to Ctrl key (VK_CONTROL)
     hk.mainMode = targetMode;
     hk.secondaryMode = "";
+    hk.returnMode = "";
     hk.debounce = 100;
     hk.triggerOnRelease = false;
+    hk.triggerOnHold = false;
     hk.blockKeyFromGame = false;
     return hk;
 }
@@ -250,6 +252,9 @@ void RenameModeInHotkeys(LinuxscreenConfig& config, const std::string& oldName, 
         if (hotkey.secondaryMode == oldName) {
             hotkey.secondaryMode = newName;
         }
+        if (hotkey.returnMode == oldName) {
+            hotkey.returnMode = newName;
+        }
         for (auto& alt : hotkey.altSecondaryModes) {
             if (alt.mode == oldName) {
                 alt.mode = newName;
@@ -273,6 +278,9 @@ void RemoveModeFromHotkeys(LinuxscreenConfig& config, const std::string& modeNam
 
         if (hotkey.secondaryMode == modeName) {
             hotkey.secondaryMode.clear();
+        }
+        if (hotkey.returnMode == modeName) {
+            hotkey.returnMode.clear();
         }
 
         hotkey.altSecondaryModes.erase(std::remove_if(hotkey.altSecondaryModes.begin(),

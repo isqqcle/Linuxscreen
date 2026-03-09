@@ -51,35 +51,62 @@ bool MatchesHotkeyWithFallback(const KeyStateTracker& tracker,
 void ComputeMainBindingTarget(const config::HotkeyConfig& hotkey,
                               const std::string& selectedSecondaryMode,
                               const std::string& currentMode,
-                              const std::string& defaultMode,
+                              const std::string& returnMode,
+                              bool allowReturnWhenActive,
                               std::string& outTargetMode,
                               bool& outExitTransition) {
     outTargetMode = selectedSecondaryMode;
     outExitTransition = false;
 
     if (!selectedSecondaryMode.empty() &&
+        allowReturnWhenActive &&
         hotkey.returnToDefaultOnRepeat &&
-        !defaultMode.empty() &&
+        !returnMode.empty() &&
         currentMode == selectedSecondaryMode &&
-        defaultMode != currentMode) {
-        outTargetMode = defaultMode;
+        returnMode != currentMode) {
+        outTargetMode = returnMode;
         outExitTransition = true;
     }
 }
 
-void ComputeAltBindingTarget(const std::string& selectedSecondaryMode,
+void ComputeAltBindingTarget(const config::HotkeyConfig& hotkey,
+                             const std::string& selectedSecondaryMode,
                              const config::AltSecondaryModeConfig& alt,
                              const std::string& baseSecondaryMode,
+                             const std::string& returnMode,
                              const std::string& currentMode,
+                             bool allowReturnWhenActive,
                              std::string& outTargetMode,
                              bool& outExitTransition,
                              std::string& outNextSecondaryMode) {
+    if (allowReturnWhenActive &&
+        hotkey.returnToDefaultOnRepeat &&
+        !returnMode.empty() &&
+        !alt.mode.empty() &&
+        currentMode == alt.mode &&
+        returnMode != currentMode) {
+        outNextSecondaryMode = baseSecondaryMode;
+        outTargetMode = returnMode;
+        outExitTransition = true;
+        return;
+    }
+
     outNextSecondaryMode = (selectedSecondaryMode == alt.mode) ? baseSecondaryMode : alt.mode;
     outTargetMode = outNextSecondaryMode;
     outExitTransition = !selectedSecondaryMode.empty() &&
                         !alt.mode.empty() &&
                         selectedSecondaryMode == alt.mode &&
                         currentMode == selectedSecondaryMode;
+}
+
+std::string ResolveReturnMode(const config::HotkeyConfig& hotkey, const std::string& defaultMode) {
+    if (!hotkey.returnMode.empty()) {
+        return hotkey.returnMode;
+    }
+    if (!hotkey.secondaryMode.empty() && !hotkey.mainMode.empty()) {
+        return hotkey.mainMode;
+    }
+    return defaultMode;
 }
 
 } // namespace
@@ -100,6 +127,18 @@ void HotkeyDispatcher::SetHotkeys(std::vector<config::HotkeyConfig> hotkeys) {
     pendingTriggerViaRebind_.clear();
     pendingTriggerViaRebind_.resize(hotkeys_.size(), false);
 
+    activeHoldVariant_.clear();
+    activeHoldVariant_.resize(hotkeys_.size(), kNoPendingVariant);
+
+    activeHoldViaRebind_.clear();
+    activeHoldViaRebind_.resize(hotkeys_.size(), false);
+
+    activeHoldTargetModes_.clear();
+    activeHoldTargetModes_.resize(hotkeys_.size());
+
+    activeHoldReturnModes_.clear();
+    activeHoldReturnModes_.resize(hotkeys_.size());
+
     currentSecondaryModes_.clear();
     currentSecondaryModes_.reserve(hotkeys_.size());
     for (const auto& hotkey : hotkeys_) {
@@ -119,10 +158,11 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
         return HotkeyEvaluationResult{};
     }
 
-    auto evaluateBindingForHotkey = [&](std::size_t hotkeyIndex, bool triggerOnRelease) {
+    auto evaluateBindingForHotkey = [&](std::size_t hotkeyIndex, bool triggerOnRelease, bool allowReturnWhenActive) {
         BindingEvaluation result;
         const config::HotkeyConfig& hotkey = hotkeys_[hotkeyIndex];
         const std::string baseSecondaryMode = GetBaseSecondaryMode(hotkey);
+        const std::string returnMode = ResolveReturnMode(hotkey, defaultMode);
         std::string selectedSecondaryMode = baseSecondaryMode;
         if (hotkeyIndex < currentSecondaryModes_.size() && !currentSecondaryModes_[hotkeyIndex].empty()) {
             selectedSecondaryMode = currentSecondaryModes_[hotkeyIndex];
@@ -164,10 +204,13 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
             std::string targetMode;
             bool isExitTransition = false;
             std::string nextSecondaryMode;
-            ComputeAltBindingTarget(selectedSecondaryMode,
+            ComputeAltBindingTarget(hotkey,
+                                    selectedSecondaryMode,
                                     alt,
                                     baseSecondaryMode,
+                                    returnMode,
                                     currentMode,
+                                    allowReturnWhenActive,
                                     targetMode,
                                     isExitTransition,
                                     nextSecondaryMode);
@@ -183,7 +226,13 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
 
         std::string targetMode;
         bool isExitTransition = false;
-        ComputeMainBindingTarget(hotkey, selectedSecondaryMode, currentMode, defaultMode, targetMode, isExitTransition);
+        ComputeMainBindingTarget(hotkey,
+                                 selectedSecondaryMode,
+                                 currentMode,
+                                 returnMode,
+                                 allowReturnWhenActive,
+                                 targetMode,
+                                 isExitTransition);
         (void)tryBinding(hotkey.keys, kMainVariant, targetMode, isExitTransition, false, selectedSecondaryMode);
         return result;
     };
@@ -195,11 +244,11 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
     if (event.action == InputAction::Press) {
         for (std::size_t i = 0; i < hotkeys_.size(); ++i) {
             const auto& hotkey = hotkeys_[i];
-            if (!hotkey.triggerOnRelease) {
+            if (!hotkey.triggerOnRelease || hotkey.triggerOnHold) {
                 continue;
             }
 
-            const BindingEvaluation pressMatch = evaluateBindingForHotkey(i, false);
+            const BindingEvaluation pressMatch = evaluateBindingForHotkey(i, false, true);
             if (pressMatch.matched) {
                 pressMatchedVariant[i] = pressMatch.variantIndex;
                 pressMatchedViaFallback[i] = pressMatch.matchedViaFallback;
@@ -223,6 +272,66 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
         const auto& hotkey = hotkeys_[i];
         bool blockKeyFromGame = hotkey.blockKeyFromGame;
 
+        if (hotkey.triggerOnHold) {
+            if (event.action == InputAction::Press) {
+                const BindingEvaluation holdPressMatch = evaluateBindingForHotkey(i, false, false);
+                if (!holdPressMatch.matched) {
+                    continue;
+                }
+
+                if (holdPressMatch.matchedViaFallback) {
+                    blockKeyFromGame = true;
+                }
+
+                if (!CheckDebounce(i, hotkey.debounce, now)) {
+                    return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
+                }
+
+                activeHoldVariant_[i] = holdPressMatch.variantIndex;
+                activeHoldViaRebind_[i] = holdPressMatch.matchedViaFallback;
+                activeHoldTargetModes_[i] = holdPressMatch.targetMode;
+                activeHoldReturnModes_[i] = ResolveReturnMode(hotkey, defaultMode);
+                lastTriggerTimes_[i] = now;
+
+                if (holdPressMatch.targetMode.empty() || currentMode == holdPressMatch.targetMode) {
+                    return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
+                }
+
+                return HotkeyEvaluationResult{holdPressMatch.targetMode, i, true, true, blockKeyFromGame};
+            }
+
+            if (event.action != InputAction::Release) {
+                continue;
+            }
+
+            const BindingEvaluation holdReleaseMatch = evaluateBindingForHotkey(i, true, false);
+            if (!holdReleaseMatch.matched) {
+                continue;
+            }
+
+            if (holdReleaseMatch.matchedViaFallback || activeHoldViaRebind_[i]) {
+                blockKeyFromGame = true;
+            }
+
+            const bool wasHolding = (activeHoldVariant_[i] == holdReleaseMatch.variantIndex);
+            const std::string heldTargetMode = activeHoldTargetModes_[i];
+            const std::string returnMode = activeHoldReturnModes_[i];
+            activeHoldVariant_[i] = kNoPendingVariant;
+            activeHoldViaRebind_[i] = false;
+            activeHoldTargetModes_[i].clear();
+            activeHoldReturnModes_[i].clear();
+
+            if (!wasHolding) {
+                return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
+            }
+
+            if (heldTargetMode.empty() || currentMode != heldTargetMode || returnMode.empty() || returnMode == currentMode) {
+                return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
+            }
+
+            return HotkeyEvaluationResult{returnMode, i, true, true, blockKeyFromGame};
+        }
+
         if (hotkey.triggerOnRelease) {
             if (event.action == InputAction::Press) {
                 if (pressMatchedVariant[i] == kNoPendingVariant) {
@@ -232,14 +341,14 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
                 if (pressMatchedViaFallback[i] || pendingTriggerViaRebind_[i]) {
                     blockKeyFromGame = true;
                 }
-                return HotkeyEvaluationResult{"", i, false, blockKeyFromGame};
+                return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
             }
 
             if (event.action != InputAction::Release) {
                 continue;
             }
 
-            const BindingEvaluation releaseMatch = evaluateBindingForHotkey(i, true);
+            const BindingEvaluation releaseMatch = evaluateBindingForHotkey(i, true, true);
             if (!releaseMatch.matched) {
                 continue;
             }
@@ -255,21 +364,21 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
             pendingTriggerViaRebind_[i] = false;
 
             if (!wasPending || wasInvalidated) {
-                return HotkeyEvaluationResult{"", i, false, blockKeyFromGame};
+                return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
             }
 
             if (!CheckDebounce(i, hotkey.debounce, now)) {
-                return HotkeyEvaluationResult{"", i, false, blockKeyFromGame};
+                return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
             }
 
             if (releaseMatch.updateSecondaryMode && i < currentSecondaryModes_.size()) {
                 currentSecondaryModes_[i] = releaseMatch.nextSecondaryMode;
             }
             lastTriggerTimes_[i] = now;
-            return HotkeyEvaluationResult{releaseMatch.targetMode, i, true, blockKeyFromGame};
+            return HotkeyEvaluationResult{releaseMatch.targetMode, i, true, true, blockKeyFromGame};
         }
 
-        const BindingEvaluation match = evaluateBindingForHotkey(i, false);
+        const BindingEvaluation match = evaluateBindingForHotkey(i, false, true);
         if (!match.matched) {
             continue;
         }
@@ -279,14 +388,14 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
         }
 
         if (!CheckDebounce(i, hotkey.debounce, now)) {
-            return HotkeyEvaluationResult{"", i, false, blockKeyFromGame};
+            return HotkeyEvaluationResult{"", i, true, false, blockKeyFromGame};
         }
 
         if (match.updateSecondaryMode && i < currentSecondaryModes_.size()) {
             currentSecondaryModes_[i] = match.nextSecondaryMode;
         }
         lastTriggerTimes_[i] = now;
-        return HotkeyEvaluationResult{match.targetMode, i, true, blockKeyFromGame};
+        return HotkeyEvaluationResult{match.targetMode, i, true, true, blockKeyFromGame};
     }
 
     return HotkeyEvaluationResult{};
@@ -339,11 +448,54 @@ void HotkeyDispatcher::ResetSecondaryModes() {
     for (std::size_t i = 0; i < pendingTriggerViaRebind_.size(); ++i) {
         pendingTriggerViaRebind_[i] = false;
     }
+    for (std::size_t i = 0; i < activeHoldVariant_.size(); ++i) {
+        activeHoldVariant_[i] = kNoPendingVariant;
+    }
+    for (std::size_t i = 0; i < activeHoldViaRebind_.size(); ++i) {
+        activeHoldViaRebind_[i] = false;
+    }
+    for (std::size_t i = 0; i < activeHoldTargetModes_.size(); ++i) {
+        activeHoldTargetModes_[i].clear();
+    }
+    for (std::size_t i = 0; i < activeHoldReturnModes_.size(); ++i) {
+        activeHoldReturnModes_[i].clear();
+    }
     currentSecondaryModes_.clear();
     currentSecondaryModes_.reserve(hotkeys_.size());
     for (const auto& hotkey : hotkeys_) {
         currentSecondaryModes_.push_back(GetBaseSecondaryMode(hotkey));
     }
+}
+
+std::optional<std::string> HotkeyDispatcher::ReleaseHeldModeForInputReset(const std::string& currentMode) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::optional<std::string> returnMode;
+    for (std::size_t i = 0; i < pendingTriggerVariant_.size(); ++i) {
+        pendingTriggerVariant_[i] = kNoPendingVariant;
+    }
+    for (std::size_t i = 0; i < invalidatedTriggerOnRelease_.size(); ++i) {
+        invalidatedTriggerOnRelease_[i] = false;
+    }
+    for (std::size_t i = 0; i < pendingTriggerViaRebind_.size(); ++i) {
+        pendingTriggerViaRebind_[i] = false;
+    }
+
+    for (std::size_t i = 0; i < activeHoldVariant_.size(); ++i) {
+        if (activeHoldVariant_[i] != kNoPendingVariant &&
+            activeHoldTargetModes_[i] == currentMode &&
+            !activeHoldReturnModes_[i].empty() &&
+            activeHoldReturnModes_[i] != currentMode) {
+            returnMode = activeHoldReturnModes_[i];
+        }
+
+        activeHoldVariant_[i] = kNoPendingVariant;
+        activeHoldViaRebind_[i] = false;
+        activeHoldTargetModes_[i].clear();
+        activeHoldReturnModes_[i].clear();
+    }
+
+    return returnMode;
 }
 
 std::vector<config::HotkeyConfig> HotkeyDispatcher::GetHotkeys() const {

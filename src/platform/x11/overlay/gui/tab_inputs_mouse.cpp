@@ -82,6 +82,18 @@ void RenderMouseInputsTab(platform::config::LinuxscreenConfig& config, bool isCa
             bool toggle = sensitivityHotkey.toggle;
             if (ImGui::Checkbox("Toggle on repeated press", &toggle)) {
                 sensitivityHotkey.toggle = toggle;
+                if (sensitivityHotkey.toggle) {
+                    sensitivityHotkey.triggerOnHold = false;
+                }
+                AutoSaveConfig(config);
+            }
+
+            bool triggerOnHold = sensitivityHotkey.triggerOnHold;
+            if (ImGui::Checkbox("Return on release (hold action)", &triggerOnHold)) {
+                sensitivityHotkey.triggerOnHold = triggerOnHold;
+                if (sensitivityHotkey.triggerOnHold) {
+                    sensitivityHotkey.toggle = false;
+                }
                 AutoSaveConfig(config);
             }
 

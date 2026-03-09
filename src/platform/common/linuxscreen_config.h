@@ -202,6 +202,7 @@ struct HotkeyConfig {
     std::vector<uint32_t> keys;
     std::string mainMode;
     std::string secondaryMode;
+    std::string returnMode;
     std::vector<AltSecondaryModeConfig> altSecondaryModes;
     HotkeyConditions conditions;
     int debounce = 100;
@@ -219,6 +220,7 @@ struct SensitivityHotkeyConfig {
     float sensitivityX = 1.0f;
     float sensitivityY = 1.0f;
     bool toggle = false;
+    bool triggerOnHold = false;
     HotkeyConditions conditions;
     int debounce = 100;
 };

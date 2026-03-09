@@ -92,13 +92,47 @@ void RenderHotkeysTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
                 ImGui::Indent();
 
-                bool returnToDefault = hk.returnToDefaultOnRepeat;
-                if (ImGui::Checkbox("Return to default if active", &returnToDefault)) {
-                    hk.returnToDefaultOnRepeat = returnToDefault;
+                bool returnWhenActive = hk.returnToDefaultOnRepeat;
+                if (ImGui::Checkbox("Return when active", &returnWhenActive)) {
+                    hk.returnToDefaultOnRepeat = returnWhenActive;
                     AutoSaveConfig(config);
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("When enabled, pressing this hotkey while the target mode is already active will return to the default mode");
+                    ImGui::SetTooltip("When enabled, pressing this hotkey while the target mode is already active will switch to the selected return mode");
+                }
+
+                if (hk.returnToDefaultOnRepeat || hk.triggerOnHold) {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(-1.0f);
+                    const std::string returnMode = GetHotkeyReturnMode(hk, config);
+                    const char* returnPreview = returnMode.empty() ? "<no return mode>" : returnMode.c_str();
+                    if (ImGui::BeginCombo("##returnmode", returnPreview)) {
+                        const bool defaultSelected = config.defaultMode.empty() ? returnMode.empty() : returnMode == config.defaultMode;
+                        if (!config.defaultMode.empty()) {
+                            if (ImGui::Selectable(config.defaultMode.c_str(), defaultSelected)) {
+                                SetHotkeyReturnMode(hk, config, config.defaultMode);
+                                AutoSaveConfig(config);
+                            }
+                            if (defaultSelected) {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        for (const auto& mode : config.modes) {
+                            if (mode.name.empty() || mode.name == config.defaultMode) continue;
+                            const bool isSelected = (returnMode == mode.name);
+                            if (ImGui::Selectable(mode.name.c_str(), isSelected)) {
+                                SetHotkeyReturnMode(hk, config, mode.name);
+                                AutoSaveConfig(config);
+                            }
+                            if (isSelected) {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Used for both \"Return when active\" and hold-style return-on-release behavior");
+                    }
                 }
 
                 bool allowExitBypass = hk.allowExitToFullscreenRegardlessOfGameState;
@@ -110,6 +144,18 @@ void RenderHotkeysTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 bool triggerOnRelease = hk.triggerOnRelease;
                 if (ImGui::Checkbox("Trigger on bound input release", &triggerOnRelease)) {
                     hk.triggerOnRelease = triggerOnRelease;
+                    if (hk.triggerOnRelease) {
+                        hk.triggerOnHold = false;
+                    }
+                    AutoSaveConfig(config);
+                }
+
+                bool triggerOnHold = hk.triggerOnHold;
+                if (ImGui::Checkbox("Return on release (hold action)", &triggerOnHold)) {
+                    hk.triggerOnHold = triggerOnHold;
+                    if (hk.triggerOnHold) {
+                        hk.triggerOnRelease = false;
+                    }
                     AutoSaveConfig(config);
                 }
 

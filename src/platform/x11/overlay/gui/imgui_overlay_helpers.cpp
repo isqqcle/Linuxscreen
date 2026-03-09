@@ -125,6 +125,7 @@ void AddNewHotkey(platform::config::LinuxscreenConfig& config, const std::string
     newHotkey.altSecondaryModes.clear();
     newHotkey.debounce = 100;
     newHotkey.triggerOnRelease = false;
+    newHotkey.triggerOnHold = false;
     newHotkey.blockKeyFromGame = false;
     config.hotkeys.push_back(std::move(newHotkey));
 }
@@ -150,6 +151,27 @@ void SetHotkeyTargetMode(platform::config::HotkeyConfig& hotkey, const std::stri
         return;
     }
     hotkey.mainMode = modeName;
+}
+
+std::string GetHotkeyReturnMode(const platform::config::HotkeyConfig& hotkey,
+                                const platform::config::LinuxscreenConfig& config) {
+    if (!hotkey.returnMode.empty()) {
+        return hotkey.returnMode;
+    }
+    if (!hotkey.secondaryMode.empty() && !hotkey.mainMode.empty()) {
+        return hotkey.mainMode;
+    }
+    return config.defaultMode;
+}
+
+void SetHotkeyReturnMode(platform::config::HotkeyConfig& hotkey,
+                         const platform::config::LinuxscreenConfig& config,
+                         const std::string& modeName) {
+    if (modeName.empty() || (!config.defaultMode.empty() && modeName == config.defaultMode)) {
+        hotkey.returnMode.clear();
+        return;
+    }
+    hotkey.returnMode = modeName;
 }
 
 void ResetHotkeyCaptureModalState() {

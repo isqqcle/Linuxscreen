@@ -50,10 +50,35 @@ void DispatchCurrentFreeCursorPosition(GLFWwindow* window);
 
 void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
     std::vector<platform::input::VkCode> downKeys;
+    std::optional<std::string> modeToRestore;
     {
         std::lock_guard<std::mutex> lock(g_inputStateMutex);
         downKeys = g_keyStateTracker.GetDownKeys();
         g_keyStateTracker.Clear();
+    }
+
+    if (const auto configSnapshot = platform::config::GetConfigSnapshot()) {
+        modeToRestore = g_hotkeyDispatcher.ReleaseHeldModeForInputReset(
+            platform::x11::GetMirrorModeState().GetActiveModeName());
+        (void)platform::x11::ReleaseHeldSensitivityOverrideForInputReset();
+
+        if (modeToRestore && !modeToRestore->empty()) {
+            bool modeExists = false;
+            for (const auto& mode : configSnapshot->modes) {
+                if (mode.name == *modeToRestore) {
+                    modeExists = true;
+                    break;
+                }
+            }
+
+            if (modeExists) {
+                if (platform::x11::GetMirrorModeState().GetActiveModeName() != *modeToRestore) {
+                    platform::x11::UpdateSensitivityStateForModeSwitch(*modeToRestore, *configSnapshot);
+                }
+                platform::x11::GetMirrorModeState().ApplyModeSwitch(*modeToRestore, *configSnapshot);
+                platform::x11::TriggerImmediateModeResizeEnforcement();
+            }
+        }
     }
 
     std::stable_sort(downKeys.begin(), downKeys.end(), [](platform::input::VkCode a, platform::input::VkCode b) {
@@ -1632,7 +1657,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
                                                        gameState,
                                                        platform::x11::GetMirrorModeState().GetActiveModeName(),
                                                        configSnapshot->defaultMode);
-            if (!hotkeyResult.fired) {
+            if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
                                                                          event,
@@ -1963,7 +1988,7 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                                                        gameState,
                                                        platform::x11::GetMirrorModeState().GetActiveModeName(),
                                                        configSnapshot->defaultMode);
-            if (!hotkeyResult.fired) {
+            if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
                                                                          event,

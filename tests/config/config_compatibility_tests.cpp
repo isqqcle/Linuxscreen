@@ -82,6 +82,14 @@ std::string RequireString(const toml::table& tbl, const char* key) {
     return *value;
 }
 
+bool RequireBool(const toml::table& tbl, const char* key) {
+    const toml::node* node = tbl.get(key);
+    Require(node, std::string("Missing bool key: ") + key);
+    const auto value = node->value<bool>();
+    Require(value.has_value(), std::string("Expected bool key: ") + key);
+    return *value;
+}
+
 std::int64_t RequireIntAt(const toml::array& arr, std::size_t index, std::string_view context) {
     Require(index < arr.size(), "Array index out of range for " + std::string(context));
     const auto value = arr[index].value<std::int64_t>();
@@ -246,6 +254,48 @@ void TestGameStateEquivalence() {
             "Removing Linux paused should also remove equivalent imported Windows cursor_free state");
 }
 
+void TestHotkeyRoundTripFields() {
+    toml::table hotkeyTbl;
+    hotkeyTbl.insert("keys", toml::array{int64_t(162), int64_t(90)});
+    hotkeyTbl.insert("mainMode", "Fullscreen");
+    hotkeyTbl.insert("secondaryMode", "Thin");
+    hotkeyTbl.insert("returnMode", "Wide");
+    hotkeyTbl.insert("debounce", int64_t(75));
+    hotkeyTbl.insert("triggerOnRelease", false);
+    hotkeyTbl.insert("triggerOnHold", true);
+    hotkeyTbl.insert("blockKeyFromGame", true);
+    hotkeyTbl.insert("returnToDefaultOnRepeat", true);
+    hotkeyTbl.insert("allowExitToFullscreenRegardlessOfGameState", true);
+    hotkeyTbl.insert("conditions", toml::table{});
+
+    const HotkeyConfig hotkey = HotkeyConfigFromToml(hotkeyTbl);
+    Require(hotkey.returnMode == "Wide", "Hotkey returnMode should parse");
+    Require(hotkey.triggerOnHold, "Hotkey triggerOnHold should parse");
+
+    toml::table savedHotkey;
+    HotkeyConfigToToml(hotkey, savedHotkey);
+    Require(RequireString(savedHotkey, "returnMode") == "Wide", "Hotkey returnMode should serialize");
+    Require(RequireBool(savedHotkey, "triggerOnHold"), "Hotkey triggerOnHold should serialize");
+
+    toml::table sensitivityTbl;
+    sensitivityTbl.insert("keys", toml::array{int64_t(88)});
+    sensitivityTbl.insert("sensitivity", 0.5);
+    sensitivityTbl.insert("separateXY", true);
+    sensitivityTbl.insert("sensitivityX", 0.5);
+    sensitivityTbl.insert("sensitivityY", 0.75);
+    sensitivityTbl.insert("toggle", false);
+    sensitivityTbl.insert("triggerOnHold", true);
+    sensitivityTbl.insert("debounce", int64_t(40));
+    sensitivityTbl.insert("conditions", toml::table{});
+
+    const SensitivityHotkeyConfig sensitivityHotkey = SensitivityHotkeyConfigFromToml(sensitivityTbl);
+    Require(sensitivityHotkey.triggerOnHold, "Sensitivity hotkey triggerOnHold should parse");
+
+    toml::table savedSensitivity;
+    SensitivityHotkeyConfigToToml(sensitivityHotkey, savedSensitivity);
+    Require(RequireBool(savedSensitivity, "triggerOnHold"), "Sensitivity hotkey triggerOnHold should serialize");
+}
+
 } // namespace
 
 int main() {
@@ -255,6 +305,7 @@ int main() {
         { "legacy_alias_fixture", TestAliasFixture },
         { "negative_fixture", TestNegativeFixture },
         { "game_state_equivalence", TestGameStateEquivalence },
+        { "hotkey_round_trip_fields", TestHotkeyRoundTripFields },
     };
 
     try {

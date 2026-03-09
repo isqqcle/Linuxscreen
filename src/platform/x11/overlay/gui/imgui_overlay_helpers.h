@@ -30,6 +30,11 @@ void AddNewHotkey(platform::config::LinuxscreenConfig& config, const std::string
 void DeleteHotkey(platform::config::LinuxscreenConfig& config, size_t hotkeyIndex);
 std::string GetHotkeyTargetMode(const platform::config::HotkeyConfig& hotkey);
 void SetHotkeyTargetMode(platform::config::HotkeyConfig& hotkey, const std::string& modeName);
+std::string GetHotkeyReturnMode(const platform::config::HotkeyConfig& hotkey,
+                                const platform::config::LinuxscreenConfig& config);
+void SetHotkeyReturnMode(platform::config::HotkeyConfig& hotkey,
+                         const platform::config::LinuxscreenConfig& config,
+                         const std::string& modeName);
 void RenderHotkeySlotRepeatRateWarningMarker();
 void RenderHotkeyCaptureModal();
 

@@ -66,6 +66,7 @@ void HotkeyConfigToToml(const HotkeyConfig& cfg, toml::table& out) {
     out.insert("keys", keysArr);
     out.insert("mainMode", cfg.mainMode);
     out.insert("secondaryMode", cfg.secondaryMode);
+    out.insert("returnMode", cfg.returnMode);
 
     toml::array altSecondaryArr;
     for (const auto& alt : cfg.altSecondaryModes) {
@@ -100,6 +101,7 @@ HotkeyConfig HotkeyConfigFromToml(const toml::table& tbl) {
     
     cfg.mainMode = GetStringOr(tbl, "mainMode", "");
     cfg.secondaryMode = GetStringOr(tbl, "secondaryMode", "");
+    cfg.returnMode = GetStringOr(tbl, "returnMode", "");
 
     if (auto altSecondaryArr = GetArray(tbl, "altSecondaryModes")) {
         for (const auto& elem : *altSecondaryArr) {
@@ -134,6 +136,7 @@ void SensitivityHotkeyConfigToToml(const SensitivityHotkeyConfig& cfg, toml::tab
     out.insert("sensitivityX", static_cast<double>(cfg.sensitivityX));
     out.insert("sensitivityY", static_cast<double>(cfg.sensitivityY));
     out.insert("toggle", cfg.toggle);
+    out.insert("triggerOnHold", cfg.triggerOnHold);
     out.insert("debounce", cfg.debounce);
 
     toml::table conditionsTbl;
@@ -157,6 +160,7 @@ SensitivityHotkeyConfig SensitivityHotkeyConfigFromToml(const toml::table& tbl) 
     cfg.sensitivityX = static_cast<float>(GetOr(tbl, "sensitivityX", 1.0));
     cfg.sensitivityY = static_cast<float>(GetOr(tbl, "sensitivityY", 1.0));
     cfg.toggle = GetOr(tbl, "toggle", false);
+    cfg.triggerOnHold = GetOr(tbl, "triggerOnHold", false);
     cfg.debounce = GetOr(tbl, "debounce", 100);
 
     if (auto conditionsTbl = GetTable(tbl, "conditions")) {

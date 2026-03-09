@@ -32,6 +32,7 @@ void RecordGlfwWindowMetrics(int windowWidth, int windowHeight, int framebufferW
 bool GetGlfwWindowMetrics(int& outWindowWidth, int& outWindowHeight, int& outFramebufferWidth, int& outFramebufferHeight);
 void TriggerImmediateModeResizeEnforcement();
 void ClearTempSensitivityOverride();
+bool ReleaseHeldSensitivityOverrideForInputReset();
 void UpdateSensitivityStateForModeSwitch(const std::string& targetMode, const config::LinuxscreenConfig& config);
 
 void SetGuiHotkey(const std::vector<input::VkCode>& keys);

@@ -17,6 +17,7 @@ namespace platform::input {
 struct HotkeyEvaluationResult {
     std::string targetMode;
     size_t hotkeyIndex = 0;
+    bool matched = false;
     bool fired = false;
     bool blockKeyFromGame = false;
 };
@@ -37,6 +38,7 @@ public:
     // Reset trigger-on-release pending state and per-hotkey secondary mode state.
     // Called after config reload/transitions.
     void ResetSecondaryModes();
+    std::optional<std::string> ReleaseHeldModeForInputReset(const std::string& currentMode);
 
     std::vector<config::HotkeyConfig> GetHotkeys() const;
 
@@ -55,6 +57,10 @@ private:
     std::vector<int> pendingTriggerVariant_; // -2 = none, -1 = main, >=0 = altSecondaryModes index
     std::vector<bool> invalidatedTriggerOnRelease_;
     std::vector<bool> pendingTriggerViaRebind_;
+    std::vector<int> activeHoldVariant_;
+    std::vector<bool> activeHoldViaRebind_;
+    std::vector<std::string> activeHoldTargetModes_;
+    std::vector<std::string> activeHoldReturnModes_;
     std::vector<std::string> currentSecondaryModes_;
 };
 
