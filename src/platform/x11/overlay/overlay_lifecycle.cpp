@@ -91,6 +91,8 @@ bool EnsureImGuiOverlayInitializedLocked(void* glContext) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    io.KeyRepeatDelay = 0.100f;
+    io.KeyRepeatRate = 0.050f;
     io.BackendPlatformName = "linuxscreen_x11_input_queue";
 
     ImGuiPlatformIO& platformIo = ImGui::GetPlatformIO();
