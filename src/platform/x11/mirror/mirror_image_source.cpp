@@ -11,11 +11,12 @@
 #endif
 
 #include "stb_image.h"
-#include "mirror_image_common.cpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+
+#include "mirror_image_common.cpp"
 #include <condition_variable>
 #include <cstdio>
 #include <cctype>
