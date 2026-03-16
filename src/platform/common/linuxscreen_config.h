@@ -350,6 +350,7 @@ struct EyeZoomConfig {
 
 struct LinuxscreenConfig {
     std::string defaultMode;
+    int fpsLimit = 0;
     std::vector<uint32_t> guiHotkey;
     std::vector<uint32_t> rebindToggleHotkey;
     std::vector<MirrorConfig> mirrors;

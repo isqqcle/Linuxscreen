@@ -111,10 +111,12 @@ void TestWindowsDefaultFixture() {
     const LinuxscreenConfig cfg = LoadConfigFixture(WindowsDefaultConfigPath());
     Require(!cfg.modes.empty(), "Windows default fixture should load modes");
     Require(cfg.defaultMode == "Fullscreen", "Windows default fixture should keep defaultMode");
+    Require(cfg.fpsLimit == 0, "Windows default fixture should import fpsLimit");
 
     const toml::table saved = LinuxscreenConfigToToml(cfg);
     Require(saved.contains("mode"), "Saved default config should keep modes");
     Require(saved.contains("mirror"), "Saved default config should keep mirrors");
+    Require(RequireInt(saved, "fpsLimit") == 0, "Saved default config should keep fpsLimit");
 
     const toml::array& savedModes = RequireArray(saved, "mode");
     const toml::table& fullscreenMode = RequireTableAt(savedModes, 0, "saved mode");
@@ -299,6 +301,17 @@ void TestHotkeyRoundTripFields() {
     toml::table savedSensitivity;
     SensitivityHotkeyConfigToToml(sensitivityHotkey, savedSensitivity);
     Require(RequireBool(savedSensitivity, "triggerOnHold"), "Sensitivity hotkey triggerOnHold should serialize");
+}
+
+void TestRootFpsLimitRoundTrip() {
+    toml::table root;
+    root.insert("fpsLimit", int64_t(120));
+
+    const LinuxscreenConfig cfg = LinuxscreenConfigFromToml(root);
+    Require(cfg.fpsLimit == 120, "Root fpsLimit should parse");
+
+    const toml::table saved = LinuxscreenConfigToToml(cfg);
+    Require(RequireInt(saved, "fpsLimit") == 120, "Root fpsLimit should serialize");
 }
 
 void TestMirrorSourceRoundTrip() {
@@ -555,6 +568,7 @@ int main() {
         { "negative_fixture", TestNegativeFixture },
         { "game_state_equivalence", TestGameStateEquivalence },
         { "hotkey_round_trip_fields", TestHotkeyRoundTripFields },
+        { "root_fps_limit_round_trip", TestRootFpsLimitRoundTrip },
         { "mirror_source_round_trip", TestMirrorSourceRoundTrip },
         { "window_capture_helpers", TestWindowCaptureHelpers },
         { "image_source_helpers", TestImageSourceHelpers },

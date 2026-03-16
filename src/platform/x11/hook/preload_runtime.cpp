@@ -94,10 +94,10 @@ extern "C" void glfwDestroyWindow(GLFWwindow* window);
 #ifndef __APPLE__
 extern "C" void glXSwapBuffers(Display* dpy, GLXDrawable drawable);
 extern "C" Bool glXSwapBuffersMscOML(Display* dpy, GLXDrawable drawable, int64_t target_msc, int64_t divisor, int64_t remainder);
-extern "C" void glfwSwapBuffers(GLFWwindow* window);
 extern "C" __GLXextFuncPtr glXGetProcAddress(const GLubyte* procName);
 extern "C" __GLXextFuncPtr glXGetProcAddressARB(const GLubyte* procName);
 #endif
+extern "C" void glfwSwapBuffers(GLFWwindow* window);
 extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
 extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer);

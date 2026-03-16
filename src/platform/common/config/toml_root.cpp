@@ -37,6 +37,7 @@ toml::table LinuxscreenConfigToToml(const LinuxscreenConfig& cfg) {
     toml::table out = cfg.windowsPassthroughRoot;
     out.insert_or_assign("configVersion", cfg.configVersion);
     out.insert_or_assign("defaultMode", cfg.defaultMode);
+    out.insert_or_assign("fpsLimit", cfg.fpsLimit);
     
     toml::array guiHotkeyArr;
     for (auto key : cfg.guiHotkey) {
@@ -118,6 +119,7 @@ LinuxscreenConfig LinuxscreenConfigFromToml(const toml::table& tbl) {
     cfg.windowsPassthroughRoot = tbl;
     cfg.configVersion = GetOr(tbl, "configVersion", 1);
     cfg.defaultMode = GetStringOr(tbl, "defaultMode", "");
+    cfg.fpsLimit = std::max(0, GetOr(tbl, "fpsLimit", 0));
     
     if (auto arr = GetArray(tbl, "guiHotkey")) {
         for (const auto& elem : *arr) {
@@ -211,6 +213,7 @@ LinuxscreenConfig LinuxscreenConfigFromToml(const toml::table& tbl) {
     EraseKeys(cfg.windowsPassthroughRoot,
               { "configVersion",
                 "defaultMode",
+                "fpsLimit",
                 "guiHotkey",
                 "rebindToggleHotkey",
                 "mirror",

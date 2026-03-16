@@ -1,5 +1,49 @@
 #include "../window_capture.h"
 
+namespace {
+
+std::mutex g_fpsLimitMutex;
+std::chrono::steady_clock::time_point g_nextSwapDeadline{};
+#ifdef __APPLE__
+thread_local bool g_limitScheduledByAppleGlfwSwap = false;
+#endif
+
+void ApplyGlobalFpsLimitBeforeSwap() {
+    const auto config = platform::config::GetConfigSnapshot();
+    const int fpsLimit = config ? std::max(0, config->fpsLimit) : 0;
+    if (fpsLimit <= 0) {
+        std::lock_guard<std::mutex> lock(g_fpsLimitMutex);
+        g_nextSwapDeadline = std::chrono::steady_clock::time_point{};
+        return;
+    }
+
+    const auto frameDuration = std::chrono::microseconds(std::max<int64_t>(1, 1000000LL / fpsLimit));
+    std::unique_lock<std::mutex> lock(g_fpsLimitMutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (g_nextSwapDeadline == std::chrono::steady_clock::time_point{} || now > g_nextSwapDeadline + frameDuration) {
+        g_nextSwapDeadline = now + frameDuration;
+        return;
+    }
+
+    const auto targetTime = g_nextSwapDeadline;
+    g_nextSwapDeadline += frameDuration;
+    lock.unlock();
+
+    while (true) {
+        const auto currentTime = std::chrono::steady_clock::now();
+        if (currentTime >= targetTime) {
+            break;
+        }
+
+        const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(targetTime - currentTime).count();
+        if (remaining > 2000) {
+            usleep(static_cast<useconds_t>(remaining - 1000));
+        }
+    }
+}
+
+} // namespace
+
 void RenderGuiOverlay(GLFWwindow* preferredWindow, const char* sourceLabel) {
     if (!platform::x11::IsImGuiRenderEnabled()) {
         DrainImGuiInputBridgeQueue(sourceLabel);
@@ -146,6 +190,25 @@ void TriggerImmediateModeResizeEnforcement() {
 } // namespace platform::x11
 
 #ifdef __APPLE__
+extern "C" void glfwSwapBuffers(GLFWwindow* window) {
+    GlfwSwapBuffersFn realFn = GetRealGlfwSwapBuffers();
+    if (!realFn) {
+        LogOnce(g_loggedNoGlfwSwap, "WARNING: glfwSwapBuffers called but real symbol could not be resolved");
+        return;
+    }
+
+    if (window) {
+        RefreshTrackedGlfwWindowMetrics(window);
+        platform::x11::RegisterImGuiOverlayWindow(window);
+    }
+
+    const bool previousOuterSwapState = g_limitScheduledByAppleGlfwSwap;
+    g_limitScheduledByAppleGlfwSwap = true;
+    ApplyGlobalFpsLimitBeforeSwap();
+    realFn(window);
+    g_limitScheduledByAppleGlfwSwap = previousOuterSwapState;
+}
+
 CGLError my_CGLFlushDrawable(CGLContextObj ctx) {
     ReentryGuard guard;
     if (!guard.entered) { return CGLFlushDrawable(ctx); }
@@ -172,6 +235,9 @@ CGLError my_CGLFlushDrawable(CGLContextObj ctx) {
     RenderGuiOverlay(window, "CGLFlushDrawable");
     RenderRebindToggleIndicatorOverlay();
 
+    if (!g_limitScheduledByAppleGlfwSwap) {
+        ApplyGlobalFpsLimitBeforeSwap();
+    }
     return CGLFlushDrawable(ctx);
 }
 #endif
@@ -204,6 +270,7 @@ extern "C" void glXSwapBuffers(Display* dpy, GLXDrawable drawable) {
     RenderGuiOverlay(nullptr, "glXSwapBuffers");
     RenderRebindToggleIndicatorOverlay();
 
+    ApplyGlobalFpsLimitBeforeSwap();
     realFn(dpy, drawable);
 }
 
@@ -238,11 +305,15 @@ extern "C" Bool glXSwapBuffersMscOML(Display* dpy, GLXDrawable drawable, int64_t
         RenderGuiOverlay(nullptr, "glXSwapBuffersMscOML");
         RenderRebindToggleIndicatorOverlay();
 
-    if (realFn) { return realFn(dpy, drawable, target_msc, divisor, remainder); }
+    if (realFn) {
+        ApplyGlobalFpsLimitBeforeSwap();
+        return realFn(dpy, drawable, target_msc, divisor, remainder);
+    }
 
     GlXSwapBuffersFn fallback = GetRealGlXSwapBuffers();
     if (fallback) {
         LogOnce(g_loggedNoMscFallback, "WARNING: glXSwapBuffersMscOML unresolved; falling back to glXSwapBuffers forwarding");
+        ApplyGlobalFpsLimitBeforeSwap();
         fallback(dpy, drawable);
         return True;
     }
@@ -300,6 +371,7 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window) {
         LogDebug("glfwSwapBuffers intercepted but no current GLX handles were available");
     }
 
+    ApplyGlobalFpsLimitBeforeSwap();
     realFn(window);
 }
 #endif // !__APPLE__

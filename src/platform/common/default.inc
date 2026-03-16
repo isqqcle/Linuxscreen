@@ -1,6 +1,7 @@
 R"TSRB(
 configVersion = 2
 defaultMode = 'Fullscreen'
+fpsLimit = 0
 guiFontPath = ''
 guiFontSize = 20
 guiHeight = 818

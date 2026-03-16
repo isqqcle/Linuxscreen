@@ -262,6 +262,17 @@ void RenderMiscTab(platform::config::LinuxscreenConfig& config) {
         }
 
         if (ImGui::BeginTabItem("Interface")) {
+            ImGui::SeparatorText("Performance");
+            int fpsLimitValue = (config.fpsLimit == 0) ? 1001 : std::clamp(config.fpsLimit, 30, 1000);
+            if (ImGui::SliderInt("FPS Limit", &fpsLimitValue, 30, 1001,
+                                 fpsLimitValue == 1001 ? "Unlimited" : "%d fps")) {
+                config.fpsLimit = (fpsLimitValue == 1001) ? 0 : fpsLimitValue;
+                AutoSaveConfig(config);
+            }
+            ImGui::SameLine();
+            HelpMarker("Globally limits the game's frame rate. Set to Unlimited to disable the cap.");
+
+            ImGui::Spacing();
             ImGui::SeparatorText("GUI Scale");
             float scale = config.guiScale;
             if (ImGui::DragFloat("Scale##GuiScale", &scale, 0.01f, 0.5f, 2.0f, "%.2fx")) {
