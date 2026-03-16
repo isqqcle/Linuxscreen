@@ -1,5 +1,6 @@
 #include "config_toml.h"
 #include "game_state_monitor.h"
+#include "mirror_image_source.h"
 #include "window_capture.h"
 
 #include <cmath>
@@ -88,6 +89,14 @@ bool RequireBool(const toml::table& tbl, const char* key) {
     Require(node, std::string("Missing bool key: ") + key);
     const auto value = node->value<bool>();
     Require(value.has_value(), std::string("Expected bool key: ") + key);
+    return *value;
+}
+
+std::int64_t RequireInt(const toml::table& tbl, const char* key) {
+    const toml::node* node = tbl.get(key);
+    Require(node, std::string("Missing integer key: ") + key);
+    const auto value = node->value<std::int64_t>();
+    Require(value.has_value(), std::string("Expected integer key: ") + key);
     return *value;
 }
 
@@ -341,6 +350,37 @@ void TestMirrorSourceRoundTrip() {
     const MirrorConfig defaultMirror = MirrorConfigFromToml(toml::table{});
     Require(defaultMirror.source.type == MirrorSourceType::GameFramebuffer,
             "Missing mirror source should default to gameFramebuffer");
+
+    toml::table imageMirrorTbl;
+    imageMirrorTbl.insert("name", "Reference");
+    imageMirrorTbl.insert("captureWidth", int64_t(320));
+    imageMirrorTbl.insert("captureHeight", int64_t(180));
+    imageMirrorTbl.insert("source", toml::table{
+        {"type", "image"},
+        {"image", "assets/reference.gif"},
+        {"useImageSize", true},
+        {"imageReloadPollMs", int64_t(100)},
+        {"lastKnownWidth", int64_t(640)},
+        {"lastKnownHeight", int64_t(360)}
+    });
+
+    const MirrorConfig imageMirror = MirrorConfigFromToml(imageMirrorTbl);
+    Require(imageMirror.source.type == MirrorSourceType::Image, "Image mirror source type should parse");
+    Require(imageMirror.source.image == "assets/reference.gif", "Image mirror source path should parse");
+    Require(imageMirror.source.useImageSize, "Image mirror source useImageSize should parse");
+    Require(imageMirror.source.imageReloadPollMs == 100, "Image mirror source poll speed should parse");
+    Require(imageMirror.source.lastKnownWidth == 640, "Image mirror width hint should parse");
+    Require(imageMirror.source.lastKnownHeight == 360, "Image mirror height hint should parse");
+
+    toml::table savedImageMirror;
+    MirrorConfigToToml(imageMirror, savedImageMirror);
+    const toml::table& savedImageSource = RequireTable(savedImageMirror, "source");
+    Require(RequireString(savedImageSource, "type") == "image", "Image mirror source type should serialize");
+    Require(RequireString(savedImageSource, "image") == "assets/reference.gif",
+            "Image mirror source path should serialize");
+    Require(RequireBool(savedImageSource, "useImageSize"), "Image mirror source useImageSize should serialize");
+    Require(RequireInt(savedImageSource, "imageReloadPollMs") == 100,
+            "Image mirror source poll speed should serialize");
 }
 
 void TestWindowCaptureHelpers() {
@@ -486,6 +526,25 @@ void TestWindowCaptureHelpers() {
             "Composite capture should not downgrade before the policy thresholds are reached");
 }
 
+void TestImageSourceHelpers() {
+    MirrorSourceConfig imageSource;
+    imageSource.type = MirrorSourceType::Image;
+    Require(platform::x11::IsImageSource(imageSource), "Image sources should be identified as image-backed");
+    Require(!platform::x11::HasConfiguredImageSource(imageSource),
+            "Empty image sources should not be considered configured");
+    Require(!platform::x11::IsWindowCaptureSource(imageSource),
+            "Image sources should not be treated as window capture sources");
+
+    imageSource.image = "assets/reference.png";
+    Require(platform::x11::HasConfiguredImageSource(imageSource),
+            "Configured image sources should require a path");
+    Require(imageSource.imageReloadPollMs == MirrorSourceConfig::kDefaultImageReloadPollMs,
+            "Image sources should default to the standard reload poll interval");
+
+    const MirrorSourceConfig defaultSource;
+    Require(!platform::x11::IsImageSource(defaultSource), "Default source should remain the game framebuffer");
+}
+
 } // namespace
 
 int main() {
@@ -498,6 +557,7 @@ int main() {
         { "hotkey_round_trip_fields", TestHotkeyRoundTripFields },
         { "mirror_source_round_trip", TestMirrorSourceRoundTrip },
         { "window_capture_helpers", TestWindowCaptureHelpers },
+        { "image_source_helpers", TestImageSourceHelpers },
     };
 
     try {

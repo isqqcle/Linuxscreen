@@ -1,13 +1,19 @@
 MirrorSourceType MirrorSourceTypeFromString(const std::string& value) {
-    return value == "window"
-        ? MirrorSourceType::Window
-        : MirrorSourceType::GameFramebuffer;
+    if (value == "window") {
+        return MirrorSourceType::Window;
+    }
+    if (value == "image") {
+        return MirrorSourceType::Image;
+    }
+    return MirrorSourceType::GameFramebuffer;
 }
 
 const char* MirrorSourceTypeToString(MirrorSourceType type) {
     switch (type) {
     case MirrorSourceType::Window:
         return "window";
+    case MirrorSourceType::Image:
+        return "image";
     case MirrorSourceType::GameFramebuffer:
     default:
         return "gameFramebuffer";
@@ -83,6 +89,9 @@ MirrorCaptureConfig MirrorCaptureConfigFromToml(const toml::table& tbl) {
 
 void MirrorSourceConfigToToml(const MirrorSourceConfig& cfg, toml::table& out) {
     out.insert_or_assign("type", MirrorSourceTypeToString(cfg.type));
+    if (!cfg.image.empty()) {
+        out.insert_or_assign("image", cfg.image);
+    }
     if (!cfg.appId.empty()) {
         out.insert_or_assign("appId", cfg.appId);
     }
@@ -94,6 +103,12 @@ void MirrorSourceConfigToToml(const MirrorSourceConfig& cfg, toml::table& out) {
     }
     if (cfg.fallbackMode != MirrorSourceFallbackMode::None) {
         out.insert_or_assign("fallbackMode", MirrorSourceFallbackModeToString(cfg.fallbackMode));
+    }
+    if (cfg.useImageSize) {
+        out.insert_or_assign("useImageSize", cfg.useImageSize);
+    }
+    if (cfg.imageReloadPollMs != MirrorSourceConfig::kDefaultImageReloadPollMs) {
+        out.insert_or_assign("imageReloadPollMs", cfg.imageReloadPollMs);
     }
     if (cfg.useWindowSize) {
         out.insert_or_assign("useWindowSize", cfg.useWindowSize);
@@ -112,6 +127,7 @@ void MirrorSourceConfigToToml(const MirrorSourceConfig& cfg, toml::table& out) {
 MirrorSourceConfig MirrorSourceConfigFromToml(const toml::table& tbl) {
     MirrorSourceConfig cfg;
     cfg.type = MirrorSourceTypeFromString(GetStringOr(tbl, "type", "gameFramebuffer"));
+    cfg.image = GetStringOr(tbl, "image", "");
     cfg.appId = GetStringOr(tbl, "appId", "");
     cfg.windowTitle = GetStringOr(tbl, "windowTitle", "");
     if (tbl.contains("titleMatchMode")) {
@@ -120,6 +136,8 @@ MirrorSourceConfig MirrorSourceConfigFromToml(const toml::table& tbl) {
     if (tbl.contains("fallbackMode")) {
         cfg.fallbackMode = MirrorSourceFallbackModeFromString(GetStringOr(tbl, "fallbackMode", "none"));
     }
+    cfg.useImageSize = GetOr(tbl, "useImageSize", false);
+    cfg.imageReloadPollMs = GetOr(tbl, "imageReloadPollMs", MirrorSourceConfig::kDefaultImageReloadPollMs);
     cfg.useWindowSize = GetOr(tbl, "useWindowSize", false);
     cfg.lastKnownWidth = GetOr(tbl, "lastKnownWidth", 0);
     cfg.lastKnownHeight = GetOr(tbl, "lastKnownHeight", 0);
@@ -244,10 +262,12 @@ void MirrorConfigToToml(const MirrorConfig& cfg, toml::table& out) {
     out.insert_or_assign("captureWidth", cfg.captureWidth);
     out.insert_or_assign("captureHeight", cfg.captureHeight);
     if (cfg.source.type != MirrorSourceType::GameFramebuffer ||
+        !cfg.source.image.empty() ||
         !cfg.source.appId.empty() ||
         !cfg.source.windowTitle.empty() ||
         cfg.source.titleMatchMode != MirrorSourceTitleMatchMode::Exact ||
         cfg.source.fallbackMode != MirrorSourceFallbackMode::None ||
+        cfg.source.useImageSize ||
         cfg.source.useWindowSize ||
         cfg.source.lastKnownWidth > 0 ||
         cfg.source.lastKnownHeight > 0 ||

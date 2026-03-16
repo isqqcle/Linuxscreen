@@ -746,6 +746,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
 void ShutdownGlxMirrorPipeline() {
     StopMirrorWorker();
+    ShutdownMirrorImageSources();
     StopBackgroundDecodeWorker();
     ShutdownWindowCaptureForProcessExit();
 
@@ -830,6 +831,8 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
         g_backgroundDecodeRequests.clear();
         g_decodedModeBackgroundImages.clear();
     }
+
+    ShutdownMirrorImageSources();
 
     std::lock_guard<std::mutex> lock(g_stateMutex);
     g_instances.clear();

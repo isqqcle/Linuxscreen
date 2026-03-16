@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../overlay_internal.h"
+#include "../../mirror_image_source.h"
 #include "../../window_capture.h"
 
 #include <mutex>
@@ -30,6 +31,9 @@ struct MirrorEditorState {
     std::vector<AvailableWindow> availableWindows;
     std::string titlePatternBufferKey;
     char titlePatternBuffer[512] = {};
+    bool imageSourcePickerOpen = false;
+    int imageSourcePickerMirrorIndex = -1;
+    MirrorImageSourceStatus imageSourceStatus;
     std::mutex waylandSelectionMutex;
     WaylandSelectionTask waylandSelectionTask;
 };

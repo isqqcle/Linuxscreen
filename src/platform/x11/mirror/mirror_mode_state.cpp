@@ -1,4 +1,5 @@
 #include "mirror_mode_state.h"
+#include "../mirror_image_source.h"
 #include "../window_capture.h"
 #include "../x11_runtime.h"
 
@@ -227,6 +228,15 @@ void ApplyRelativeSizeToOutput(config::MirrorRenderConfig& output,
     }
 }
 
+void ApplyKnownSourceSizeOverride(config::MirrorConfig& mirrorCfg, int width, int height) {
+    if (width > 0) {
+        mirrorCfg.captureWidth = width;
+    }
+    if (height > 0) {
+        mirrorCfg.captureHeight = height;
+    }
+}
+
 void ApplyWindowCaptureSizeOverride(config::MirrorConfig& mirrorCfg) {
     if (!HasConfiguredWindowCaptureSource(mirrorCfg.source) || !mirrorCfg.source.useWindowSize) {
         return;
@@ -246,12 +256,17 @@ void ApplyWindowCaptureSizeOverride(config::MirrorConfig& mirrorCfg) {
     }
 
     const AvailableWindow& window = windows[static_cast<std::size_t>(matchIndex)];
-    if (window.width > 0) {
-        mirrorCfg.captureWidth = window.width;
+    ApplyKnownSourceSizeOverride(mirrorCfg, window.width, window.height);
+}
+
+void ApplyImageSourceSizeOverride(config::MirrorConfig& mirrorCfg) {
+    if (!HasConfiguredImageSource(mirrorCfg.source) || !mirrorCfg.source.useImageSize) {
+        return;
     }
-    if (window.height > 0) {
-        mirrorCfg.captureHeight = window.height;
-    }
+
+    ApplyKnownSourceSizeOverride(mirrorCfg,
+                                 mirrorCfg.source.lastKnownWidth,
+                                 mirrorCfg.source.lastKnownHeight);
 }
 
 } // namespace
@@ -326,6 +341,7 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
         ResolvedMirrorRender resolved;
         resolved.config = mirrorCfg;
         ApplyWindowCaptureSizeOverride(resolved.config);
+        ApplyImageSourceSizeOverride(resolved.config);
         if (hasScreenSize) {
             ResolveOutputPositionFromRelative(*modeConfig,
                                              resolved.config.output,
@@ -359,6 +375,7 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
             ResolvedMirrorRender resolved;
             resolved.config = *mirrorIt->second;
             ApplyWindowCaptureSizeOverride(resolved.config);
+            ApplyImageSourceSizeOverride(resolved.config);
             int groupX = groupCfg.output.x;
             int groupY = groupCfg.output.y;
             if (groupCfg.output.useRelativePosition && hasScreenSize) {

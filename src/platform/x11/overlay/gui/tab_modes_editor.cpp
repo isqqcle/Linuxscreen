@@ -998,7 +998,10 @@ void RenderModesTab(platform::config::LinuxscreenConfig& config, const std::stri
     }
 
     if (g_modeBackgroundPickerState.dialogOpen) {
-        if (IGFD::FileDialog::Instance()->Display("mode_background_image_picker")) {
+        ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_Appearing);
+        if (IGFD::FileDialog::Instance()->Display("mode_background_image_picker",
+                                                  ImGuiWindowFlags_NoCollapse,
+                                                  ImVec2(720.0f, 480.0f))) {
             if (IGFD::FileDialog::Instance()->IsOk()) {
                 const int modeIndex = g_modeBackgroundPickerState.modeIndex;
                 if (modeIndex >= 0 && modeIndex < static_cast<int>(config.modes.size())) {

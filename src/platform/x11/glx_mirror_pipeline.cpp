@@ -1,5 +1,8 @@
+#include "mirror_image_source.h"
+
 #include "mirror/mirror_runtime.cpp"
 #include "mirror/mirror_shaders.cpp"
+#include "mirror/mirror_image_common.cpp"
 #include "mirror/mirror_worker.cpp"
 #include "mirror/mirror_background_images.cpp"
 #include "mirror/mirror_overscan.cpp"

@@ -182,11 +182,13 @@ bool InitMirrorShaders() {
     fpl.targetColors = g_gl.getUniformLocation(g_shaders.filterPassthroughProgram, "u_targetColors");
     fpl.targetColorCount = g_gl.getUniformLocation(g_shaders.filterPassthroughProgram, "u_targetColorCount");
     fpl.sensitivity = g_gl.getUniformLocation(g_shaders.filterPassthroughProgram, "u_sensitivity");
+    fpl.preserveAlpha = g_gl.getUniformLocation(g_shaders.filterPassthroughProgram, "u_preserveAlpha");
 
     // Query passthrough shader uniforms
     auto& pl = g_shaders.passthroughLocs;
     pl.screenTexture = g_gl.getUniformLocation(g_shaders.passthroughProgram, "screenTexture");
     pl.sourceRect = g_gl.getUniformLocation(g_shaders.passthroughProgram, "u_sourceRect");
+    pl.preserveAlpha = g_gl.getUniformLocation(g_shaders.passthroughProgram, "u_preserveAlpha");
 
     // Query render shader uniforms
     auto& rl = g_shaders.renderLocs;
@@ -202,6 +204,7 @@ bool InitMirrorShaders() {
     rpl.borderWidth = g_gl.getUniformLocation(g_shaders.renderPassthroughProgram, "u_borderWidth");
     rpl.borderColor = g_gl.getUniformLocation(g_shaders.renderPassthroughProgram, "u_borderColor");
     rpl.screenPixel = g_gl.getUniformLocation(g_shaders.renderPassthroughProgram, "u_screenPixel");
+    rpl.preserveAlpha = g_gl.getUniformLocation(g_shaders.renderPassthroughProgram, "u_preserveAlpha");
 
     // Query static border shader uniforms
     auto& sbl = g_shaders.staticBorderLocs;

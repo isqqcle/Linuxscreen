@@ -88,7 +88,8 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     bool requiresGameFramebuffer = (g_currentActiveMode == "EyeZoom");
     if (!requiresGameFramebuffer) {
         for (const auto& mirror : g_mirrorConfigs) {
-            if (!IsWindowCaptureSource(mirror.config.source)) {
+            if (!IsWindowCaptureSource(mirror.config.source) &&
+                !IsImageSource(mirror.config.source)) {
                 requiresGameFramebuffer = true;
                 break;
             }

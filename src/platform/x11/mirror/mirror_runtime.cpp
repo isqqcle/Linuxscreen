@@ -210,6 +210,7 @@ uniform int u_gammaMode;
 uniform vec3 u_targetColors[8];
 uniform int u_targetColorCount;
 uniform float u_sensitivity;
+uniform int u_preserveAlpha;
 
 vec3 SRGBToLinear(vec3 c) {
     bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
@@ -219,7 +220,8 @@ vec3 SRGBToLinear(vec3 c) {
 }
 void main() {
     vec2 srcCoord = u_sourceRect.xy + TexCoord * u_sourceRect.zw;
-    vec3 screenColor = texture(screenTexture, srcCoord).rgb;
+    vec4 screenSample = texture(screenTexture, srcCoord);
+    vec3 screenColor = screenSample.rgb;
     vec3 screenColorLinear = SRGBToLinear(screenColor);
 
     bool matches = false;
@@ -245,7 +247,7 @@ void main() {
     }
 
     if (matches) {
-        FragColor = vec4(screenColor, 1.0);
+        FragColor = vec4(screenColor, (u_preserveAlpha != 0) ? screenSample.a : 1.0);
     } else {
         FragColor = vec4(0.0, 0.0, 0.0, 0.0);
     }
@@ -256,11 +258,11 @@ out vec4 FragColor;
 in vec2 TexCoord;
 uniform sampler2D screenTexture;
 uniform vec4 u_sourceRect;
+uniform int u_preserveAlpha;
 void main() {
     vec2 srcCoord = u_sourceRect.xy + TexCoord * u_sourceRect.zw;
     vec4 c = texture(screenTexture, srcCoord);
-    // Force alpha=1 to avoid propagating undefined/junk alpha from game textures.
-    FragColor = vec4(c.rgb, 1.0);
+    FragColor = vec4(c.rgb, (u_preserveAlpha != 0) ? c.a : 1.0);
 })";
 
 static const char* kRenderFragShader = R"(#version 330 core
@@ -301,10 +303,12 @@ uniform sampler2D filterTexture;
 uniform int u_borderWidth;
 uniform vec4 u_borderColor;
 uniform vec2 u_screenPixel;
+uniform int u_preserveAlpha;
 void main() {
     vec4 texColor = texture(filterTexture, TexCoord);
-    if (texColor.a > 0.5) {
-        FragColor = vec4(texColor.rgb, 1.0);
+    float alphaThreshold = (u_preserveAlpha != 0) ? 0.0 : 0.5;
+    if (texColor.a > alphaThreshold) {
+        FragColor = (u_preserveAlpha != 0) ? texColor : vec4(texColor.rgb, 1.0);
         return;
     }
     float maxA = 0.0;
@@ -315,7 +319,7 @@ void main() {
             maxA = max(maxA, texture(filterTexture, TexCoord + offset).a);
         }
     }
-    if (maxA > 0.5) {
+    if (maxA > alphaThreshold) {
         FragColor = u_borderColor;
     } else {
         discard;
@@ -614,11 +618,13 @@ struct FilterPassthroughShaderLocs {
     GLint targetColors = -1;
     GLint targetColorCount = -1;
     GLint sensitivity = -1;
+    GLint preserveAlpha = -1;
 };
 
 struct PassthroughShaderLocs {
     GLint screenTexture = -1;
     GLint sourceRect = -1;
+    GLint preserveAlpha = -1;
 };
 
 struct RenderShaderLocs {
@@ -634,6 +640,7 @@ struct RenderPassthroughShaderLocs {
     GLint borderWidth = -1;
     GLint borderColor = -1;
     GLint screenPixel = -1;
+    GLint preserveAlpha = -1;
 };
 
 struct StaticBorderShaderLocs {

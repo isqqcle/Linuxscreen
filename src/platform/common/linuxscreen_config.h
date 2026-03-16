@@ -51,6 +51,7 @@ struct MirrorColors {
 enum class MirrorSourceType {
     GameFramebuffer,
     Window,
+    Image,
 };
 
 enum class MirrorSourceTitleMatchMode {
@@ -67,11 +68,16 @@ enum class MirrorSourceFallbackMode {
 };
 
 struct MirrorSourceConfig {
+    static constexpr int kDefaultImageReloadPollMs = 250;
+
     MirrorSourceType type = MirrorSourceType::GameFramebuffer;
+    std::string image;
     std::string appId;
     std::string windowTitle;
     MirrorSourceTitleMatchMode titleMatchMode = MirrorSourceTitleMatchMode::Exact;
     MirrorSourceFallbackMode fallbackMode = MirrorSourceFallbackMode::None;
+    bool useImageSize = false;
+    int imageReloadPollMs = kDefaultImageReloadPollMs;
     bool useWindowSize = false;
     int lastKnownWidth = 0;
     int lastKnownHeight = 0;

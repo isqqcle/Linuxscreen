@@ -758,6 +758,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                             } else {
                                 g_mirrorEditorState.mirrorNameError.clear();
                                 if (newName != mirror.name) {
+                                    ForgetMirrorImageSource(mirror.name);
                                     platform::config::RenameMirror(config, mirror.name, newName);
                                 }
                                 CopyEditorNameToBuffer(g_mirrorEditorState.nameBuffer,
@@ -781,9 +782,15 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         const bool useSelectedWindowSize =
                             mirror.source.type == platform::config::MirrorSourceType::Window &&
                             mirror.source.useWindowSize;
+                        const bool useSelectedImageSize =
+                            mirror.source.type == platform::config::MirrorSourceType::Image &&
+                            mirror.source.useImageSize &&
+                            mirror.source.lastKnownWidth > 0 &&
+                            mirror.source.lastKnownHeight > 0;
+                        const bool useSelectedSourceSize = useSelectedWindowSize || useSelectedImageSize;
                         int captureWidth = mirror.captureWidth;
                         int captureHeight = mirror.captureHeight;
-                        ImGui::BeginDisabled(useSelectedWindowSize);
+                        ImGui::BeginDisabled(useSelectedSourceSize);
                         if (ImGui::InputInt("Capture Width", &captureWidth)) {
                             if (captureWidth > 0) {
                                 mirror.captureWidth = captureWidth;
@@ -799,20 +806,33 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::EndDisabled();
                         if (useSelectedWindowSize) {
                             ImGui::TextDisabled("Using the selected window's live size.");
+                        } else if (useSelectedImageSize) {
+                            ImGui::TextDisabled("Using the selected image's natural size.");
                         }
 
                         ImGui::Separator();
 
-                        const char* sourceTypes[] = { "Game Framebuffer", "Window" };
+                        const char* sourceTypes[] = { "Game Framebuffer", "Window", "Image" };
                         int currentSourceType = static_cast<int>(mirror.source.type);
                         if (ImGui::Combo("Source", &currentSourceType, sourceTypes, IM_ARRAYSIZE(sourceTypes))) {
+                            const platform::config::MirrorSourceConfig previousSource = mirror.source;
                             mirror.source.type = static_cast<platform::config::MirrorSourceType>(currentSourceType);
+                            if (HasConfiguredWindowCaptureSource(previousSource) &&
+                                previousSource.type != mirror.source.type) {
+                                ForgetWindowCaptureSource(previousSource);
+                            }
+                            if (HasConfiguredImageSource(previousSource) &&
+                                previousSource.type != mirror.source.type) {
+                                ForgetMirrorImageSource(mirror.name);
+                            }
                             InvalidateWindowCaptureTransientState();
                             AutoSaveConfig(config);
                         }
 
                         if (mirror.source.type == platform::config::MirrorSourceType::Window) {
 #include "tab_mirrors_window_source.cpp"
+                        } else if (mirror.source.type == platform::config::MirrorSourceType::Image) {
+#include "tab_mirrors_image_source.cpp"
                         }
                         ImGui::Unindent();
                     }
@@ -1184,7 +1204,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         }
                         if (AnimatedButton("Add New Capture Zone")) {
                             platform::config::MirrorCaptureConfig nZone;
-                            nZone.relativeTo = (mirror.source.type == platform::config::MirrorSourceType::Window)
+                            nZone.relativeTo = (mirror.source.type != platform::config::MirrorSourceType::GameFramebuffer)
                                 ? "topLeftSource"
                                 : "centerViewport";
                             mirror.input.push_back(nZone);
@@ -1243,6 +1263,33 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                 }
                 ImGui::EndChild();
                 ImGui::EndTable();
+            }
+
+            if (g_mirrorEditorState.imageSourcePickerOpen) {
+                ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_Appearing);
+                if (IGFD::FileDialog::Instance()->Display("mirror_image_source_picker",
+                                                          ImGuiWindowFlags_NoCollapse,
+                                                          ImVec2(720.0f, 480.0f))) {
+                    if (IGFD::FileDialog::Instance()->IsOk()) {
+                        const int mirrorIndex = g_mirrorEditorState.imageSourcePickerMirrorIndex;
+                        if (mirrorIndex >= 0 && mirrorIndex < static_cast<int>(config.mirrors.size())) {
+                            std::string selectedPath =
+                                IGFD::FileDialog::Instance()->GetFilePathName(IGFD_ResultMode_KeepInputFile);
+                            if (!selectedPath.empty()) {
+                                auto& selectedMirror = config.mirrors[static_cast<std::size_t>(mirrorIndex)];
+                                selectedMirror.source.image = platform::config::NormalizePathForConfig(selectedPath);
+                                selectedMirror.source.lastKnownWidth = 0;
+                                selectedMirror.source.lastKnownHeight = 0;
+                                ForgetMirrorImageSource(selectedMirror.name);
+                                AutoSaveConfig(config);
+                            }
+                        }
+                    }
+
+                    IGFD::FileDialog::Instance()->Close();
+                    g_mirrorEditorState.imageSourcePickerOpen = false;
+                    g_mirrorEditorState.imageSourcePickerMirrorIndex = -1;
+                }
             }
 
             ImGui::EndTabItem();
@@ -1816,6 +1863,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
     if (mirrorToRemove != -1) {
         std::string nToRemove = config.mirrors[mirrorToRemove].name;
+        ForgetMirrorImageSource(nToRemove);
         config.mirrors.erase(config.mirrors.begin() + mirrorToRemove);
 
         platform::config::RemoveMirrorReferences(config, nToRemove);

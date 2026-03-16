@@ -57,6 +57,46 @@ void ResetAllMirrorInstanceCaptureTimers() {
     }
 }
 
+void MarkMirrorInstanceSourceUnavailable(X11MirrorInstance& inst) {
+    inst.hasValidContent = false;
+    inst.hasFrameContent = false;
+    inst.contentDetectionPending = false;
+}
+
+void SetFullTextureSourceSlot(MirrorFrameSlot& slot, int width, int height) {
+    slot.containerWidth = width;
+    slot.containerHeight = height;
+    slot.viewportTopLeftX = 0;
+    slot.viewportTopLeftY = 0;
+    slot.viewportWidth = width;
+    slot.viewportHeight = height;
+    slot.textureOriginTopLeftX = 0;
+    slot.textureOriginTopLeftY = 0;
+}
+
+bool ShouldUseSourceSize(const platform::config::MirrorSourceConfig& source) {
+    return (IsWindowCaptureSource(source) && source.useWindowSize) ||
+           (IsImageSource(source) && source.useImageSize);
+}
+
+void ApplyLiveRelativeSizeToOutput(platform::config::MirrorConfig& config,
+                                   int screenWidth,
+                                   int screenHeight);
+
+void ApplySourceSizeToOutput(platform::config::MirrorConfig& config,
+                             int sourceWidth,
+                             int sourceHeight,
+                             int containerWidth,
+                             int containerHeight) {
+    if (!ShouldUseSourceSize(config.source) || sourceWidth <= 0 || sourceHeight <= 0) {
+        return;
+    }
+
+    config.captureWidth = sourceWidth;
+    config.captureHeight = sourceHeight;
+    ApplyLiveRelativeSizeToOutput(config, containerWidth, containerHeight);
+}
+
 const platform::config::ModeConfig* FindModeConfigByName(const platform::config::LinuxscreenConfig& config,
                                                          const std::string& modeName);
 
@@ -805,33 +845,32 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         MirrorFrameSlot sourceSlot = slot;
         if (IsWindowCaptureSource(config.source)) {
             if (!EnsureWindowCaptureSourceTexture(config.source, sourceTexture, sourceWidth, sourceHeight, sourceYInverted)) {
-                inst.hasValidContent = false;
-                inst.hasFrameContent = false;
-                inst.contentDetectionPending = false;
+                MarkMirrorInstanceSourceUnavailable(inst);
                 continue;
             }
-            sourceSlot.containerWidth = sourceWidth;
-            sourceSlot.containerHeight = sourceHeight;
-            sourceSlot.viewportTopLeftX = 0;
-            sourceSlot.viewportTopLeftY = 0;
-            sourceSlot.viewportWidth = sourceWidth;
-            sourceSlot.viewportHeight = sourceHeight;
-            sourceSlot.textureOriginTopLeftX = 0;
-            sourceSlot.textureOriginTopLeftY = 0;
+            SetFullTextureSourceSlot(sourceSlot, sourceWidth, sourceHeight);
+        } else if (IsImageSource(config.source)) {
+            std::uint32_t imageTexture = 0;
+            if (!EnsureMirrorImageSourceTexture(config.name,
+                                                config.source,
+                                                imageTexture,
+                                                sourceWidth,
+                                                sourceHeight,
+                                                sourceYInverted)) {
+                MarkMirrorInstanceSourceUnavailable(inst);
+                continue;
+            }
+            sourceTexture = static_cast<GLuint>(imageTexture);
+            SetFullTextureSourceSlot(sourceSlot, sourceWidth, sourceHeight);
         }
 
         ResolvedMirrorRender effectiveMirrorRender = mirrorRender;
         auto& effectiveConfig = effectiveMirrorRender.config;
-        if (IsWindowCaptureSource(effectiveConfig.source) &&
-            effectiveConfig.source.useWindowSize &&
-            sourceWidth > 0 &&
-            sourceHeight > 0) {
-            effectiveConfig.captureWidth = sourceWidth;
-            effectiveConfig.captureHeight = sourceHeight;
-            ApplyLiveRelativeSizeToOutput(effectiveConfig,
-                                          slot.containerWidth > 0 ? slot.containerWidth : width,
-                                          slot.containerHeight > 0 ? slot.containerHeight : height);
-        }
+        ApplySourceSizeToOutput(effectiveConfig,
+                                sourceWidth,
+                                sourceHeight,
+                                slot.containerWidth > 0 ? slot.containerWidth : width,
+                                slot.containerHeight > 0 ? slot.containerHeight : height);
 
         // Ensure FBO resources after the active source dimensions are known.
         EnsureMirrorResources(effectiveMirrorRender, inst);
@@ -855,6 +894,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         const bool useRaw = effectiveConfig.rawOutput;
         const bool useColorPt = !useRaw && effectiveConfig.colorPassthrough;
         const bool useFilter = !useRaw && !useColorPt;
+        const bool preserveSourceAlpha = IsImageSource(effectiveConfig.source);
         (void)useFilter;
 
         // Bind active source texture on unit 0
@@ -914,6 +954,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
                 g_gl.useProgram(g_shaders.passthroughProgram);
                 g_gl.uniform1i(g_shaders.passthroughLocs.screenTexture, 0);
                 g_gl.uniform4f(g_shaders.passthroughLocs.sourceRect, sx, sy, sw, sh);
+                g_gl.uniform1i(g_shaders.passthroughLocs.preserveAlpha, preserveSourceAlpha ? 1 : 0);
             } else if (useColorPt) {
                 g_gl.useProgram(g_shaders.filterPassthroughProgram);
                 g_gl.uniform1i(g_shaders.filterPassthroughLocs.screenTexture, 0);
@@ -932,6 +973,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
                     g_gl.uniform3fv(g_shaders.filterPassthroughLocs.targetColors, nColors, colorData);
                 }
                 g_gl.uniform1f(g_shaders.filterPassthroughLocs.sensitivity, effectiveConfig.colorSensitivity);
+                g_gl.uniform1i(g_shaders.filterPassthroughLocs.preserveAlpha, preserveSourceAlpha ? 1 : 0);
             } else {
                 // useFilter
                 g_gl.useProgram(g_shaders.filterProgram);
@@ -988,11 +1030,12 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         glBindTexture(GL_TEXTURE_2D, inst.filterTexture);
 
         if (useRaw) {
-            // Raw: passthrough blit, force alpha=1 (opaque)
+            // Raw: passthrough blit. Image sources keep source alpha.
             g_gl.useProgram(g_shaders.passthroughProgram);
             g_gl.uniform1i(g_shaders.passthroughLocs.screenTexture, 0);
             // Full-texture source rect
             g_gl.uniform4f(g_shaders.passthroughLocs.sourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
+            g_gl.uniform1i(g_shaders.passthroughLocs.preserveAlpha, preserveSourceAlpha ? 1 : 0);
         } else if (effectiveConfig.border.type == platform::config::MirrorBorderType::Dynamic && useColorPt) {
             // Render passthrough: dynamic border, preserves pixel color
             g_gl.useProgram(g_shaders.renderPassthroughProgram);
@@ -1004,6 +1047,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             g_gl.uniform2f(g_shaders.renderPassthroughLocs.screenPixel,
                            1.0f / static_cast<float>(finalW),
                            1.0f / static_cast<float>(finalH));
+            g_gl.uniform1i(g_shaders.renderPassthroughLocs.preserveAlpha, preserveSourceAlpha ? 1 : 0);
         } else if (effectiveConfig.border.type == platform::config::MirrorBorderType::Dynamic) {
             // Render: dynamic border, replaces pixel color
             g_gl.useProgram(g_shaders.renderProgram);
@@ -1027,6 +1071,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             g_gl.uniform2f(g_shaders.renderPassthroughLocs.screenPixel,
                            1.0f / static_cast<float>(finalW),
                            1.0f / static_cast<float>(finalH));
+            g_gl.uniform1i(g_shaders.renderPassthroughLocs.preserveAlpha, preserveSourceAlpha ? 1 : 0);
         } else {
             g_gl.useProgram(g_shaders.renderProgram);
             g_gl.uniform1i(g_shaders.renderLocs.filterTexture, 0);
