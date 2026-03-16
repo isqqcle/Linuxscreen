@@ -1,0 +1,91 @@
+diff --git a/imgui_widgets.cpp b/imgui_widgets.cpp
+index 8f341251c..6b68bff80 100644
+--- a/imgui_widgets.cpp
++++ b/imgui_widgets.cpp
+@@ -2694,8 +2694,9 @@ bool ImGui::DragScalar(const char* label, ImGuiDataType data_type, void* p_data,
+     bool temp_input_is_active = temp_input_allowed && TempInputIsActive(id);
+     if (!temp_input_is_active)
+     {
+-        // Tabbing or Ctrl+Click on Drag turns it into an InputText
++        // Tabbing or Ctrl+Click or Right-Click on Drag turns it into an InputText
+         const bool clicked = hovered && IsMouseClicked(0, ImGuiInputFlags_None, id);
++        const bool right_clicked = hovered && IsMouseClicked(1, ImGuiInputFlags_None, id);
+         const bool double_clicked = (hovered && g.IO.MouseClickedCount[0] == 2 && TestKeyOwner(ImGuiKey_MouseLeft, id));
+         const bool make_active = (clicked || double_clicked || g.NavActivateId == id);
+         if (make_active && (clicked || double_clicked))
+@@ -2703,6 +2704,13 @@ bool ImGui::DragScalar(const char* label, ImGuiDataType data_type, void* p_data,
+         if (make_active && temp_input_allowed)
+             if ((clicked && g.IO.KeyCtrl) || double_clicked || (g.NavActivateId == id && (g.NavActivateFlags & ImGuiActivateFlags_PreferInput)))
+                 temp_input_is_active = true;
++        if (right_clicked && temp_input_allowed && !temp_input_is_active)
++        {
++            SetKeyOwner(ImGuiKey_MouseRight, id);
++            g.NavActivateId = id;
++            g.NavActivateFlags = ImGuiActivateFlags_PreferInput;
++            temp_input_is_active = true;
++        }
+ 
+         // (Optional) simple click (without moving) turns Drag into an InputText
+         if (g.IO.ConfigDragClickToInputText && temp_input_allowed && !temp_input_is_active)
+@@ -2764,6 +2772,18 @@ bool ImGui::DragScalar(const char* label, ImGuiDataType data_type, void* p_data,
+     if (label_size.x > 0.0f)
+         RenderText(ImVec2(frame_bb.Max.x + style.ItemInnerSpacing.x, frame_bb.Min.y + style.FramePadding.y), label);
+ 
++    // Delayed tooltip: show hint after 3 seconds of continuous hover
++    if (hovered && !temp_input_is_active && temp_input_allowed && g.HoveredIdTimer >= 3.0f)
++    {
++        if (BeginTooltip())
++        {
++            PushTextWrapPos(GetFontSize() * 35.0f);
++            TextUnformatted("Ctrl/Cmd + LMB or RMB to edit precisely");
++            PopTextWrapPos();
++            EndTooltip();
++        }
++    }
++
+     IMGUI_TEST_ENGINE_ITEM_INFO(id, label, g.LastItemData.StatusFlags | (temp_input_allowed ? ImGuiItemStatusFlags_Inputable : 0));
+     return value_changed;
+ }
+@@ -3304,14 +3324,22 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
+     bool temp_input_is_active = temp_input_allowed && TempInputIsActive(id);
+     if (!temp_input_is_active)
+     {
+-        // Tabbing or Ctrl+Click on Slider turns it into an input box
++        // Tabbing or Ctrl+Click or Right-Click on Slider turns it into an input box
+         const bool clicked = hovered && IsMouseClicked(0, ImGuiInputFlags_None, id);
++        const bool right_clicked = hovered && IsMouseClicked(1, ImGuiInputFlags_None, id);
+         const bool make_active = (clicked || g.NavActivateId == id);
+         if (make_active && clicked)
+             SetKeyOwner(ImGuiKey_MouseLeft, id);
+         if (make_active && temp_input_allowed)
+             if ((clicked && g.IO.KeyCtrl) || (g.NavActivateId == id && (g.NavActivateFlags & ImGuiActivateFlags_PreferInput)))
+                 temp_input_is_active = true;
++        if (right_clicked && temp_input_allowed && !temp_input_is_active)
++        {
++            SetKeyOwner(ImGuiKey_MouseRight, id);
++            g.NavActivateId = id;
++            g.NavActivateFlags = ImGuiActivateFlags_PreferInput;
++            temp_input_is_active = true;
++        }
+ 
+         // Store initial value (not used by main lib but available as a convenience but some mods e.g. to revert)
+         if (make_active)
+@@ -3361,6 +3389,18 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
+     if (label_size.x > 0.0f)
+         RenderText(ImVec2(frame_bb.Max.x + style.ItemInnerSpacing.x, frame_bb.Min.y + style.FramePadding.y), label);
+ 
++    // Delayed tooltip: show hint after 3 seconds of continuous hover
++    if (hovered && !temp_input_is_active && temp_input_allowed && g.HoveredIdTimer >= 3.0f)
++    {
++        if (BeginTooltip())
++        {
++            PushTextWrapPos(GetFontSize() * 35.0f);
++            TextUnformatted("Ctrl/Cmd + LMB or RMB to edit precisely");
++            PopTextWrapPos();
++            EndTooltip();
++        }
++    }
++
+     IMGUI_TEST_ENGINE_ITEM_INFO(id, label, g.LastItemData.StatusFlags | (temp_input_allowed ? ImGuiItemStatusFlags_Inputable : 0));
+     return value_changed;
+ }
