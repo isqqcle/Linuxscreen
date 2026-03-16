@@ -12,11 +12,11 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
         AutoSaveConfig(config);
     }
 
-    if (AnimatedButton("Open Keyboard Layout")) {
+    if (AnimatedButton("Open Rebind Editor")) {
         g_rebindLayoutState.keyboardLayoutOpen = true;
         g_rebindLayoutState.keyboardLayoutCloseRequested = false;
         ++g_rebindLayoutState.keyboardLayoutOpenSequence;
-        ImGui::OpenPopup("Keyboard Layout");
+        ImGui::OpenPopup("Rebind Editor");
     }
 
     const ImVec2 center = ImGui::GetMainViewport()
@@ -32,7 +32,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
     }
     ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
 
-    if (ImGui::BeginPopupModal("Keyboard Layout", &g_rebindLayoutState.keyboardLayoutOpen, ImGuiWindowFlags_NoScrollbar)) {
+    if (ImGui::BeginPopupModal("Rebind Editor", &g_rebindLayoutState.keyboardLayoutOpen, ImGuiWindowFlags_NoScrollbar)) {
         if (!g_rebindLayoutState.keyboardLayoutOpen && !g_rebindLayoutState.keyboardLayoutCloseRequested) {
             // Keep the popup alive while animating close after titlebar X click.
             g_rebindLayoutState.keyboardLayoutCloseRequested = true;
@@ -764,8 +764,8 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                                          &perStartDelay,
                                          0,
                                          500,
-                                         perStartDelay == 0 ? "Inherit" : "%d ms");
-                        const std::string perRepeatDelayFormat = BuildRepeatDelaySliderFormat(perRepeatDelay, "Inherit");
+                                         perStartDelay == 0 ? "Inherit Global" : "%d ms");
+                        const std::string perRepeatDelayFormat = BuildRepeatDelaySliderFormat(perRepeatDelay, "Inherit Global");
                         ImGui::SliderInt("Repeat Delay##layout_key_repeat_delay",
                                          &perRepeatDelay,
                                          0,
@@ -780,8 +780,8 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                                                                          &perStartDelay,
                                                                          0,
                                                                          500,
-                                                                         perStartDelay == 0 ? "Inherit" : "%d ms");
-                        const std::string perRepeatDelayFormat = BuildRepeatDelaySliderFormat(perRepeatDelay, "Inherit");
+                                                                         perStartDelay == 0 ? "Inherit Global" : "%d ms");
+                        const std::string perRepeatDelayFormat = BuildRepeatDelaySliderFormat(perRepeatDelay, "Inherit Global");
                         const bool repeatDelayChanged = ImGui::SliderInt("Repeat Delay##layout_key_repeat_delay",
                                                                           &perRepeatDelay,
                                                                           0,
@@ -1051,7 +1051,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
 
         ImGui::PopStyleVar();
         ImGui::EndPopup();
-    } else if (!ImGui::IsPopupOpen("Keyboard Layout")) {
+    } else if (!ImGui::IsPopupOpen("Rebind Editor")) {
         g_rebindLayoutState.keyboardLayoutCloseRequested = false;
     }
 }

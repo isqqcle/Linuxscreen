@@ -1,12 +1,6 @@
 void RenderHotkeysTab(platform::config::LinuxscreenConfig& config, bool isCapturing) {
-    ImGui::Text("Modes");
+    ImGui::Text("Mode Hotkeys");
     ImGui::Separator();
-
-    if (!platform::config::IsGameStateMonitorAvailable()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
-                           "wpstateout.txt not found; state-based restrictions are disabled");
-        ImGui::Separator();
-    }
 
     const platform::config::CaptureTarget captureTarget = platform::config::GetCaptureTarget();
     const int captureTargetIndex = platform::config::GetCaptureTargetIndex();
@@ -430,7 +424,7 @@ void RenderHotkeysTab(platform::config::LinuxscreenConfig& config, bool isCaptur
     }
 
     ImGui::Spacing();
-    ImGui::Text("Other");
+    ImGui::Text("Other Hotkeys");
     ImGui::Separator();
     ImGui::Text("Open/Close GUI:");
     ImGui::SameLine();

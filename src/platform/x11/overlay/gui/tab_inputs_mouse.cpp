@@ -1,22 +1,4 @@
-void RenderMouseInputsTab(platform::config::LinuxscreenConfig& config, bool isCapturing) {
-    ImGui::Text("Mouse Sensitivity");
-    ImGui::Separator();
-
-    float mouseSensitivity = config.mouseSensitivity;
-    if (ImGui::SliderFloat("Global Sensitivity", &mouseSensitivity, 0.001f, 10.0f, "%.3fx")) {
-        config.mouseSensitivity = mouseSensitivity;
-        AutoSaveConfig(config);
-    }
-
-    ImGui::TextWrapped("Multiplies cursor-disabled mouselook movement. 1.0 = normal.");
-
-    if (!platform::config::IsGameStateMonitorAvailable()) {
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
-                           "wpstateout.txt not found; state-based restrictions are disabled");
-    }
-
-    ImGui::Spacing();
+void RenderSensitivityHotkeysSection(platform::config::LinuxscreenConfig& config, bool isCapturing) {
     ImGui::Text("Sensitivity Hotkeys");
     ImGui::Separator();
 

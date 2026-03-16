@@ -606,7 +606,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
     auto addNewMirror = [&]() {
         platform::config::MirrorConfig newMirror;
         newMirror.name = "New Mirror " + std::to_string(config.mirrors.size() + 1);
-        newMirror.output.relativeTo = "centerViewport";
+        newMirror.output.relativeTo = "topLeftScreen";
         newMirror.colorSensitivity = 1.0f;
         newMirror.rawOutput = true;
         newMirror.source.useWindowSize = true;
@@ -741,7 +741,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         g_mirrorEditorState.mirrorNameError.clear();
                     }
 
-                    if (AnimatedCollapsingHeader("Identity")) {
+                    if (AnimatedCollapsingHeader("General")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -837,19 +837,17 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Border Settings")) {
+                    if (AnimatedCollapsingHeader("Border")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
                         ImGui::Indent();
                         const char* borderTypes[] = { "Dynamic (around content)", "Static (shape overlay)" };
                         int currentBorderType = static_cast<int>(mirror.border.type);
-                        ImGui::PushItemWidth(200);
                         if (ImGui::Combo("Border Type", &currentBorderType, borderTypes, IM_ARRAYSIZE(borderTypes))) {
                             mirror.border.type = static_cast<platform::config::MirrorBorderType>(currentBorderType);
                             AutoSaveConfig(config);
                         }
-                        ImGui::PopItemWidth();
 
                         if (mirror.border.type == platform::config::MirrorBorderType::Dynamic) {
                             if (ImGui::DragInt("Dynamic Thickness", &mirror.border.dynamicThickness, 1, 0, 32)) {
@@ -857,13 +855,14 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                 AutoSaveConfig(config);
                             }
 
-                            float dynColor[4] = { mirror.colors.border.r, mirror.colors.border.g, mirror.colors.border.b, mirror.colors.border.a };
-                            if (ImGui::ColorEdit4("Border Color##dyn", dynColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
-                                mirror.colors.border = { dynColor[0], dynColor[1], dynColor[2], dynColor[3] };
-                                AutoSaveConfig(config);
+                            if (mirror.border.dynamicThickness > 0) {
+                                float dynColor[4] = { mirror.colors.border.r, mirror.colors.border.g, mirror.colors.border.b, mirror.colors.border.a };
+                                if (ImGui::ColorEdit4("Border Color##dyn", dynColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
+                                    mirror.colors.border = { dynColor[0], dynColor[1], dynColor[2], dynColor[3] };
+                                    AutoSaveConfig(config);
+                                }
                             }
                         } else {
-                            ImGui::TextDisabled("Set Thickness to 0 to disable");
 
                             if (ImGui::DragInt("Thickness##sb", &mirror.border.staticThickness, 1, 0, 32)) {
                                 if (mirror.border.staticThickness < 0) mirror.border.staticThickness = 0;
@@ -913,7 +912,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Output Size")) {
+                    if (AnimatedCollapsingHeader("Scaling")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1007,7 +1006,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Output Position")) {
+                    if (AnimatedCollapsingHeader("Position")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1092,7 +1091,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         }
                         if (mirror.colorPassthrough) ImGui::EndDisabled();
 
-                        ImGui::Text("Target Colors (Match):");
+                        ImGui::Text("Target Colors:");
                         int targetToRemoveIdx = -1;
                         for (size_t colIdx = 0; colIdx < mirror.colors.targetColors.size(); ++colIdx) {
                             ImGui::PushID(static_cast<int>(colIdx));
@@ -1121,7 +1120,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Input/Capture Zones")) {
+                    if (AnimatedCollapsingHeader("Capture Zones")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1213,11 +1212,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("References")) {
-
-
-                        HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
-                        ImGui::Indent();
+                    ImGui::Separator();
+                    {
                         auto containingModes = platform::config::GetModesContainingMirror(config, mirror.name);
                         std::string addToModesPreview = "[Select modes]";
                         if (containingModes.size() == 1) {
@@ -1256,7 +1252,24 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         } else {
                             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Not used in any mode");
                         }
-                        ImGui::Unindent();
+
+                        std::vector<std::string> containingGroups;
+                        for (const auto& grp : config.mirrorGroups) {
+                            for (const auto& gmi : grp.mirrors) {
+                                if (gmi.mirrorId == mirror.name) {
+                                    containingGroups.push_back(grp.name);
+                                    break;
+                                }
+                            }
+                        }
+                        if (!containingGroups.empty()) {
+                            ImGui::Text("Used in groups:");
+                            for (const auto& gName : containingGroups) {
+                                ImGui::BulletText("%s", gName.c_str());
+                            }
+                        } else {
+                            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Not used in any group");
+                        }
                     }
 
                     ImGui::PopID();
@@ -1399,7 +1412,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         g_mirrorEditorState.groupNameError.clear();
                     }
 
-                    if (AnimatedCollapsingHeader("Identity")) {
+                    if (AnimatedCollapsingHeader("General")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1432,7 +1445,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Group Output Size")) {
+                    if (AnimatedCollapsingHeader("Group Scaling")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1525,7 +1538,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Group Output Position")) {
+                    if (AnimatedCollapsingHeader("Group Position")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1572,7 +1585,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Group Mirrors (Per-Item Sizing)")) {
+                    if (AnimatedCollapsingHeader("Group Mirrors")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1775,11 +1788,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("References")) {
-
-
-                        HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
-                        ImGui::Indent();
+                    ImGui::Separator();
+                    {
                         std::vector<std::string> containingModes;
                         containingModes.reserve(config.modes.size());
                         for (const auto& modeEntry : config.modes) {
@@ -1837,7 +1847,6 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         } else {
                             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Not used in any mode");
                         }
-                        ImGui::Unindent();
                     }
 
                     ImGui::PopID();

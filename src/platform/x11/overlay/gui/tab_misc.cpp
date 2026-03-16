@@ -213,8 +213,8 @@ void RenderMiscTab(platform::config::LinuxscreenConfig& config) {
 
             if (g_fontsScanned && !g_discoveredFonts.empty()) {
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(260.0f);
-                if (ImGui::BeginCombo("##font_dropdown", "Discover Fonts...")) {
+                const char* fontPreview = config.guiFontPath.empty() ? "Select Font" : config.guiFontPath.c_str();
+                if (ImGui::BeginCombo("##font_dropdown", fontPreview)) {
                     ImGui::InputTextWithHint("##filter", "Search...", g_fontSearchFilter, sizeof(g_fontSearchFilter));
 
                     std::string filter = lowercaseForSearch(g_fontSearchFilter);
@@ -261,7 +261,7 @@ void RenderMiscTab(platform::config::LinuxscreenConfig& config) {
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("Interface")) {
+        if (ImGui::BeginTabItem("Interface & Other")) {
             ImGui::SeparatorText("Performance");
             int fpsLimitValue = (config.fpsLimit == 0) ? 1001 : std::clamp(config.fpsLimit, 30, 1000);
             if (ImGui::SliderInt("FPS Limit", &fpsLimitValue, 30, 1001,

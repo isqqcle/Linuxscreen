@@ -17,7 +17,7 @@ RebindLayoutState g_rebindLayoutState;
 
 void RenderInputsTab(platform::config::LinuxscreenConfig& config, bool isCapturing) {
     if (ImGui::BeginTabBar("##inputs_subtabs")) {
-        if (ImGui::BeginTabItem("Keyboard")) {
+        if (ImGui::BeginTabItem("Global")) {
             ImGui::Text("Key Repeat");
             ImGui::Separator();
 
@@ -48,18 +48,36 @@ void RenderInputsTab(platform::config::LinuxscreenConfig& config, bool isCapturi
             HelpMarker("When off, global repeat shaping applies to keyboard keys only.\nPer-key mouse overrides still apply.\nMB1/MB2 are never repeated.");
 
             ImGui::Spacing();
+            ImGui::Text("Mouse Sensitivity");
+            ImGui::Separator();
+
+            float mouseSensitivity = config.mouseSensitivity;
+            if (ImGui::SliderFloat("Global Sensitivity", &mouseSensitivity, 0.001f, 10.0f, "%.3fx")) {
+                config.mouseSensitivity = mouseSensitivity;
+                AutoSaveConfig(config);
+            }
+
+            ImGui::TextWrapped("Multiplies cursor-disabled mouselook movement. 1.0 = normal.");
+
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Hotkeys & Rebinds")) {
+            if (!platform::config::IsGameStateMonitorAvailable()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
+                                   "wpstateout.txt not found; state-based restrictions are disabled");
+                ImGui::Separator();
+            }
+
+            RenderRebindsTab(config, isCapturing);
+            ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
             RenderHotkeysTab(config, isCapturing);
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            RenderRebindsTab(config, isCapturing);
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Mouse")) {
-            RenderMouseInputsTab(config, isCapturing);
+            RenderSensitivityHotkeysSection(config, isCapturing);
             ImGui::EndTabItem();
         }
 

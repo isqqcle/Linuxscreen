@@ -123,7 +123,7 @@ void AddNewHotkey(platform::config::LinuxscreenConfig& config, const std::string
     newHotkey.keys = { 0x70 }; // Default to F1
     newHotkey.mainMode = targetMode;
     newHotkey.altSecondaryModes.clear();
-    newHotkey.debounce = 100;
+    newHotkey.debounce = 0;
     newHotkey.triggerOnRelease = false;
     newHotkey.triggerOnHold = false;
     newHotkey.blockKeyFromGame = false;

@@ -99,7 +99,7 @@ struct MirrorBorderConfig {
     int dynamicThickness = 1;
     MirrorBorderShape staticShape = MirrorBorderShape::Rectangle;
     Color staticColor{1.0f, 1.0f, 1.0f, 1.0f};
-    int staticThickness = 2;
+    int staticThickness = 0;
     int staticRadius = 0;
     int staticOffsetX = 0;
     int staticOffsetY = 0;
@@ -123,7 +123,7 @@ struct MirrorConfig {
     MirrorColors colors;
     float colorSensitivity = 0.001f;
     MirrorBorderConfig border;
-    int fps = 30;
+    int fps = 15;
     float opacity = 1.0f;
     bool rawOutput = false;
     bool colorPassthrough = false;
@@ -242,12 +242,12 @@ struct HotkeyConfig {
     std::string returnMode;
     std::vector<AltSecondaryModeConfig> altSecondaryModes;
     HotkeyConditions conditions;
-    int debounce = 100;
+    int debounce = 0;
     bool triggerOnRelease = false;
     bool triggerOnHold = false;
     bool blockKeyFromGame = false;
     bool returnToDefaultOnRepeat = true;
-    bool allowExitToFullscreenRegardlessOfGameState = false;
+    bool allowExitToFullscreenRegardlessOfGameState = true;
 };
 
 struct SensitivityHotkeyConfig {
@@ -256,10 +256,10 @@ struct SensitivityHotkeyConfig {
     bool separateXY = false;
     float sensitivityX = 1.0f;
     float sensitivityY = 1.0f;
-    bool toggle = false;
+    bool toggle = true;
     bool triggerOnHold = false;
     HotkeyConditions conditions;
-    int debounce = 100;
+    int debounce = 0;
 };
 
 struct KeyRebind {

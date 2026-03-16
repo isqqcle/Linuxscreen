@@ -275,9 +275,6 @@ int ResolveEyeZoomOutputHeight(const platform::config::EyeZoomConfig& zoomConfig
 void RenderEyeZoomTab(platform::config::LinuxscreenConfig& config,
                       const std::string& activeMode,
                       platform::x11::MirrorModeState& modeState) {
-    ImGui::Text("EyeZoom Settings");
-    ImGui::Separator();
-    
     auto& ez = config.eyezoom;
     platform::config::ModeConfig* eyeZoomMode = nullptr;
     for (auto& mode : config.modes) {
@@ -561,13 +558,13 @@ void RenderEyeZoomTab(platform::config::LinuxscreenConfig& config,
                "This makes configs portable across different screen resolutions.");
     if (ez.outputUseRelativePosition) {
         float xPercent = ez.outputRelativeX * 100.0f;
-        if (ImGui::SliderFloat("X %%##EyeZoomOutput", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
+        if (ImGui::SliderFloat("X %##EyeZoomOutput", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
             ez.outputRelativeX = xPercent / 100.0f;
             updateOutputPixelsFromRelative();
             changed = true;
         }
         float yPercent = ez.outputRelativeY * 100.0f;
-        if (ImGui::SliderFloat("Y %%##EyeZoomOutput", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
+        if (ImGui::SliderFloat("Y %##EyeZoomOutput", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
             ez.outputRelativeY = yPercent / 100.0f;
             updateOutputPixelsFromRelative();
             changed = true;
@@ -597,20 +594,20 @@ void RenderEyeZoomTab(platform::config::LinuxscreenConfig& config,
             changed = true;
         }
         float scalePercent = getOutputRelativeUniformScale() * 100.0f;
-        if (ImGui::SliderFloat("Scale %%##EyeZoomOutput", &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
+        if (ImGui::SliderFloat("Scale %##EyeZoomOutput", &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
             setOutputRelativeFromUniformScale(scalePercent / 100.0f);
             ez.outputUseRelativeSize = true;
             changed = true;
         }
     } else {
         float widthPercent = ez.outputRelativeWidth * 100.0f;
-        if (ImGui::SliderFloat("Width %%##EyeZoomOutput", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
+        if (ImGui::SliderFloat("Width %##EyeZoomOutput", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
             ez.outputRelativeWidth = widthPercent / 100.0f;
             ez.outputUseRelativeSize = true;
             changed = true;
         }
         float heightPercent = ez.outputRelativeHeight * 100.0f;
-        if (ImGui::SliderFloat("Height %%##EyeZoomOutput", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
+        if (ImGui::SliderFloat("Height %##EyeZoomOutput", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
             ez.outputRelativeHeight = heightPercent / 100.0f;
             ez.outputUseRelativeSize = true;
             changed = true;
