@@ -577,7 +577,7 @@ std::string GetProcessExePath() {
 #endif
 }
 
-std::string GetProcessBaseName() {
+[[maybe_unused]] std::string GetProcessBaseName() {
     const std::string exePath = GetProcessExePath();
     const std::size_t slashPos = exePath.find_last_of('/');
     if (slashPos == std::string::npos) {
@@ -693,7 +693,7 @@ bool GetFramebufferSizeFromLatestGlfwWindow(int& outWidth, int& outHeight) {
     return outWidth > 0 && outHeight > 0;
 }
 
-void RefreshTrackedGlfwWindowMetrics(GLFWwindow* window) {
+[[maybe_unused]] void RefreshTrackedGlfwWindowMetrics(GLFWwindow* window) {
     if (!window) {
         return;
     }

@@ -744,13 +744,6 @@ OverscanDimensions g_overscanDims;
 // Cached GPU texture size limit (queried once on init)
 int g_maxTextureSize = 0;
 
-// Fence published by the worker thread after rendering mirrors.
-// The overlay renderer calls glWaitSync on this fence so the GPU
-// won't read textures until they are fully rendered. The worker
-// owns the lifecycle: it replaces the fence each iteration and
-// defers deletion of the old one through the stale-fence queue.
-std::mutex g_publishFenceMutex;
-GLsync g_publishFence = nullptr;
 // Set to true once the game has rendered into the overscan FBO (via the
 // glBindFramebuffer hook redirect). False immediately after FBO creation so
 // the first swap hook call does not blit uninitialized FBO content to FBO 0.
