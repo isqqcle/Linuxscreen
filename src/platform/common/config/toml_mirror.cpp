@@ -1,3 +1,73 @@
+MirrorSourceType MirrorSourceTypeFromString(const std::string& value) {
+    if (value == "window") {
+        return MirrorSourceType::Window;
+    }
+    if (value == "image") {
+        return MirrorSourceType::Image;
+    }
+    return MirrorSourceType::GameFramebuffer;
+}
+
+const char* MirrorSourceTypeToString(MirrorSourceType type) {
+    switch (type) {
+    case MirrorSourceType::Window:
+        return "window";
+    case MirrorSourceType::Image:
+        return "image";
+    case MirrorSourceType::GameFramebuffer:
+    default:
+        return "gameFramebuffer";
+    }
+}
+
+MirrorSourceTitleMatchMode MirrorSourceTitleMatchModeFromString(const std::string& value) {
+    if (value == "startsWith") {
+        return MirrorSourceTitleMatchMode::StartsWith;
+    }
+    if (value == "endsWith") {
+        return MirrorSourceTitleMatchMode::EndsWith;
+    }
+    if (value == "contains") {
+        return MirrorSourceTitleMatchMode::Contains;
+    }
+    if (value == "disabled") {
+        return MirrorSourceTitleMatchMode::Disabled;
+    }
+    return MirrorSourceTitleMatchMode::Exact;
+}
+
+const char* MirrorSourceTitleMatchModeToString(MirrorSourceTitleMatchMode mode) {
+    switch (mode) {
+    case MirrorSourceTitleMatchMode::StartsWith:
+        return "startsWith";
+    case MirrorSourceTitleMatchMode::EndsWith:
+        return "endsWith";
+    case MirrorSourceTitleMatchMode::Contains:
+        return "contains";
+    case MirrorSourceTitleMatchMode::Disabled:
+        return "disabled";
+    case MirrorSourceTitleMatchMode::Exact:
+    default:
+        return "exact";
+    }
+}
+
+MirrorSourceFallbackMode MirrorSourceFallbackModeFromString(const std::string& value) {
+    return value == "sameApp"
+        ? MirrorSourceFallbackMode::SameApp
+        : MirrorSourceFallbackMode::None;
+}
+
+const char* MirrorSourceFallbackModeToString(MirrorSourceFallbackMode mode) {
+    switch (mode) {
+    case MirrorSourceFallbackMode::SameApp:
+        return "sameApp";
+    case MirrorSourceFallbackMode::None:
+    default:
+        return "none";
+    }
+}
+
 void MirrorCaptureConfigToToml(const MirrorCaptureConfig& cfg, toml::table& out) {
     out.insert("x", cfg.x);
     out.insert("y", cfg.y);
@@ -14,6 +84,64 @@ MirrorCaptureConfig MirrorCaptureConfigFromToml(const toml::table& tbl) {
         cfg.relativeTo = "topLeftScreen";
     }
     cfg.enabled = GetOr(tbl, "enabled", true);
+    return cfg;
+}
+
+void MirrorSourceConfigToToml(const MirrorSourceConfig& cfg, toml::table& out) {
+    out.insert_or_assign("type", MirrorSourceTypeToString(cfg.type));
+    if (!cfg.image.empty()) {
+        out.insert_or_assign("image", cfg.image);
+    }
+    if (!cfg.appId.empty()) {
+        out.insert_or_assign("appId", cfg.appId);
+    }
+    if (!cfg.windowTitle.empty()) {
+        out.insert_or_assign("windowTitle", cfg.windowTitle);
+    }
+    if (cfg.titleMatchMode != MirrorSourceTitleMatchMode::Exact) {
+        out.insert_or_assign("titleMatchMode", MirrorSourceTitleMatchModeToString(cfg.titleMatchMode));
+    }
+    if (cfg.fallbackMode != MirrorSourceFallbackMode::None) {
+        out.insert_or_assign("fallbackMode", MirrorSourceFallbackModeToString(cfg.fallbackMode));
+    }
+    if (cfg.useImageSize) {
+        out.insert_or_assign("useImageSize", cfg.useImageSize);
+    }
+    if (cfg.imageReloadPollMs != MirrorSourceConfig::kDefaultImageReloadPollMs) {
+        out.insert_or_assign("imageReloadPollMs", cfg.imageReloadPollMs);
+    }
+    if (cfg.useWindowSize) {
+        out.insert_or_assign("useWindowSize", cfg.useWindowSize);
+    }
+    if (cfg.lastKnownWidth > 0) {
+        out.insert_or_assign("lastKnownWidth", cfg.lastKnownWidth);
+    }
+    if (cfg.lastKnownHeight > 0) {
+        out.insert_or_assign("lastKnownHeight", cfg.lastKnownHeight);
+    }
+    if (!cfg.selectionToken.empty()) {
+        out.insert_or_assign("selectionToken", cfg.selectionToken);
+    }
+}
+
+MirrorSourceConfig MirrorSourceConfigFromToml(const toml::table& tbl) {
+    MirrorSourceConfig cfg;
+    cfg.type = MirrorSourceTypeFromString(GetStringOr(tbl, "type", "gameFramebuffer"));
+    cfg.image = GetStringOr(tbl, "image", "");
+    cfg.appId = GetStringOr(tbl, "appId", "");
+    cfg.windowTitle = GetStringOr(tbl, "windowTitle", "");
+    if (tbl.contains("titleMatchMode")) {
+        cfg.titleMatchMode = MirrorSourceTitleMatchModeFromString(GetStringOr(tbl, "titleMatchMode", "exact"));
+    }
+    if (tbl.contains("fallbackMode")) {
+        cfg.fallbackMode = MirrorSourceFallbackModeFromString(GetStringOr(tbl, "fallbackMode", "none"));
+    }
+    cfg.useImageSize = GetOr(tbl, "useImageSize", false);
+    cfg.imageReloadPollMs = GetOr(tbl, "imageReloadPollMs", MirrorSourceConfig::kDefaultImageReloadPollMs);
+    cfg.useWindowSize = GetOr(tbl, "useWindowSize", false);
+    cfg.lastKnownWidth = GetOr(tbl, "lastKnownWidth", 0);
+    cfg.lastKnownHeight = GetOr(tbl, "lastKnownHeight", 0);
+    cfg.selectionToken = GetStringOr(tbl, "selectionToken", "");
     return cfg;
 }
 
@@ -133,6 +261,21 @@ void MirrorConfigToToml(const MirrorConfig& cfg, toml::table& out) {
     out.insert_or_assign("name", cfg.name);
     out.insert_or_assign("captureWidth", cfg.captureWidth);
     out.insert_or_assign("captureHeight", cfg.captureHeight);
+    if (cfg.source.type != MirrorSourceType::GameFramebuffer ||
+        !cfg.source.image.empty() ||
+        !cfg.source.appId.empty() ||
+        !cfg.source.windowTitle.empty() ||
+        cfg.source.titleMatchMode != MirrorSourceTitleMatchMode::Exact ||
+        cfg.source.fallbackMode != MirrorSourceFallbackMode::None ||
+        cfg.source.useImageSize ||
+        cfg.source.useWindowSize ||
+        cfg.source.lastKnownWidth > 0 ||
+        cfg.source.lastKnownHeight > 0 ||
+        !cfg.source.selectionToken.empty()) {
+        toml::table sourceTbl;
+        MirrorSourceConfigToToml(cfg.source, sourceTbl);
+        out.insert_or_assign("source", sourceTbl);
+    }
     out.insert_or_assign("colorSensitivity", static_cast<double>(cfg.colorSensitivity));
     out.insert_or_assign("fps", cfg.fps);
     out.insert_or_assign("opacity", static_cast<double>(cfg.opacity));
@@ -171,6 +314,7 @@ MirrorConfig MirrorConfigFromToml(const toml::table& tbl) {
               { "name",
                 "captureWidth",
                 "captureHeight",
+                "source",
                 "colorSensitivity",
                 "fps",
                 "opacity",
@@ -187,6 +331,9 @@ MirrorConfig MirrorConfigFromToml(const toml::table& tbl) {
     cfg.name = GetStringOr(tbl, "name", "");
     cfg.captureWidth = GetOr(tbl, "captureWidth", 50);
     cfg.captureHeight = GetOr(tbl, "captureHeight", 50);
+    if (auto sourceTbl = GetTable(tbl, "source")) {
+        cfg.source = MirrorSourceConfigFromToml(*sourceTbl);
+    }
     cfg.colorSensitivity = static_cast<float>(GetOr(tbl, "colorSensitivity", 0.001));
     cfg.fps = GetOr(tbl, "fps", 30);
     cfg.opacity = static_cast<float>(GetOr(tbl, "opacity", 1.0));

@@ -1,4 +1,6 @@
 #include "mirror_mode_state.h"
+#include "../mirror_image_source.h"
+#include "../window_capture.h"
 #include "../x11_runtime.h"
 
 #include "../../common/anchor_coords.h"
@@ -226,6 +228,47 @@ void ApplyRelativeSizeToOutput(config::MirrorRenderConfig& output,
     }
 }
 
+void ApplyKnownSourceSizeOverride(config::MirrorConfig& mirrorCfg, int width, int height) {
+    if (width > 0) {
+        mirrorCfg.captureWidth = width;
+    }
+    if (height > 0) {
+        mirrorCfg.captureHeight = height;
+    }
+}
+
+void ApplyWindowCaptureSizeOverride(config::MirrorConfig& mirrorCfg) {
+    if (!HasConfiguredWindowCaptureSource(mirrorCfg.source) || !mirrorCfg.source.useWindowSize) {
+        return;
+    }
+
+    const std::vector<AvailableWindow> windows = GetAvailableWindowsSnapshot();
+    const int matchIndex = FindBestMatchingWindowIndex(windows,
+                                                            mirrorCfg.source.appId,
+                                                            mirrorCfg.source.windowTitle,
+                                                            mirrorCfg.source.titleMatchMode,
+                                                            mirrorCfg.source.fallbackMode,
+                                                            0,
+                                                            mirrorCfg.source.lastKnownWidth,
+                                                            mirrorCfg.source.lastKnownHeight);
+    if (matchIndex < 0) {
+        return;
+    }
+
+    const AvailableWindow& window = windows[static_cast<std::size_t>(matchIndex)];
+    ApplyKnownSourceSizeOverride(mirrorCfg, window.width, window.height);
+}
+
+void ApplyImageSourceSizeOverride(config::MirrorConfig& mirrorCfg) {
+    if (!HasConfiguredImageSource(mirrorCfg.source) || !mirrorCfg.source.useImageSize) {
+        return;
+    }
+
+    ApplyKnownSourceSizeOverride(mirrorCfg,
+                                 mirrorCfg.source.lastKnownWidth,
+                                 mirrorCfg.source.lastKnownHeight);
+}
+
 } // namespace
 
 void MirrorModeState::ApplyModeSwitch(const std::string& modeName,
@@ -254,6 +297,7 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
     }
 
     if (!modeConfig) {
+        SetWindowCaptureRequests({});
         return;
     }
 
@@ -296,6 +340,8 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
     auto appendResolvedMirror = [&](const config::MirrorConfig& mirrorCfg) {
         ResolvedMirrorRender resolved;
         resolved.config = mirrorCfg;
+        ApplyWindowCaptureSizeOverride(resolved.config);
+        ApplyImageSourceSizeOverride(resolved.config);
         if (hasScreenSize) {
             ResolveOutputPositionFromRelative(*modeConfig,
                                              resolved.config.output,
@@ -328,6 +374,8 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
 
             ResolvedMirrorRender resolved;
             resolved.config = *mirrorIt->second;
+            ApplyWindowCaptureSizeOverride(resolved.config);
+            ApplyImageSourceSizeOverride(resolved.config);
             int groupX = groupCfg.output.x;
             int groupY = groupCfg.output.y;
             if (groupCfg.output.useRelativePosition && hasScreenSize) {
@@ -462,6 +510,23 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
             }
         }
     }
+
+    std::vector<WindowCaptureRequest> windowCaptureRequests;
+    windowCaptureRequests.reserve(activeMirrors_.size());
+    for (const auto& mirror : activeMirrors_) {
+        if (HasConfiguredWindowCaptureSource(mirror.config.source)) {
+            windowCaptureRequests.push_back(
+                WindowCaptureRequest{ mirror.config.source.appId,
+                                      mirror.config.source.windowTitle,
+                                      mirror.config.source.titleMatchMode,
+                                      mirror.config.source.fallbackMode,
+                                      mirror.config.source.selectionToken,
+                                      mirror.config.fps,
+                                      mirror.config.source.lastKnownWidth,
+                                      mirror.config.source.lastKnownHeight });
+        }
+    }
+    SetWindowCaptureRequests(windowCaptureRequests);
 }
 
 std::string MirrorModeState::GetActiveModeName() const {
@@ -536,6 +601,7 @@ void MirrorModeState::Reset() {
     activeModeName_.clear();
     activeMirrors_.clear();
     configSnapshot_.reset();
+    SetWindowCaptureRequests({});
 }
 
 } // namespace platform::x11

@@ -195,8 +195,13 @@ void MonitorThreadMain(std::string path) {
             continue;
         }
 
+#ifdef __APPLE__
+        const auto& statMtime = stateFileStat.st_mtimespec;
+#else
+        const auto& statMtime = stateFileStat.st_mtim;
+#endif
         const bool unchanged =
-            haveLastWriteTime && stateFileStat.st_mtim.tv_sec == lastWriteTime.tv_sec && stateFileStat.st_mtim.tv_nsec == lastWriteTime.tv_nsec;
+            haveLastWriteTime && statMtime.tv_sec == lastWriteTime.tv_sec && statMtime.tv_nsec == lastWriteTime.tv_nsec;
         if (unchanged) {
             ++consecutiveNoChange;
             if (consecutiveNoChange > 600) {
@@ -209,7 +214,7 @@ void MonitorThreadMain(std::string path) {
             continue;
         }
 
-        lastWriteTime = stateFileStat.st_mtim;
+        lastWriteTime = statMtime;
         haveLastWriteTime = true;
         consecutiveNoChange = 0;
         sleepMs = 16;

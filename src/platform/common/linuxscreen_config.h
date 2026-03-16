@@ -48,6 +48,42 @@ struct MirrorColors {
     Color border{1.0f, 1.0f, 1.0f, 1.0f};
 };
 
+enum class MirrorSourceType {
+    GameFramebuffer,
+    Window,
+    Image,
+};
+
+enum class MirrorSourceTitleMatchMode {
+    Exact,
+    StartsWith,
+    EndsWith,
+    Contains,
+    Disabled,
+};
+
+enum class MirrorSourceFallbackMode {
+    None,
+    SameApp,
+};
+
+struct MirrorSourceConfig {
+    static constexpr int kDefaultImageReloadPollMs = 250;
+
+    MirrorSourceType type = MirrorSourceType::GameFramebuffer;
+    std::string image;
+    std::string appId;
+    std::string windowTitle;
+    MirrorSourceTitleMatchMode titleMatchMode = MirrorSourceTitleMatchMode::Exact;
+    MirrorSourceFallbackMode fallbackMode = MirrorSourceFallbackMode::None;
+    bool useImageSize = false;
+    int imageReloadPollMs = kDefaultImageReloadPollMs;
+    bool useWindowSize = false;
+    int lastKnownWidth = 0;
+    int lastKnownHeight = 0;
+    std::string selectionToken;
+};
+
 enum class MirrorBorderType {
     Dynamic,
     Static,
@@ -81,6 +117,7 @@ struct MirrorConfig {
     std::string name;
     int captureWidth = 50;
     int captureHeight = 50;
+    MirrorSourceConfig source;
     std::vector<MirrorCaptureConfig> input;
     MirrorRenderConfig output;
     MirrorColors colors;

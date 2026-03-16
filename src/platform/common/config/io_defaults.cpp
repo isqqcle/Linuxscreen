@@ -3,7 +3,6 @@
 #include "config_toml.h"
 #include "../font_scanner.h"
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -95,7 +94,14 @@ void MergeTomlTables(toml::table& base, const toml::table& overlay) {
 }
 
 std::string PickDefaultGuiFont() {
-    static constexpr std::array<const char*, 6> kPreferredFonts = {
+    static constexpr const char* kPreferredFonts[] = {
+#ifdef __APPLE__
+        "SFNSRounded",
+        "Arial",
+        "Trebuchet MS",
+        "SFNSMono",
+        "SFNS",
+#endif
         "NotoSans-Regular",
         "OpenSans-Regular",
         "DroidSans",

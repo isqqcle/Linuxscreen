@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+struct GLFWwindow;
+
 namespace platform::config {
 struct LinuxscreenConfig;
 }
@@ -30,6 +32,7 @@ bool ResizeGameWindow(int width, int height);
 bool GetGameWindowSize(int& outWidth, int& outHeight);
 void RecordGlfwWindowMetrics(int windowWidth, int windowHeight, int framebufferWidth, int framebufferHeight);
 bool GetGlfwWindowMetrics(int& outWindowWidth, int& outWindowHeight, int& outFramebufferWidth, int& outFramebufferHeight);
+bool PollGuiWindowCursorPosition(GLFWwindow* preferredWindow, double& outX, double& outY);
 void TriggerImmediateModeResizeEnforcement();
 void ClearTempSensitivityOverride();
 bool ReleaseHeldSensitivityOverrideForInputReset();

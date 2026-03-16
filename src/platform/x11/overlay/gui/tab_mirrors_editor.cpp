@@ -8,6 +8,65 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
     (void)framebufferScaleY;
     const bool hasValidDisplaySize = hasDisplayMetrics && displayWidth > 0.0f && displayHeight > 0.0f;
 
+    auto processCompletedWaylandSelection = [&]() {
+        MirrorEditorState::WaylandSelectionTask completedTask;
+        bool hasCompletedTask = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mirrorEditorState.waylandSelectionMutex);
+            if (!g_mirrorEditorState.waylandSelectionTask.completed) {
+                return;
+            }
+            completedTask = g_mirrorEditorState.waylandSelectionTask;
+            g_mirrorEditorState.waylandSelectionTask.completed = false;
+            g_mirrorEditorState.waylandSelectionTask.inFlight = false;
+            g_mirrorEditorState.waylandSelectionTask.mirrorName.clear();
+            g_mirrorEditorState.waylandSelectionTask.message.clear();
+            hasCompletedTask = true;
+        }
+        if (!hasCompletedTask) {
+            return;
+        }
+
+        g_mirrorEditorState.windowSourceCacheKey.clear();
+        g_mirrorEditorState.windowSourceCacheExpiresAt = 0.0;
+        if (!completedTask.message.empty()) {
+            g_mirrorEditorState.windowSourceStatus.message = completedTask.message;
+        }
+
+        auto mirrorIt = std::find_if(config.mirrors.begin(), config.mirrors.end(), [&](const auto& candidate) {
+            return candidate.name == completedTask.mirrorName;
+        });
+        if (mirrorIt == config.mirrors.end() ||
+            completedTask.result != WindowCaptureSelectionResult::Selected) {
+            return;
+        }
+
+        const platform::config::MirrorSourceConfig previousSource = mirrorIt->source;
+        mirrorIt->source = completedTask.source;
+        if (mirrorIt->source.lastKnownWidth > 0) {
+            mirrorIt->captureWidth = mirrorIt->source.lastKnownWidth;
+        }
+        if (mirrorIt->source.lastKnownHeight > 0) {
+            mirrorIt->captureHeight = mirrorIt->source.lastKnownHeight;
+        }
+
+        if (HasConfiguredWindowCaptureSource(previousSource) &&
+            (GetWindowCaptureBackend() == WindowCaptureBackend::Wayland ||
+             MakeWindowCaptureKey(previousSource) != MakeWindowCaptureKey(mirrorIt->source))) {
+            ForgetWindowCaptureSource(previousSource);
+        }
+
+        g_mirrorEditorState.titlePatternBufferKey = mirrorIt->name + "|" +
+                                                         mirrorIt->source.appId + "|" +
+                                                         mirrorIt->source.windowTitle;
+        std::strncpy(g_mirrorEditorState.titlePatternBuffer,
+                     mirrorIt->source.windowTitle.c_str(),
+                     sizeof(g_mirrorEditorState.titlePatternBuffer) - 1);
+        g_mirrorEditorState.titlePatternBuffer[sizeof(g_mirrorEditorState.titlePatternBuffer) - 1] = '\0';
+        AutoSaveConfig(config);
+    };
+    processCompletedWaylandSelection();
+
     auto updateRelativeFromPixels = [&](platform::config::MirrorRenderConfig& output) {
         if (!hasValidDisplaySize) {
             return;
@@ -87,23 +146,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
     };
 
     auto drawRelativeToCombo = [&](const char* label, std::string& relativeTo) {
-        bool changed = false;
-        const int currentIndex = FindMirrorRelativeToOptionIndex(relativeTo);
-        const char* preview = (currentIndex >= 0) ? kMirrorRelativeToOptions[currentIndex].label : "Unknown";
-        if (ImGui::BeginCombo(label, preview)) {
-            for (const auto& option : kMirrorRelativeToOptions) {
-                const bool selected = (relativeTo == option.value);
-                if (ImGui::Selectable(option.label, selected)) {
-                    relativeTo = option.value;
-                    changed = true;
-                }
-                if (selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
-        }
-        return changed;
+        return DrawRelativeToCombo(label, relativeTo);
     };
 
     int activeModeViewportWidth = static_cast<int>(displayWidth);
@@ -173,6 +216,40 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         mirror.output.relativeHeight = std::clamp((baseHeight * scaleY) / containerHeight, 0.01f, 20.0f);
     };
 
+    auto updateMirrorScaleFromRelativeSize = [&](platform::config::MirrorConfig& mirror) {
+        float containerWidth = 0.0f;
+        float containerHeight = 0.0f;
+        if (!resolveOutputContainerSize(mirror.output, containerWidth, containerHeight)) {
+            return;
+        }
+
+        const int border = platform::config::GetMirrorDynamicBorderPadding(mirror.border);
+        const float baseWidth = static_cast<float>(mirror.captureWidth + (2 * border));
+        const float baseHeight = static_cast<float>(mirror.captureHeight + (2 * border));
+        if (!(baseWidth > 0.0f) || !(baseHeight > 0.0f)) {
+            return;
+        }
+
+        const float scaleX = std::clamp((containerWidth * mirror.output.relativeWidth) / baseWidth, 0.01f, 20.0f);
+        const float scaleY = std::clamp((containerHeight * mirror.output.relativeHeight) / baseHeight, 0.01f, 20.0f);
+        if (mirror.output.preserveAspectRatio) {
+            const float uniformScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
+                                                                               scaleY,
+                                                                               NormalizeAspectFitMode(mirror.output.aspectFitMode)),
+                                                  0.01f,
+                                                  20.0f);
+            mirror.output.separateScale = false;
+            mirror.output.scale = uniformScale;
+            mirror.output.scaleX = uniformScale;
+            mirror.output.scaleY = uniformScale;
+        } else {
+            mirror.output.separateScale = true;
+            mirror.output.scale = scaleX;
+            mirror.output.scaleX = scaleX;
+            mirror.output.scaleY = scaleY;
+        }
+    };
+
     auto updateGroupRelativeSizeFromScale = [&](platform::config::MirrorGroupConfig& group) {
         float containerWidth = 0.0f;
         float containerHeight = 0.0f;
@@ -219,6 +296,63 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         group.output.relativeHeight = std::clamp(outputHeight / containerHeight, 0.01f, 20.0f);
     };
 
+    auto updateGroupScaleFromRelativeSize = [&](platform::config::MirrorGroupConfig& group) {
+        float containerWidth = 0.0f;
+        float containerHeight = 0.0f;
+        if (!resolveOutputContainerSize(group.output, containerWidth, containerHeight)) {
+            return;
+        }
+
+        const platform::config::MirrorGroupItem* firstEnabledItem = nullptr;
+        const platform::config::MirrorConfig* itemMirror = nullptr;
+        for (const auto& item : group.mirrors) {
+            if (!item.enabled) {
+                continue;
+            }
+            const platform::config::MirrorConfig* resolvedMirror = nullptr;
+            for (const auto& mirror : config.mirrors) {
+                if (mirror.name == item.mirrorId) {
+                    resolvedMirror = &mirror;
+                    break;
+                }
+            }
+            if (!resolvedMirror) {
+                continue;
+            }
+            firstEnabledItem = &item;
+            itemMirror = resolvedMirror;
+            break;
+        }
+        if (!firstEnabledItem || !itemMirror) {
+            return;
+        }
+
+        const int border = platform::config::GetMirrorDynamicBorderPadding(itemMirror->border);
+        const float baseWidth = static_cast<float>(itemMirror->captureWidth + (2 * border));
+        const float baseHeight = static_cast<float>(itemMirror->captureHeight + (2 * border));
+        const float itemWidthPercent = std::max(0.0001f, firstEnabledItem->widthPercent);
+        const float itemHeightPercent = std::max(0.0001f, firstEnabledItem->heightPercent);
+
+        const float scaleX = std::clamp((containerWidth * group.output.relativeWidth * itemWidthPercent) / baseWidth, 0.01f, 20.0f);
+        const float scaleY = std::clamp((containerHeight * group.output.relativeHeight * itemHeightPercent) / baseHeight, 0.01f, 20.0f);
+        if (group.output.preserveAspectRatio) {
+            const float uniformScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
+                                                                               scaleY,
+                                                                               NormalizeAspectFitMode(group.output.aspectFitMode)),
+                                                  0.01f,
+                                                  20.0f);
+            group.output.separateScale = false;
+            group.output.scale = uniformScale;
+            group.output.scaleX = uniformScale;
+            group.output.scaleY = uniformScale;
+        } else {
+            group.output.separateScale = true;
+            group.output.scale = scaleX;
+            group.output.scaleX = scaleX;
+            group.output.scaleY = scaleY;
+        }
+    };
+
     auto getMirrorUniformRelativeScale = [&](const platform::config::MirrorConfig& mirror, float& outScale) {
         float containerWidth = 0.0f;
         float containerHeight = 0.0f;
@@ -235,6 +369,21 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
         const float scaleX = (containerWidth * mirror.output.relativeWidth) / baseWidth;
         const float scaleY = (containerHeight * mirror.output.relativeHeight) / baseHeight;
+        outScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
+                                                           scaleY,
+                                                           NormalizeAspectFitMode(mirror.output.aspectFitMode)),
+                              0.01f,
+                              20.0f);
+        return true;
+    };
+
+    auto getMirrorUniformScale = [&](const platform::config::MirrorConfig& mirror, float& outScale) {
+        if (mirror.output.useRelativeSize) {
+            return getMirrorUniformRelativeScale(mirror, outScale);
+        }
+
+        const float scaleX = mirror.output.separateScale ? mirror.output.scaleX : mirror.output.scale;
+        const float scaleY = mirror.output.separateScale ? mirror.output.scaleY : mirror.output.scale;
         outScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
                                                            scaleY,
                                                            NormalizeAspectFitMode(mirror.output.aspectFitMode)),
@@ -263,6 +412,19 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
         mirror.output.relativeWidth = std::clamp((uniformScale * baseWidth) / containerWidth, 0.01f, 20.0f);
         mirror.output.relativeHeight = std::clamp((uniformScale * baseHeight) / containerHeight, 0.01f, 20.0f);
+    };
+
+    auto setMirrorUniformScale = [&](platform::config::MirrorConfig& mirror, float uniformScale) {
+        uniformScale = std::clamp(uniformScale, 0.01f, 20.0f);
+        if (mirror.output.useRelativeSize) {
+            setMirrorRelativeSizeFromUniformScale(mirror, uniformScale);
+            return;
+        }
+
+        mirror.output.separateScale = false;
+        mirror.output.scale = uniformScale;
+        mirror.output.scaleX = uniformScale;
+        mirror.output.scaleY = uniformScale;
     };
 
     auto resolveGroupScaleReference = [&](const platform::config::MirrorGroupConfig& group,
@@ -366,6 +528,34 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         group.output.relativeHeight = std::clamp((uniformScale * baseHeight) / (containerHeight * itemHeightPercent), 0.01f, 20.0f);
     };
 
+    auto getGroupUniformScale = [&](const platform::config::MirrorGroupConfig& group, float& outScale) {
+        if (group.output.useRelativeSize) {
+            return getGroupUniformRelativeScale(group, outScale);
+        }
+
+        const float scaleX = group.output.separateScale ? group.output.scaleX : group.output.scale;
+        const float scaleY = group.output.separateScale ? group.output.scaleY : group.output.scale;
+        outScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
+                                                           scaleY,
+                                                           NormalizeAspectFitMode(group.output.aspectFitMode)),
+                              0.01f,
+                              20.0f);
+        return true;
+    };
+
+    auto setGroupUniformScale = [&](platform::config::MirrorGroupConfig& group, float uniformScale) {
+        uniformScale = std::clamp(uniformScale, 0.01f, 20.0f);
+        if (group.output.useRelativeSize) {
+            setGroupRelativeSizeFromUniformScale(group, uniformScale);
+            return;
+        }
+
+        group.output.separateScale = false;
+        group.output.scale = uniformScale;
+        group.output.scaleX = uniformScale;
+        group.output.scaleY = uniformScale;
+    };
+
     auto makeUniqueMirrorCopyName = [&](const std::string& sourceName) {
         const std::string stem = sourceName.empty() ? "Mirror" : sourceName;
         const std::string baseCopyName = stem + " (Copy)";
@@ -419,6 +609,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         newMirror.output.relativeTo = "centerViewport";
         newMirror.colorSensitivity = 1.0f;
         newMirror.rawOutput = true;
+        newMirror.source.useWindowSize = true;
+        newMirror.border.dynamicThickness = 0;
         platform::config::MirrorCaptureConfig newZone;
         newZone.relativeTo = "centerViewport";
         newMirror.input.push_back(newZone);
@@ -566,6 +758,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                             } else {
                                 g_mirrorEditorState.mirrorNameError.clear();
                                 if (newName != mirror.name) {
+                                    ForgetMirrorImageSource(mirror.name);
                                     platform::config::RenameMirror(config, mirror.name, newName);
                                 }
                                 CopyEditorNameToBuffer(g_mirrorEditorState.nameBuffer,
@@ -586,8 +779,18 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                             }
                         }
 
+                        const bool useSelectedWindowSize =
+                            mirror.source.type == platform::config::MirrorSourceType::Window &&
+                            mirror.source.useWindowSize;
+                        const bool useSelectedImageSize =
+                            mirror.source.type == platform::config::MirrorSourceType::Image &&
+                            mirror.source.useImageSize &&
+                            mirror.source.lastKnownWidth > 0 &&
+                            mirror.source.lastKnownHeight > 0;
+                        const bool useSelectedSourceSize = useSelectedWindowSize || useSelectedImageSize;
                         int captureWidth = mirror.captureWidth;
                         int captureHeight = mirror.captureHeight;
+                        ImGui::BeginDisabled(useSelectedSourceSize);
                         if (ImGui::InputInt("Capture Width", &captureWidth)) {
                             if (captureWidth > 0) {
                                 mirror.captureWidth = captureWidth;
@@ -599,6 +802,37 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                 mirror.captureHeight = captureHeight;
                                 AutoSaveConfig(config);
                             }
+                        }
+                        ImGui::EndDisabled();
+                        if (useSelectedWindowSize) {
+                            ImGui::TextDisabled("Using the selected window's live size.");
+                        } else if (useSelectedImageSize) {
+                            ImGui::TextDisabled("Using the selected image's natural size.");
+                        }
+
+                        ImGui::Separator();
+
+                        const char* sourceTypes[] = { "Game Framebuffer", "Window", "Image" };
+                        int currentSourceType = static_cast<int>(mirror.source.type);
+                        if (ImGui::Combo("Source", &currentSourceType, sourceTypes, IM_ARRAYSIZE(sourceTypes))) {
+                            const platform::config::MirrorSourceConfig previousSource = mirror.source;
+                            mirror.source.type = static_cast<platform::config::MirrorSourceType>(currentSourceType);
+                            if (HasConfiguredWindowCaptureSource(previousSource) &&
+                                previousSource.type != mirror.source.type) {
+                                ForgetWindowCaptureSource(previousSource);
+                            }
+                            if (HasConfiguredImageSource(previousSource) &&
+                                previousSource.type != mirror.source.type) {
+                                ForgetMirrorImageSource(mirror.name);
+                            }
+                            InvalidateWindowCaptureTransientState();
+                            AutoSaveConfig(config);
+                        }
+
+                        if (mirror.source.type == platform::config::MirrorSourceType::Window) {
+#include "tab_mirrors_window_source.cpp"
+                        } else if (mirror.source.type == platform::config::MirrorSourceType::Image) {
+#include "tab_mirrors_image_source.cpp"
                         }
                         ImGui::Unindent();
                     }
@@ -679,7 +913,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Output Scale")) {
+                    if (AnimatedCollapsingHeader("Output Size")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -687,6 +921,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         if (ImGui::Checkbox("Relative size to container##mirror_output_size", &mirror.output.useRelativeSize)) {
                             if (mirror.output.useRelativeSize) {
                                 updateMirrorRelativeSizeFromScale(mirror);
+                            } else {
+                                updateMirrorScaleFromRelativeSize(mirror);
                             }
                             AutoSaveConfig(config);
                         }
@@ -697,9 +933,14 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         if (ImGui::Checkbox("Preserve aspect ratio##mirror_output_size", &mirror.output.preserveAspectRatio)) {
                             if (mirror.output.preserveAspectRatio) {
                                 float uniformScale = 1.0f;
-                                if (getMirrorUniformRelativeScale(mirror, uniformScale)) {
-                                    setMirrorRelativeSizeFromUniformScale(mirror, uniformScale);
+                                if (getMirrorUniformScale(mirror, uniformScale)) {
+                                    setMirrorUniformScale(mirror, uniformScale);
                                 }
+                            } else if (!mirror.output.useRelativeSize) {
+                                const float currentScale = mirror.output.separateScale ? mirror.output.scaleX : mirror.output.scale;
+                                mirror.output.separateScale = true;
+                                mirror.output.scaleX = currentScale;
+                                mirror.output.scaleY = currentScale;
                             }
                             AutoSaveConfig(config);
                         }
@@ -709,30 +950,58 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                 mirror.output.aspectFitMode = NormalizeAspectFitMode(mirror.output.aspectFitMode);
                                 AutoSaveConfig(config);
                             }
+                        }
+
+                        if (mirror.output.preserveAspectRatio) {
                             float uniformScale = 1.0f;
-                            if (!getMirrorUniformRelativeScale(mirror, uniformScale)) {
-                                uniformScale = ResolveUniformScaleByFitMode(std::clamp(mirror.output.relativeWidth, 0.01f, 20.0f),
-                                                                             std::clamp(mirror.output.relativeHeight, 0.01f, 20.0f),
-                                                                             NormalizeAspectFitMode(mirror.output.aspectFitMode));
+                            if (!getMirrorUniformScale(mirror, uniformScale)) {
+                                uniformScale = 1.0f;
                             }
                             float scalePercent = uniformScale * 100.0f;
-                            if (ImGui::SliderFloat("Scale %%##mirror_output_size", &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                setMirrorRelativeSizeFromUniformScale(mirror, scalePercent / 100.0f);
-                                mirror.output.useRelativeSize = true;
+                            const char* uniformScaleLabel = mirror.output.useRelativeSize
+                                                               ? "Size % of container##mirror_output_size"
+                                                               : "Scale %##mirror_output_size";
+                            if (ImGui::SliderFloat(uniformScaleLabel, &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                setMirrorUniformScale(mirror, scalePercent / 100.0f);
                                 AutoSaveConfig(config);
+                            }
+
+                            if (mirror.output.useRelativeSize) {
+                                ImGui::TextDisabled("Stored size: %.1f%% width, %.1f%% height",
+                                                    std::clamp(mirror.output.relativeWidth, 0.01f, 20.0f) * 100.0f,
+                                                    std::clamp(mirror.output.relativeHeight, 0.01f, 20.0f) * 100.0f);
                             }
                         } else {
-                            float widthPercent = mirror.output.relativeWidth * 100.0f;
-                            if (ImGui::SliderFloat("Width %%##mirror_output_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                mirror.output.relativeWidth = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
-                                mirror.output.useRelativeSize = true;
-                                AutoSaveConfig(config);
-                            }
-                            float heightPercent = mirror.output.relativeHeight * 100.0f;
-                            if (ImGui::SliderFloat("Height %%##mirror_output_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                mirror.output.relativeHeight = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
-                                mirror.output.useRelativeSize = true;
-                                AutoSaveConfig(config);
+                            if (mirror.output.useRelativeSize) {
+                                float widthPercent = std::clamp(mirror.output.relativeWidth, 0.01f, 20.0f) * 100.0f;
+                                if (ImGui::SliderFloat("Width % of container##mirror_output_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    mirror.output.relativeWidth = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
+                                    AutoSaveConfig(config);
+                                }
+
+                                float heightPercent = std::clamp(mirror.output.relativeHeight, 0.01f, 20.0f) * 100.0f;
+                                if (ImGui::SliderFloat("Height % of container##mirror_output_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    mirror.output.relativeHeight = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
+                                    AutoSaveConfig(config);
+                                }
+                            } else {
+                                const float currentScaleX = std::clamp(mirror.output.separateScale ? mirror.output.scaleX : mirror.output.scale, 0.01f, 20.0f);
+                                const float currentScaleY = std::clamp(mirror.output.separateScale ? mirror.output.scaleY : mirror.output.scale, 0.01f, 20.0f);
+                                float widthPercent = currentScaleX * 100.0f;
+                                if (ImGui::SliderFloat("Width %##mirror_output_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    const float widthScale = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
+                                    mirror.output.separateScale = true;
+                                    mirror.output.scaleX = widthScale;
+                                    mirror.output.scale = widthScale;
+                                    AutoSaveConfig(config);
+                                }
+                                float heightPercent = currentScaleY * 100.0f;
+                                if (ImGui::SliderFloat("Height %##mirror_output_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    const float heightScale = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
+                                    mirror.output.separateScale = true;
+                                    mirror.output.scaleY = heightScale;
+                                    AutoSaveConfig(config);
+                                }
                             }
                         }
                         ImGui::Unindent();
@@ -761,14 +1030,14 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
                         if (mirror.output.useRelativePosition) {
                             float xPercent = mirror.output.relativeX * 100.0f;
-                            if (ImGui::SliderFloat("X %%##mirror_output", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
+                            if (ImGui::SliderFloat("X %##mirror_output", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
                                 mirror.output.relativeX = xPercent / 100.0f;
                                 updatePixelsFromRelative(mirror.output);
                                 AutoSaveConfig(config);
                             }
 
                             float yPercent = mirror.output.relativeY * 100.0f;
-                            if (ImGui::SliderFloat("Y %%##mirror_output", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
+                            if (ImGui::SliderFloat("Y %##mirror_output", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
                                 mirror.output.relativeY = yPercent / 100.0f;
                                 updatePixelsFromRelative(mirror.output);
                                 AutoSaveConfig(config);
@@ -895,7 +1164,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
                                 ImGui::TableSetColumnIndex(3);
                                 ImGui::SetNextItemWidth(-1.0f);
-                                if (drawRelativeToCombo("##zone_relative_to", zone.relativeTo)) {
+                                if (drawRelativeToCombo("##zone_relative_to",
+                                                        zone.relativeTo)) {
                                     AutoSaveConfig(config);
                                 }
 
@@ -934,7 +1204,9 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         }
                         if (AnimatedButton("Add New Capture Zone")) {
                             platform::config::MirrorCaptureConfig nZone;
-                            nZone.relativeTo = "centerViewport";
+                            nZone.relativeTo = (mirror.source.type != platform::config::MirrorSourceType::GameFramebuffer)
+                                ? "topLeftSource"
+                                : "centerViewport";
                             mirror.input.push_back(nZone);
                             AutoSaveConfig(config);
                         }
@@ -991,6 +1263,33 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                 }
                 ImGui::EndChild();
                 ImGui::EndTable();
+            }
+
+            if (g_mirrorEditorState.imageSourcePickerOpen) {
+                ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_Appearing);
+                if (IGFD::FileDialog::Instance()->Display("mirror_image_source_picker",
+                                                          ImGuiWindowFlags_NoCollapse,
+                                                          ImVec2(720.0f, 480.0f))) {
+                    if (IGFD::FileDialog::Instance()->IsOk()) {
+                        const int mirrorIndex = g_mirrorEditorState.imageSourcePickerMirrorIndex;
+                        if (mirrorIndex >= 0 && mirrorIndex < static_cast<int>(config.mirrors.size())) {
+                            std::string selectedPath =
+                                IGFD::FileDialog::Instance()->GetFilePathName(IGFD_ResultMode_KeepInputFile);
+                            if (!selectedPath.empty()) {
+                                auto& selectedMirror = config.mirrors[static_cast<std::size_t>(mirrorIndex)];
+                                selectedMirror.source.image = platform::config::NormalizePathForConfig(selectedPath);
+                                selectedMirror.source.lastKnownWidth = 0;
+                                selectedMirror.source.lastKnownHeight = 0;
+                                ForgetMirrorImageSource(selectedMirror.name);
+                                AutoSaveConfig(config);
+                            }
+                        }
+                    }
+
+                    IGFD::FileDialog::Instance()->Close();
+                    g_mirrorEditorState.imageSourcePickerOpen = false;
+                    g_mirrorEditorState.imageSourcePickerMirrorIndex = -1;
+                }
             }
 
             ImGui::EndTabItem();
@@ -1133,7 +1432,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         ImGui::Unindent();
                     }
 
-                    if (AnimatedCollapsingHeader("Group Output Scale")) {
+                    if (AnimatedCollapsingHeader("Group Output Size")) {
 
 
                         HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
@@ -1141,6 +1440,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         if (ImGui::Checkbox("Relative size to container##grpout_size", &grp.output.useRelativeSize)) {
                             if (grp.output.useRelativeSize) {
                                 updateGroupRelativeSizeFromScale(grp);
+                            } else {
+                                updateGroupScaleFromRelativeSize(grp);
                             }
                             AutoSaveConfig(config);
                         }
@@ -1151,9 +1452,14 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         if (ImGui::Checkbox("Preserve aspect ratio##grpout_size", &grp.output.preserveAspectRatio)) {
                             if (grp.output.preserveAspectRatio) {
                                 float uniformScale = 1.0f;
-                                if (getGroupUniformRelativeScale(grp, uniformScale)) {
-                                    setGroupRelativeSizeFromUniformScale(grp, uniformScale);
+                                if (getGroupUniformScale(grp, uniformScale)) {
+                                    setGroupUniformScale(grp, uniformScale);
                                 }
+                            } else if (!grp.output.useRelativeSize) {
+                                const float currentScale = grp.output.separateScale ? grp.output.scaleX : grp.output.scale;
+                                grp.output.separateScale = true;
+                                grp.output.scaleX = currentScale;
+                                grp.output.scaleY = currentScale;
                             }
                             AutoSaveConfig(config);
                         }
@@ -1163,31 +1469,57 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                 grp.output.aspectFitMode = NormalizeAspectFitMode(grp.output.aspectFitMode);
                                 AutoSaveConfig(config);
                             }
+                        }
+
+                        if (grp.output.preserveAspectRatio) {
                             float uniformScale = 1.0f;
-                            if (!getGroupUniformRelativeScale(grp, uniformScale)) {
-                                uniformScale = ResolveUniformScaleByFitMode(std::clamp(grp.output.relativeWidth, 0.01f, 20.0f),
-                                                                             std::clamp(grp.output.relativeHeight, 0.01f, 20.0f),
-                                                                             NormalizeAspectFitMode(grp.output.aspectFitMode));
+                            if (!getGroupUniformScale(grp, uniformScale)) {
+                                uniformScale = 1.0f;
                             }
                             float scalePercent = uniformScale * 100.0f;
-                            if (ImGui::SliderFloat("Scale %%##grpout_size", &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                setGroupRelativeSizeFromUniformScale(grp, scalePercent / 100.0f);
-                                grp.output.useRelativeSize = true;
-                                AutoSaveConfig(config);
-                            }
-                        } else {
-                            float widthPercent = grp.output.relativeWidth * 100.0f;
-                            if (ImGui::SliderFloat("Width %%##grpout_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                grp.output.relativeWidth = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
-                                grp.output.useRelativeSize = true;
+                            const char* uniformScaleLabel = grp.output.useRelativeSize
+                                                               ? "Size % of container##grpout_size"
+                                                               : "Scale %##grpout_size";
+                            if (ImGui::SliderFloat(uniformScaleLabel, &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                setGroupUniformScale(grp, scalePercent / 100.0f);
                                 AutoSaveConfig(config);
                             }
 
-                            float heightPercent = grp.output.relativeHeight * 100.0f;
-                            if (ImGui::SliderFloat("Height %%##grpout_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                grp.output.relativeHeight = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
-                                grp.output.useRelativeSize = true;
-                                AutoSaveConfig(config);
+                            if (grp.output.useRelativeSize) {
+                                ImGui::TextDisabled("Stored size: %.1f%% width, %.1f%% height",
+                                                    std::clamp(grp.output.relativeWidth, 0.01f, 20.0f) * 100.0f,
+                                                    std::clamp(grp.output.relativeHeight, 0.01f, 20.0f) * 100.0f);
+                            }
+                        } else {
+                            if (grp.output.useRelativeSize) {
+                                float widthPercent = std::clamp(grp.output.relativeWidth, 0.01f, 20.0f) * 100.0f;
+                                if (ImGui::SliderFloat("Width % of container##grpout_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    grp.output.relativeWidth = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
+                                    AutoSaveConfig(config);
+                                }
+
+                                float heightPercent = std::clamp(grp.output.relativeHeight, 0.01f, 20.0f) * 100.0f;
+                                if (ImGui::SliderFloat("Height % of container##grpout_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    grp.output.relativeHeight = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
+                                    AutoSaveConfig(config);
+                                }
+                            } else {
+                                const float currentScaleX = std::clamp(grp.output.separateScale ? grp.output.scaleX : grp.output.scale, 0.01f, 20.0f);
+                                const float currentScaleY = std::clamp(grp.output.separateScale ? grp.output.scaleY : grp.output.scale, 0.01f, 20.0f);
+                                float widthPercent = currentScaleX * 100.0f;
+                                if (ImGui::SliderFloat("Width %##grpout_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    grp.output.separateScale = true;
+                                    grp.output.scaleX = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
+                                    grp.output.scale = grp.output.scaleX;
+                                    AutoSaveConfig(config);
+                                }
+
+                                float heightPercent = currentScaleY * 100.0f;
+                                if (ImGui::SliderFloat("Height %##grpout_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
+                                    grp.output.separateScale = true;
+                                    grp.output.scaleY = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
+                                    AutoSaveConfig(config);
+                                }
                             }
                         }
                         ImGui::Unindent();
@@ -1217,14 +1549,14 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
                         if (grp.output.useRelativePosition) {
                             float xPercent = grp.output.relativeX * 100.0f;
-                            if (ImGui::SliderFloat("X %%##grpout", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
+                            if (ImGui::SliderFloat("X %##grpout", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
                                 grp.output.relativeX = xPercent / 100.0f;
                                 updatePixelsFromRelative(grp.output);
                                 AutoSaveConfig(config);
                             }
 
                             float yPercent = grp.output.relativeY * 100.0f;
-                            if (ImGui::SliderFloat("Y %%##grpout", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
+                            if (ImGui::SliderFloat("Y %##grpout", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
                                 grp.output.relativeY = yPercent / 100.0f;
                                 updatePixelsFromRelative(grp.output);
                                 AutoSaveConfig(config);
@@ -1531,6 +1863,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
     if (mirrorToRemove != -1) {
         std::string nToRemove = config.mirrors[mirrorToRemove].name;
+        ForgetMirrorImageSource(nToRemove);
         config.mirrors.erase(config.mirrors.begin() + mirrorToRemove);
 
         platform::config::RemoveMirrorReferences(config, nToRemove);

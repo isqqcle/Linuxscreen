@@ -3,31 +3,34 @@
 #include <filesystem>
 #include <vector>
 #include <algorithm>
-#include <wordexp.h>
+#include <pwd.h>
+#include <unistd.h>
 
 namespace platform::common {
 
 namespace {
 
+std::string GetHomeDir() {
+    const char* home = getenv("HOME");
+    if (home && home[0] != '\0') {
+        return home;
+    }
+    struct passwd* pw = getpwuid(getuid());
+    if (pw && pw->pw_dir) {
+        return pw->pw_dir;
+    }
+    return "";
+}
+
 std::string ExpandTilde(const std::string& path) {
     if (path.empty() || path[0] != '~') {
         return path;
     }
-
-    wordexp_t exp_result;
-    if (wordexp(path.c_str(), &exp_result, 0) != 0) {
+    std::string home = GetHomeDir();
+    if (home.empty()) {
         return path;
     }
-
-    std::string expanded;
-    if (exp_result.we_wordc > 0) {
-        expanded = exp_result.we_wordv[0];
-    } else {
-        expanded = path;
-    }
-
-    wordfree(&exp_result);
-    return expanded;
+    return home + path.substr(1);
 }
 
 } // namespace
@@ -36,10 +39,16 @@ std::map<std::string, std::string> ScanForFonts() {
     std::map<std::string, std::string> discoveredFonts;
     
     std::vector<std::string> searchPaths = {
+#ifdef __APPLE__
+        "/System/Library/Fonts",
+        "/Library/Fonts",
+        "~/Library/Fonts",
+#else
         "/usr/share/fonts",
         "/usr/local/share/fonts",
         "~/.local/share/fonts",
-        "~/.fonts"
+        "~/.fonts",
+#endif
     };
 
     for (const auto& rawPath : searchPaths) {

@@ -248,6 +248,54 @@ extern "C" void glfwSetCursorPos(GLFWwindow* window, double xpos, double ypos) {
     }
 }
 
+extern "C" void glfwSetWindowIcon(GLFWwindow* window, int count, const GLFWimage* images) {
+    GlfwSetWindowIconFn realFn = GetRealGlfwSetWindowIcon();
+    if (!realFn) {
+        LogDebug("glfwSetWindowIcon symbol unavailable; skipping icon update");
+        return;
+    }
+
+#ifdef __APPLE__
+    if (ShouldBypassGlfwSetWindowIconOnMac()) {
+        LogOnce(g_loggedGlfwSetWindowIconBypass,
+                "bypassing glfwSetWindowIcon on macOS for Java/LWJGL compatibility; override with LINUXSCREEN_MACOS_BYPASS_GLFW_ICON=0");
+        return;
+    }
+#endif
+
+    realFn(window, count, images);
+}
+
+#ifdef __APPLE__
+extern "C" void glfwMakeContextCurrent(GLFWwindow* window) {
+    GlfwMakeContextCurrentFn realFn = GetRealGlfwMakeContextCurrent();
+    if (!realFn) {
+        LogDebug("glfwMakeContextCurrent symbol unavailable; skipping context tracking");
+        return;
+    }
+
+    realFn(window);
+    if (!window) {
+        return;
+    }
+
+    platform::x11::RegisterImGuiOverlayWindow(window);
+    RefreshTrackedGlfwWindowMetrics(window);
+    TrackGlfwWindowForCurrentContext(window, reinterpret_cast<void*>(CGLGetCurrentContext()));
+}
+
+extern "C" void glfwDestroyWindow(GLFWwindow* window) {
+    GlfwDestroyWindowFn realFn = GetRealGlfwDestroyWindow();
+    if (!realFn) {
+        LogDebug("glfwDestroyWindow symbol unavailable; skipping cleanup");
+        return;
+    }
+
+    ForgetTrackedGlfwWindow(window);
+    realFn(window);
+}
+#endif
+
 extern "C" GlfwScrollCallback glfwSetScrollCallback(GLFWwindow* window, GlfwScrollCallback callback) {
     GlfwSetScrollCallbackFn realSetter = GetRealGlfwSetScrollCallback();
     if (!realSetter) {
@@ -587,6 +635,7 @@ extern "C" int glfwGetKey(GLFWwindow* window, int key) {
     return realState;
 }
 
+#ifndef __APPLE__
 extern "C" __GLXextFuncPtr glXGetProcAddress(const GLubyte* procName) {
     return ResolveProcAddressRequest(procName, GetRealGlXGetProcAddress());
 }
@@ -594,7 +643,17 @@ extern "C" __GLXextFuncPtr glXGetProcAddress(const GLubyte* procName) {
 extern "C" __GLXextFuncPtr glXGetProcAddressARB(const GLubyte* procName) {
     return ResolveProcAddressRequest(procName, GetRealGlXGetProcAddressARB());
 }
+#endif
 
+#ifdef __APPLE__
+static void* my_dlsym(void* handle, const char* symbolName) {
+    auto realFn = [](void* h, const char* s) -> void* { return dlsym(h, s); };
+    if (g_bypassDlsymInterpose) { return realFn(handle, symbolName); }
+    DlsymReentryGuard guard;
+    if (!guard.entered) { return realFn(handle, symbolName); }
+
+    if (std::strcmp(symbolName, "dlsym") == 0) { return reinterpret_cast<void*>(my_dlsym); }
+#else
 extern "C" void* dlsym(void* handle, const char* symbolName) {
     DlSymFn realFn = GetRealDlSym();
     if (!realFn) { return nullptr; }
@@ -603,6 +662,7 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
     if (!guard.entered) { return realFn(handle, symbolName); }
 
     if (std::strcmp(symbolName, "dlsym") == 0) { return reinterpret_cast<void*>(realFn); }
+#endif
 
     if (std::strncmp(symbolName, "glfw", 4) == 0 && handle != nullptr && handle != RTLD_DEFAULT && handle != RTLD_NEXT) {
         void* previousHandle = g_glfwResolverHandle.exchange(handle, std::memory_order_acq_rel);
@@ -618,8 +678,13 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
             g_realGlfwSetWindowSizeCallback.store(nullptr, std::memory_order_release);
             g_realGlfwSetFramebufferSizeCallback.store(nullptr, std::memory_order_release);
             g_realGlfwSetWindowSize.store(nullptr, std::memory_order_release);
+            g_realGlfwSetWindowIcon.store(nullptr, std::memory_order_release);
             g_realGlfwGetWindowSize.store(nullptr, std::memory_order_release);
             g_realGlfwGetFramebufferSize.store(nullptr, std::memory_order_release);
+#ifdef __APPLE__
+            g_realGlfwMakeContextCurrent.store(nullptr, std::memory_order_release);
+            g_realGlfwDestroyWindow.store(nullptr, std::memory_order_release);
+#endif
             g_realGlfwGetKey.store(nullptr, std::memory_order_release);
             g_realGlfwGetKeyScancode.store(nullptr, std::memory_order_release);
             g_realGlfwGetCursorPos.store(nullptr, std::memory_order_release);
@@ -629,6 +694,7 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
         }
     }
 
+#ifndef __APPLE__
     if (std::strcmp(symbolName, "glXSwapBuffers") == 0) {
         LogDebugOnce(g_loggedDlSymHookSwap, "dlsym requested glXSwapBuffers; returning interposed function");
         return reinterpret_cast<void*>(glXSwapBuffers);
@@ -643,6 +709,7 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
         LogDebugOnce(g_loggedDlSymHookGlfw, "dlsym requested glfwSwapBuffers; returning interposed function");
         return reinterpret_cast<void*>(glfwSwapBuffers);
     }
+#endif
 
     if (std::strcmp(symbolName, "glViewport") == 0) {
         return reinterpret_cast<void*>(glViewport);
@@ -672,6 +739,20 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
         return reinterpret_cast<void*>(glfwSetCursorPos);
     }
 
+    if (std::strcmp(symbolName, "glfwSetWindowIcon") == 0) {
+        return reinterpret_cast<void*>(glfwSetWindowIcon);
+    }
+
+#ifdef __APPLE__
+    if (std::strcmp(symbolName, "glfwMakeContextCurrent") == 0) {
+        return reinterpret_cast<void*>(glfwMakeContextCurrent);
+    }
+
+    if (std::strcmp(symbolName, "glfwDestroyWindow") == 0) {
+        return reinterpret_cast<void*>(glfwDestroyWindow);
+    }
+#endif
+
     if (std::strcmp(symbolName, "glfwGetKey") == 0) {
         return reinterpret_cast<void*>(glfwGetKey);
     }
@@ -680,6 +761,7 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
         return reinterpret_cast<void*>(glfwSetInputMode);
     }
 
+#ifndef __APPLE__
     if (std::strcmp(symbolName, "glXGetProcAddress") == 0) {
         LogDebugOnce(g_loggedDlSymHookGetProc, "dlsym requested glXGetProcAddress; returning interposed function");
         return reinterpret_cast<void*>(glXGetProcAddress);
@@ -689,6 +771,7 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
         LogDebugOnce(g_loggedDlSymHookGetProcArb, "dlsym requested glXGetProcAddressARB; returning interposed function");
         return reinterpret_cast<void*>(glXGetProcAddressARB);
     }
+#endif
 
     if (std::strcmp(symbolName, "glfwSetKeyCallback") == 0) {
         if (IsGlfwInputHookEnabled()) {

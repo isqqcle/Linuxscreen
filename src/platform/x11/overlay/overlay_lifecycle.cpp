@@ -13,7 +13,11 @@ void ShutdownImGuiOverlayLocked(bool processExit) {
     ImGuiContext* previousContext = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_imguiOverlayState.context);
 
+#ifdef __APPLE__
+    const void* currentGlContext = CGLGetCurrentContext();
+#else
     const void* currentGlContext = reinterpret_cast<void*>(glXGetCurrentContext());
+#endif
     const bool canShutdownOpenGlBackend = !processExit && currentGlContext != nullptr;
 
     if (g_imguiOverlayState.openglBackendInitialized && canShutdownOpenGlBackend) {
@@ -126,7 +130,11 @@ bool EnsureImGuiOverlayInitializedLocked(void* glContext) {
         io.Fonts->AddFontDefault(&fontConfig);
     }
 
+#ifdef __APPLE__
+    if (!ImGui_ImplOpenGL3_Init("#version 120")) {
+#else
     if (!ImGui_ImplOpenGL3_Init(nullptr)) {
+#endif
         ImGui::DestroyContext(context);
         ImGui::SetCurrentContext(previousContext);
         return false;

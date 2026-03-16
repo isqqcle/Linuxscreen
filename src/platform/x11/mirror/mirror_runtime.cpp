@@ -1,17 +1,122 @@
 #include "glx_mirror_pipeline.h"
 
 #include "glx_shared_contexts.h"
+#include "window_capture.h"
 #include "x11_runtime.h"
 
 #include "../common/anchor_coords.h"
 #include "../common/config_io.h"
 
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#include <OpenGL/glext.h>
+#include <OpenGL/OpenGL.h>
+#include <dlfcn.h>
+// VAO (may be missing from older macOS glext.h)
+#ifndef PFNGLGENVERTEXARRAYSPROC
+typedef void (*PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
+typedef void (*PFNGLDELETEVERTEXARRAYSPROC)(GLsizei n, const GLuint* arrays);
+typedef void (*PFNGLBINDVERTEXARRAYPROC)(GLuint array);
+#endif
+#ifndef PFNGLBINDATTRIBLOCATIONPROC
+typedef void (*PFNGLBINDATTRIBLOCATIONPROC)(GLuint program, GLuint index, const GLchar* name);
+#endif
+// FBO
+#ifndef PFNGLGENFRAMEBUFFERSPROC
+typedef void (*PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint* framebuffers);
+typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(GLsizei n, const GLuint* framebuffers);
+typedef void (*PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
+typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+typedef void (*PFNGLBLITFRAMEBUFFERPROC)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
+typedef void (*PFNGLGENRENDERBUFFERSPROC)(GLsizei n, GLuint* renderbuffers);
+typedef void (*PFNGLDELETERENDERBUFFERSPROC)(GLsizei n, const GLuint* renderbuffers);
+typedef void (*PFNGLBINDRENDERBUFFERPROC)(GLenum target, GLuint renderbuffer);
+typedef void (*PFNGLRENDERBUFFERSTORAGEPROC)(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
+typedef void (*PFNGLFRAMEBUFFERRENDERBUFFERPROC)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
+typedef GLenum (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
+#endif
+// Shaders
+#ifndef PFNGLCREATESHADERPROC
+typedef GLuint (*PFNGLCREATESHADERPROC)(GLenum type);
+typedef void (*PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length);
+typedef void (*PFNGLCOMPILESHADERPROC)(GLuint shader);
+typedef void (*PFNGLGETSHADERIVPROC)(GLuint shader, GLenum pname, GLint* params);
+typedef void (*PFNGLGETSHADERINFOLOGPROC)(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
+typedef void (*PFNGLDELETESHADERPROC)(GLuint shader);
+typedef GLuint (*PFNGLCREATEPROGRAMPROC)(void);
+typedef void (*PFNGLATTACHSHADERPROC)(GLuint program, GLuint shader);
+typedef void (*PFNGLLINKPROGRAMPROC)(GLuint program);
+typedef void (*PFNGLUSEPROGRAMPROC)(GLuint program);
+typedef void (*PFNGLDELETEPROGRAMPROC)(GLuint program);
+typedef void (*PFNGLGETPROGRAMIVPROC)(GLuint program, GLenum pname, GLint* params);
+typedef void (*PFNGLGETPROGRAMINFOLOGPROC)(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog);
+#endif
+// Uniforms
+#ifndef PFNGLGETUNIFORMLOCATIONPROC
+typedef GLint (*PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const GLchar* name);
+typedef void (*PFNGLUNIFORM1IPROC)(GLint location, GLint v0);
+typedef void (*PFNGLUNIFORM1FPROC)(GLint location, GLfloat v0);
+typedef void (*PFNGLUNIFORM1FVPROC)(GLint location, GLsizei count, const GLfloat* value);
+typedef void (*PFNGLUNIFORM2FPROC)(GLint location, GLfloat v0, GLfloat v1);
+typedef void (*PFNGLUNIFORM3FPROC)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
+typedef void (*PFNGLUNIFORM4FPROC)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+typedef void (*PFNGLUNIFORM3FVPROC)(GLint location, GLsizei count, const GLfloat* value);
+typedef void (*PFNGLUNIFORM4FVPROC)(GLint location, GLsizei count, const GLfloat* value);
+#endif
+// VBO
+#ifndef PFNGLGENBUFFERSPROC
+typedef void (*PFNGLGENBUFFERSPROC)(GLsizei n, GLuint* buffers);
+typedef void (*PFNGLDELETEBUFFERSPROC)(GLsizei n, const GLuint* buffers);
+typedef void (*PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
+typedef void (*PFNGLBUFFERDATAPROC)(GLenum target, GLsizeiptr size, const void* data, GLenum usage);
+typedef void (*PFNGLBUFFERSUBDATAPROC)(GLenum target, GLintptr offset, GLsizeiptr size, const void* data);
+typedef void* (*PFNGLMAPBUFFERRANGEPROC)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+typedef GLboolean (*PFNGLUNMAPBUFFERPROC)(GLenum target);
+typedef void (*PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer);
+typedef void (*PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
+#endif
+// Texture
+#ifndef PFNGLACTIVETEXTUREPROC
+typedef void (*PFNGLACTIVETEXTUREPROC)(GLenum texture);
+#endif
+// Blend
+#ifndef PFNGLBLENDFUNCSEPARATEPROC
+typedef void (*PFNGLBLENDFUNCSEPARATEPROC)(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
+#endif
+// Sync
+#ifndef PFNGLFENCESYNCPROC
+typedef GLsync (*PFNGLFENCESYNCPROC)(GLenum condition, GLbitfield flags);
+typedef GLenum (*PFNGLCLIENTWAITSYNCPROC)(GLsync sync, GLbitfield flags, GLuint64 timeout);
+typedef void (*PFNGLDELETESYNCPROC)(GLsync sync);
+#endif
+#ifndef PFNGLWAITSYNCPROC
+typedef void (*PFNGLWAITSYNCPROC)(GLsync sync, GLbitfield flags, GLuint64 timeout);
+#endif
+// GL constants not always present in macOS glext.h
+#ifndef GL_MAP_READ_BIT
+#define GL_MAP_READ_BIT 0x0001
+#endif
+#ifndef GL_MAP_WRITE_BIT
+#define GL_MAP_WRITE_BIT 0x0002
+#endif
+#ifndef GL_MAP_INVALIDATE_BUFFER_BIT
+#define GL_MAP_INVALIDATE_BUFFER_BIT 0x0008
+#endif
+#ifndef GL_MAP_UNSYNCHRONIZED_BIT
+#define GL_MAP_UNSYNCHRONIZED_BIT 0x0020
+#endif
+#ifndef GL_VERTEX_ARRAY_BINDING
+#define GL_VERTEX_ARRAY_BINDING 0x85B5
+#endif
+#else
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <GL/glx.h>
+#endif
 
 #include <atomic>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
@@ -105,6 +210,7 @@ uniform int u_gammaMode;
 uniform vec3 u_targetColors[8];
 uniform int u_targetColorCount;
 uniform float u_sensitivity;
+uniform int u_preserveAlpha;
 
 vec3 SRGBToLinear(vec3 c) {
     bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
@@ -114,7 +220,8 @@ vec3 SRGBToLinear(vec3 c) {
 }
 void main() {
     vec2 srcCoord = u_sourceRect.xy + TexCoord * u_sourceRect.zw;
-    vec3 screenColor = texture(screenTexture, srcCoord).rgb;
+    vec4 screenSample = texture(screenTexture, srcCoord);
+    vec3 screenColor = screenSample.rgb;
     vec3 screenColorLinear = SRGBToLinear(screenColor);
 
     bool matches = false;
@@ -140,7 +247,7 @@ void main() {
     }
 
     if (matches) {
-        FragColor = vec4(screenColor, 1.0);
+        FragColor = vec4(screenColor, (u_preserveAlpha != 0) ? screenSample.a : 1.0);
     } else {
         FragColor = vec4(0.0, 0.0, 0.0, 0.0);
     }
@@ -151,11 +258,11 @@ out vec4 FragColor;
 in vec2 TexCoord;
 uniform sampler2D screenTexture;
 uniform vec4 u_sourceRect;
+uniform int u_preserveAlpha;
 void main() {
     vec2 srcCoord = u_sourceRect.xy + TexCoord * u_sourceRect.zw;
     vec4 c = texture(screenTexture, srcCoord);
-    // Force alpha=1 to avoid propagating undefined/junk alpha from game textures.
-    FragColor = vec4(c.rgb, 1.0);
+    FragColor = vec4(c.rgb, (u_preserveAlpha != 0) ? c.a : 1.0);
 })";
 
 static const char* kRenderFragShader = R"(#version 330 core
@@ -196,10 +303,12 @@ uniform sampler2D filterTexture;
 uniform int u_borderWidth;
 uniform vec4 u_borderColor;
 uniform vec2 u_screenPixel;
+uniform int u_preserveAlpha;
 void main() {
     vec4 texColor = texture(filterTexture, TexCoord);
-    if (texColor.a > 0.5) {
-        FragColor = vec4(texColor.rgb, 1.0);
+    float alphaThreshold = (u_preserveAlpha != 0) ? 0.0 : 0.5;
+    if (texColor.a > alphaThreshold) {
+        FragColor = (u_preserveAlpha != 0) ? texColor : vec4(texColor.rgb, 1.0);
         return;
     }
     float maxA = 0.0;
@@ -210,7 +319,7 @@ void main() {
             maxA = max(maxA, texture(filterTexture, TexCoord + offset).a);
         }
     }
-    if (maxA > 0.5) {
+    if (maxA > alphaThreshold) {
         FragColor = u_borderColor;
     } else {
         discard;
@@ -447,6 +556,7 @@ struct GlFunctions {
     PFNGLDELETESHADERPROC deleteShader = nullptr;
     PFNGLCREATEPROGRAMPROC createProgram = nullptr;
     PFNGLATTACHSHADERPROC attachShader = nullptr;
+    PFNGLBINDATTRIBLOCATIONPROC bindAttribLocation = nullptr;
     PFNGLLINKPROGRAMPROC linkProgram = nullptr;
     PFNGLUSEPROGRAMPROC useProgram = nullptr;
     PFNGLDELETEPROGRAMPROC deleteProgram = nullptr;
@@ -488,6 +598,7 @@ struct GlFunctions {
     PFNGLFENCESYNCPROC fenceSync = nullptr;
     PFNGLCLIENTWAITSYNCPROC clientWaitSync = nullptr;
     PFNGLDELETESYNCPROC deleteSync = nullptr;
+    PFNGLWAITSYNCPROC waitSync = nullptr;
 };
 
 struct FilterShaderLocs {
@@ -507,11 +618,13 @@ struct FilterPassthroughShaderLocs {
     GLint targetColors = -1;
     GLint targetColorCount = -1;
     GLint sensitivity = -1;
+    GLint preserveAlpha = -1;
 };
 
 struct PassthroughShaderLocs {
     GLint screenTexture = -1;
     GLint sourceRect = -1;
+    GLint preserveAlpha = -1;
 };
 
 struct RenderShaderLocs {
@@ -527,6 +640,7 @@ struct RenderPassthroughShaderLocs {
     GLint borderWidth = -1;
     GLint borderColor = -1;
     GLint screenPixel = -1;
+    GLint preserveAlpha = -1;
 };
 
 struct StaticBorderShaderLocs {
@@ -585,6 +699,18 @@ struct X11MirrorInstance {
     std::chrono::steady_clock::time_point lastCaptureTime{};
     bool hasValidContent = false;
     bool hasFrameContent = false;
+    bool contentDetectionPending = false;
+};
+
+struct WindowCaptureSourceTexture {
+    GLuint texture = 0;
+    int width = 0;
+    int height = 0;
+    std::uint64_t frameNumber = 0;
+    std::array<GLuint, 3> unpackPbos{};
+    std::size_t unpackPboSize = 0;
+    std::size_t nextUnpackPboIndex = 0;
+    std::vector<std::uint8_t> repackBuffer;
 };
 
 GlFunctions g_gl;
@@ -594,6 +720,7 @@ std::atomic<bool> g_glReady{ false };
 std::atomic<std::uint64_t> g_lastGeneration{ 0 };
 
 std::unordered_map<std::string, X11MirrorInstance> g_instances;
+std::unordered_map<std::string, WindowCaptureSourceTexture> g_windowCaptureSourceTextures;
 MirrorShaderPrograms g_shaders;
 std::vector<ResolvedMirrorRender> g_mirrorConfigs;
 bool g_configsLoaded = false;
@@ -616,6 +743,14 @@ OverscanDimensions g_overscanDims;
 
 // Cached GPU texture size limit (queried once on init)
 int g_maxTextureSize = 0;
+
+// Fence published by the worker thread after rendering mirrors.
+// The overlay renderer calls glWaitSync on this fence so the GPU
+// won't read textures until they are fully rendered. The worker
+// owns the lifecycle: it replaces the fence each iteration and
+// defers deletion of the old one through the stale-fence queue.
+std::mutex g_publishFenceMutex;
+GLsync g_publishFence = nullptr;
 // Set to true once the game has rendered into the overscan FBO (via the
 // glBindFramebuffer hook redirect). False immediately after FBO creation so
 // the first swap hook call does not blit uninitialized FBO content to FBO 0.
@@ -770,6 +905,8 @@ bool IsPieAnchor(const std::string& relativeTo) {
     std::string anchor = relativeTo;
     if (EndsWith(anchor, "Viewport")) {
         anchor = anchor.substr(0, anchor.size() - 8);
+    } else if (EndsWith(anchor, "Source")) {
+        anchor = anchor.substr(0, anchor.size() - 6);
     } else if (EndsWith(anchor, "Screen")) {
         anchor = anchor.substr(0, anchor.size() - 6);
     }
@@ -784,6 +921,8 @@ std::string GetAnchorBase(const std::string& relativeTo) {
     std::string anchor = relativeTo;
     if (EndsWith(anchor, "Viewport")) {
         anchor = anchor.substr(0, anchor.size() - 8);
+    } else if (EndsWith(anchor, "Source")) {
+        anchor = anchor.substr(0, anchor.size() - 6);
     } else if (EndsWith(anchor, "Screen")) {
         anchor = anchor.substr(0, anchor.size() - 6);
     }
@@ -913,6 +1052,85 @@ bool ResolveModeViewportRect(int containerWidth, int containerHeight, ModeViewpo
     outRect.height = modeHeight;
     outRect.valid = true;
     return true;
+}
+
+void ResolveMirrorConfigContainerSize(int fallbackWidth,
+                                      int fallbackHeight,
+                                      int& outWidth,
+                                      int& outHeight) {
+    outWidth = fallbackWidth;
+    outHeight = fallbackHeight;
+
+    int windowWidth = 0;
+    int windowHeight = 0;
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+    if (GetGlfwWindowMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
+        if (framebufferWidth > 0 && framebufferHeight > 0) {
+            outWidth = framebufferWidth;
+            outHeight = framebufferHeight;
+            return;
+        }
+        if (windowWidth > 0 && windowHeight > 0) {
+            outWidth = windowWidth;
+            outHeight = windowHeight;
+            return;
+        }
+    }
+
+#ifndef __APPLE__
+    auto handles = platform::x11::GetRuntimeHandles();
+    if (handles.nativeDisplay && handles.nativeWindow) {
+        unsigned int physicalWidth = 0;
+        unsigned int physicalHeight = 0;
+        glXQueryDrawable(reinterpret_cast<Display*>(handles.nativeDisplay),
+                         handles.nativeWindow,
+                         GLX_WIDTH,
+                         &physicalWidth);
+        glXQueryDrawable(reinterpret_cast<Display*>(handles.nativeDisplay),
+                         handles.nativeWindow,
+                         GLX_HEIGHT,
+                         &physicalHeight);
+        if (physicalWidth > 0 && physicalHeight > 0) {
+            outWidth = static_cast<int>(physicalWidth);
+            outHeight = static_cast<int>(physicalHeight);
+            return;
+        }
+    }
+#endif
+
+    int gameWindowWidth = 0;
+    int gameWindowHeight = 0;
+    if (GetGameWindowSize(gameWindowWidth, gameWindowHeight) && gameWindowWidth > 0 && gameWindowHeight > 0) {
+        outWidth = gameWindowWidth;
+        outHeight = gameWindowHeight;
+        return;
+    }
+
+    if (outWidth > 0 && outHeight > 0) {
+        return;
+    }
+
+    GLint viewport[4] = { 0, 0, 0, 0 };
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (viewport[2] > 0 && viewport[3] > 0) {
+        outWidth = viewport[2];
+        outHeight = viewport[3];
+    }
+}
+
+void ApplyModeSwitchWithResolvedContainer(const std::string& modeName,
+                                          const platform::config::LinuxscreenConfig& config,
+                                          int fallbackWidth,
+                                          int fallbackHeight) {
+    if (modeName.empty()) {
+        return;
+    }
+
+    int resolvedWidth = fallbackWidth;
+    int resolvedHeight = fallbackHeight;
+    ResolveMirrorConfigContainerSize(fallbackWidth, fallbackHeight, resolvedWidth, resolvedHeight);
+    g_modeState.ApplyModeSwitch(modeName, config, resolvedWidth, resolvedHeight);
 }
 
 void ResolveEyeZoomAspectBasis(const platform::config::EyeZoomConfig& zoomConfig, int& outWidth, int& outHeight) {
@@ -1099,9 +1317,13 @@ int ResolveEyeZoomOutputHeight(const platform::config::EyeZoomConfig& zoomConfig
 
 void* ResolveGlProc(const char* name) {
     if (!name) { return nullptr; }
+#ifdef __APPLE__
+    return dlsym(RTLD_NEXT, name);
+#else
     void* ptr = reinterpret_cast<void*>(glXGetProcAddressARB(reinterpret_cast<const GLubyte*>(name)));
     if (!ptr) { ptr = reinterpret_cast<void*>(glXGetProcAddress(reinterpret_cast<const GLubyte*>(name))); }
     return ptr;
+#endif
 }
 
 bool EnsureGlFunctions() {
@@ -1137,6 +1359,7 @@ bool EnsureGlFunctions() {
     g_gl.deleteProgram = reinterpret_cast<PFNGLDELETEPROGRAMPROC>(ResolveGlProc("glDeleteProgram"));
     g_gl.getProgramiv = reinterpret_cast<PFNGLGETPROGRAMIVPROC>(ResolveGlProc("glGetProgramiv"));
     g_gl.getProgramInfoLog = reinterpret_cast<PFNGLGETPROGRAMINFOLOGPROC>(ResolveGlProc("glGetProgramInfoLog"));
+    g_gl.bindAttribLocation = reinterpret_cast<PFNGLBINDATTRIBLOCATIONPROC>(ResolveGlProc("glBindAttribLocation"));
 
     // Uniforms
     g_gl.getUniformLocation = reinterpret_cast<PFNGLGETUNIFORMLOCATIONPROC>(ResolveGlProc("glGetUniformLocation"));
@@ -1150,9 +1373,15 @@ bool EnsureGlFunctions() {
     g_gl.uniform4fv = reinterpret_cast<PFNGLUNIFORM4FVPROC>(ResolveGlProc("glUniform4fv"));
 
     // VAO/VBO
+#ifdef __APPLE__
+    g_gl.genVertexArrays = reinterpret_cast<PFNGLGENVERTEXARRAYSPROC>(ResolveGlProc("glGenVertexArraysAPPLE"));
+    g_gl.deleteVertexArrays = reinterpret_cast<PFNGLDELETEVERTEXARRAYSPROC>(ResolveGlProc("glDeleteVertexArraysAPPLE"));
+    g_gl.bindVertexArray = reinterpret_cast<PFNGLBINDVERTEXARRAYPROC>(ResolveGlProc("glBindVertexArrayAPPLE"));
+#else
     g_gl.genVertexArrays = reinterpret_cast<PFNGLGENVERTEXARRAYSPROC>(ResolveGlProc("glGenVertexArrays"));
     g_gl.deleteVertexArrays = reinterpret_cast<PFNGLDELETEVERTEXARRAYSPROC>(ResolveGlProc("glDeleteVertexArrays"));
     g_gl.bindVertexArray = reinterpret_cast<PFNGLBINDVERTEXARRAYPROC>(ResolveGlProc("glBindVertexArray"));
+#endif
     g_gl.genBuffers = reinterpret_cast<PFNGLGENBUFFERSPROC>(ResolveGlProc("glGenBuffers"));
     g_gl.deleteBuffers = reinterpret_cast<PFNGLDELETEBUFFERSPROC>(ResolveGlProc("glDeleteBuffers"));
     g_gl.bindBuffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(ResolveGlProc("glBindBuffer"));
@@ -1173,6 +1402,7 @@ bool EnsureGlFunctions() {
     g_gl.fenceSync = reinterpret_cast<PFNGLFENCESYNCPROC>(ResolveGlProc("glFenceSync"));
     g_gl.clientWaitSync = reinterpret_cast<PFNGLCLIENTWAITSYNCPROC>(ResolveGlProc("glClientWaitSync"));
     g_gl.deleteSync = reinterpret_cast<PFNGLDELETESYNCPROC>(ResolveGlProc("glDeleteSync"));
+    g_gl.waitSync = reinterpret_cast<PFNGLWAITSYNCPROC>(ResolveGlProc("glWaitSync"));
 
     const bool ready =
         g_gl.genFramebuffers && g_gl.deleteFramebuffers && g_gl.bindFramebuffer &&
@@ -1188,7 +1418,11 @@ bool EnsureGlFunctions() {
         g_gl.bufferData && g_gl.bufferSubData && g_gl.mapBufferRange && g_gl.unmapBuffer &&
         g_gl.vertexAttribPointer && g_gl.enableVertexAttribArray &&
         g_gl.activeTexture && g_gl.blendFuncSeparate &&
+#ifdef __APPLE__
+        true;
+#else
         g_gl.fenceSync && g_gl.clientWaitSync && g_gl.deleteSync;
+#endif
 
     if (ready && g_maxTextureSize == 0) {
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &g_maxTextureSize);

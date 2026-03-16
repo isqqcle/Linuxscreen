@@ -64,7 +64,7 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
     }
 
     if (const auto configSnapshot = platform::config::GetConfigSnapshot()) {
-        modeToRestore = g_hotkeyDispatcher.ReleaseHeldModeForInputReset(
+        modeToRestore = g_hotkeyDispatcher().ReleaseHeldModeForInputReset(
             platform::x11::GetMirrorModeState().GetActiveModeName());
         (void)platform::x11::ReleaseHeldSensitivityOverrideForInputReset();
 
@@ -274,6 +274,19 @@ void DrainImGuiInputBridgeQueue(const char* sourceLabel) {
         LogDebug("ImGui input bridge drained via %s (drained=%zu applied=%zu queued=%llu)", sourceLabel, totalDrained, totalApplied,
                  static_cast<unsigned long long>(platform::x11::GetImGuiInputQueuedCount()));
     }
+}
+
+bool HasShortcutModifiersThatSuppressText(int nativeMods) {
+    const int suppressMask = static_cast<int>(platform::input::GlfwMod::Control) |
+                             static_cast<int>(platform::input::GlfwMod::Super);
+    return (nativeMods & suppressMask) != 0;
+}
+
+bool AreShortcutModifiersCurrentlyDown() {
+    std::lock_guard<std::mutex> lock(g_inputStateMutex);
+    return g_keyStateTracker.IsDown(platform::input::VK_CONTROL) ||
+           g_keyStateTracker.IsDown(platform::input::VK_LWIN) ||
+           g_keyStateTracker.IsDown(platform::input::VK_RWIN);
 }
 
 void ClearScissoredRect(int x, int y, int width, int height, float r, float g, float b, float a) {
@@ -880,6 +893,9 @@ void QueuePendingCharRemap(const ResolvedRebindOutput& rebindOutput, const platf
     if (event.action != platform::input::InputAction::Press && event.action != platform::input::InputAction::Repeat) {
         return;
     }
+    if (HasShortcutModifiersThatSuppressText(event.nativeMods)) {
+        return;
+    }
 
     std::lock_guard<std::mutex> lock(g_pendingCharRemapMutex);
     constexpr std::size_t kMaxPendingCharRemaps = 32;
@@ -897,6 +913,9 @@ void QueuePendingCharConsume(const platform::input::InputEvent& event) {
         return;
     }
     if (event.action != platform::input::InputAction::Press && event.action != platform::input::InputAction::Repeat) {
+        return;
+    }
+    if (HasShortcutModifiersThatSuppressText(event.nativeMods)) {
         return;
     }
 
@@ -974,6 +993,7 @@ void EnsureNativeRepeatDefaultsInitialized() {
     int startDelayMs = 400;
     int repeatDelayMs = 33;
 
+#ifndef __APPLE__
     Display* dpy = glXGetCurrentDisplay();
     if (dpy == nullptr) {
         dpy = reinterpret_cast<Display*>(g_lastDisplay.load(std::memory_order_acquire));
@@ -991,6 +1011,7 @@ void EnsureNativeRepeatDefaultsInitialized() {
             }
         }
     }
+#endif
 
     g_nativeRepeatStartDelayMs = std::max(1, startDelayMs);
     g_nativeRepeatDelayMs = std::max(1, repeatDelayMs);
@@ -1260,6 +1281,9 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
 
 void DispatchManagedSyntheticCharacter(GLFWwindow* window, std::uint32_t codepoint, int mods) {
     if (!window || codepoint == 0) {
+        return;
+    }
+    if (HasShortcutModifiersThatSuppressText(mods)) {
         return;
     }
 
@@ -1658,11 +1682,11 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
             event.vk != platform::input::VK_NONE &&
             !toggledGui &&
             !guiVisibleNow) {
-            hotkeyResult = g_hotkeyDispatcher.Evaluate(g_keyStateTracker,
-                                                       event,
-                                                       gameState,
-                                                       platform::x11::GetMirrorModeState().GetActiveModeName(),
-                                                       configSnapshot->defaultMode);
+            hotkeyResult = g_hotkeyDispatcher().Evaluate(g_keyStateTracker,
+                                                        event,
+                                                        gameState,
+                                                        platform::x11::GetMirrorModeState().GetActiveModeName(),
+                                                        configSnapshot->defaultMode);
             if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
@@ -1787,7 +1811,8 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
                     (event.action == platform::input::InputAction::Press ||
                      event.action == platform::input::InputAction::Repeat)) {
                     std::uint32_t remappedCodepoint = 0;
-                    if (TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
+                    if (!HasShortcutModifiersThatSuppressText(mods) &&
+                        TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
                         if (userCharCallback) {
                             userCharCallback(window, remappedCodepoint);
                         } else if (userCharModsCallback) {
@@ -1826,6 +1851,10 @@ void HookedGlfwCharCallback(GLFWwindow* window, unsigned int codepoint) {
     event.charCodepoint = codepoint;
     event.nativeKey = static_cast<int>(codepoint);
     PublishImGuiInputEvent(event, "glfwCharCallback");
+
+    if (AreShortcutModifiersCurrentlyDown()) {
+        return;
+    }
 
     if (platform::x11::IsGuiVisible()) { return; }
     if (platform::x11::ShouldConsumeInputForOverlay(event)) { return; }
@@ -1870,6 +1899,10 @@ void HookedGlfwCharModsCallback(GLFWwindow* window, unsigned int codepoint, int 
     event.nativeMods = mods;
     if (!g_charCallbackInstalled.load(std::memory_order_acquire)) {
         PublishImGuiInputEvent(event, "glfwCharModsCallback");
+    }
+
+    if (HasShortcutModifiersThatSuppressText(mods)) {
+        return;
     }
 
     if (platform::x11::IsGuiVisible()) { return; }
@@ -1989,11 +2022,11 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
             event.vk != platform::input::VK_NONE &&
             !toggledGui &&
             !guiVisibleNow) {
-            hotkeyResult = g_hotkeyDispatcher.Evaluate(g_keyStateTracker,
-                                                       event,
-                                                       gameState,
-                                                       platform::x11::GetMirrorModeState().GetActiveModeName(),
-                                                       configSnapshot->defaultMode);
+            hotkeyResult = g_hotkeyDispatcher().Evaluate(g_keyStateTracker,
+                                                        event,
+                                                        gameState,
+                                                        platform::x11::GetMirrorModeState().GetActiveModeName(),
+                                                        configSnapshot->defaultMode);
             if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
@@ -2100,7 +2133,8 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                 if (event.action == platform::input::InputAction::Press ||
                     event.action == platform::input::InputAction::Repeat) {
                     std::uint32_t remappedCodepoint = 0;
-                    if (TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
+                    if (!HasShortcutModifiersThatSuppressText(mods) &&
+                        TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
                         if (userCharCallback) {
                             userCharCallback(window, remappedCodepoint);
                         } else if (userCharModsCallback) {
@@ -2161,8 +2195,7 @@ bool ShouldSuppressPendingSyntheticCursorPosCallback(GLFWwindow* window,
 
     if (deltaX > 32.0 || deltaY > 32.0) {
         outReason = "stale";
-        g_pendingSyntheticCursorPosCallback.valid.store(false, std::memory_order_release);
-        return false;
+        return true;
     }
 
     g_pendingSyntheticCursorPosCallback.valid.store(false, std::memory_order_release);
@@ -2451,7 +2484,11 @@ void HookedGlfwWindowSizeCallback(GLFWwindow* window, int width, int height) {
     if (userCallback) {
         int dispatchWidth = width;
         int dispatchHeight = height;
-        (void)ResolveResizeDispatchDimensionsForActiveMode(width, height, dispatchWidth, dispatchHeight);
+        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                          height,
+                                                          ManagedDimensionSpace::WindowLogical,
+                                                          dispatchWidth,
+                                                          dispatchHeight);
         userCallback(window, dispatchWidth, dispatchHeight);
     } else {
         LogDebugOnce(g_loggedMissingGlfwWindowSizeUserCallback,
@@ -2489,7 +2526,11 @@ void HookedGlfwFramebufferSizeCallback(GLFWwindow* window, int width, int height
     if (userCallback) {
         int dispatchWidth = width;
         int dispatchHeight = height;
-        (void)ResolveResizeDispatchDimensionsForActiveMode(width, height, dispatchWidth, dispatchHeight);
+        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                          height,
+                                                          ManagedDimensionSpace::FramebufferPhysical,
+                                                          dispatchWidth,
+                                                          dispatchHeight);
         userCallback(window, dispatchWidth, dispatchHeight);
     } else {
         LogDebugOnce(g_loggedMissingGlfwFramebufferSizeUserCallback,

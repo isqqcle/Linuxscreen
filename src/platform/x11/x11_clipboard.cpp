@@ -1,5 +1,7 @@
 #include "x11_clipboard.h"
 
+#ifndef __APPLE__
+
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
@@ -293,3 +295,31 @@ void ShutdownX11Clipboard() {
 }
 
 } // namespace platform::x11
+
+#else // __APPLE__
+
+#include "macos_clipboard.h"
+
+#include <string>
+
+namespace platform::x11 {
+
+namespace {
+
+std::string g_clipBuffer;
+
+} // namespace
+
+const char* X11GetClipboardText(ImGuiContext* /*ctx*/) {
+    if (!GetMacOSClipboardText(g_clipBuffer)) {
+        return nullptr;
+    }
+
+    return g_clipBuffer.c_str();
+}
+
+void ShutdownX11Clipboard() { g_clipBuffer.clear(); }
+
+} // namespace platform::x11
+
+#endif // __APPLE__

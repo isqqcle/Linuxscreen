@@ -85,10 +85,16 @@ bool ShouldConsumeInputForOverlay(const input::InputEvent& event) {
         return state.pointerOverWindow || state.wantTextInput;
 
     case input::InputEventType::Focus:
+        if (!event.focused) {
+            state.pointerOverWindow = false;
+            state.mouseInteractionActive = false;
+        } else {
+            RefreshPointerOverWindowLocked();
+        }
+        break;
     case input::InputEventType::Unknown:
         break;
     }
 
     return false;
 }
-

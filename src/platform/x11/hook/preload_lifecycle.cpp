@@ -5,8 +5,8 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
         LogOnce(g_loggedDebugEnabled, "debug logging enabled via LINUXSCREEN_X11_DEBUG=1");
     }
 
-    platform::BootstrapConfig config{};
-    if (!platform::Initialize(config)) {
+    platform::BootstrapConfig bootstrapConfig{};
+    if (!platform::Initialize(bootstrapConfig)) {
         const std::string error = platform::GetLastErrorMessage();
         LogAlways("bootstrap initialize failed: %s", error.empty() ? "unknown error" : error.c_str());
         return;
@@ -59,7 +59,7 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
         for (const auto& hk : config.hotkeys) {
             hotkeys.push_back(hk);
         }
-        g_hotkeyDispatcher.SetHotkeys(std::move(hotkeys));
+        g_hotkeyDispatcher().SetHotkeys(std::move(hotkeys));
         g_hotkeyDispatcherInitialized.store(true, std::memory_order_release);
         LogDebug("HotkeyDispatcher initialized with %zu hotkeys", config.hotkeys.size());
 
@@ -78,6 +78,9 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
         LogAlways("runtime state after InstallHooks: %s", RuntimeStateToString(platform::GetRuntimeState()));
     }
 
+#ifdef __APPLE__
+    LogOnce(g_loggedBootstrap, "preload bootstrap active (CGLFlushDrawable interposed)");
+#else
     if (!GetRealGlXSwapBuffers()) {
         LogOnce(g_loggedLaunchContextFailure, "WARNING: preload initialized but glXSwapBuffers resolution failed");
     }
@@ -85,6 +88,7 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
     (void)GetRealGlXSwapBuffersMscOML();
     (void)GetRealGlXGetProcAddress();
     (void)GetRealGlXGetProcAddressARB();
+#endif
     (void)GetRealDlSym();
 }
 

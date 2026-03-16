@@ -1,6 +1,8 @@
 #include "x11_runtime.h"
 
+#ifndef __APPLE__
 #include <X11/Xlib.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -24,9 +26,11 @@ std::atomic<int> g_glfwWindowWidth{ 0 };
 std::atomic<int> g_glfwWindowHeight{ 0 };
 std::atomic<int> g_glfwFramebufferWidth{ 0 };
 std::atomic<int> g_glfwFramebufferHeight{ 0 };
+#ifndef __APPLE__
 std::mutex g_x11OpsMutex;
 std::mutex g_x11ErrorTrapMutex;
 std::atomic<int> g_lastX11ErrorCode{ 0 };
+#endif
 
 std::mutex g_errorMutex;
 std::string g_lastErrorMessage;
@@ -65,6 +69,7 @@ void ClearLastErrorMessage() {
     g_lastErrorMessage.clear();
 }
 
+#ifndef __APPLE__
 int TrapX11ErrorHandler(Display*, XErrorEvent* errorEvent) {
     if (errorEvent) {
         g_lastX11ErrorCode.store(static_cast<int>(errorEvent->error_code), std::memory_order_release);
@@ -90,14 +95,17 @@ bool CallX11WithErrorTrap(Display* display, Fn&& fn) {
     XSetErrorHandler(previousHandler);
     return g_lastX11ErrorCode.load(std::memory_order_acquire) == 0;
 }
+#endif
 }
 
 bool Initialize(const BootstrapConfig& config) {
+#ifndef __APPLE__
     if (std::getenv("DISPLAY") == nullptr) {
         g_runtimeState.store(RuntimeState::Failed, std::memory_order_release);
         SetLastErrorMessage("X11 initialize failed: DISPLAY is not set");
         return false;
     }
+#endif
 
     g_bootstrapConfig = config;
 
@@ -206,6 +214,10 @@ bool IsInitialized() {
 std::uint64_t GetSwapObservationCount() { return g_swapObservationCount.load(std::memory_order_acquire); }
 
 bool ResizeGameWindow(int width, int height) {
+#ifdef __APPLE__
+    (void)width; (void)height;
+    return false;
+#else
     if (width <= 0 || height <= 0) {
         return false;
     }
@@ -227,12 +239,15 @@ bool ResizeGameWindow(int width, int height) {
         XResizeWindow(display, window, static_cast<unsigned int>(width), static_cast<unsigned int>(height));
         XFlush(display);
     });
+#endif
 }
 
 bool GetGameWindowSize(int& outWidth, int& outHeight) {
     outWidth = 0;
     outHeight = 0;
-
+#ifdef __APPLE__
+    return false;
+#else
     Display* display = nullptr;
     Window window = 0;
     {
@@ -258,6 +273,7 @@ bool GetGameWindowSize(int& outWidth, int& outHeight) {
     outWidth = attrs.width;
     outHeight = attrs.height;
     return outWidth > 0 && outHeight > 0;
+#endif
 }
 
 void RecordGlfwWindowMetrics(int windowWidth, int windowHeight, int framebufferWidth, int framebufferHeight) {
