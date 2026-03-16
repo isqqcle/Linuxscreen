@@ -1,5 +1,6 @@
 #include "config_toml.h"
 #include "game_state_monitor.h"
+#include "window_capture.h"
 
 #include <cmath>
 #include <filesystem>
@@ -101,14 +102,10 @@ void TestWindowsDefaultFixture() {
     const LinuxscreenConfig cfg = LoadConfigFixture(WindowsDefaultConfigPath());
     Require(!cfg.modes.empty(), "Windows default fixture should load modes");
     Require(cfg.defaultMode == "Fullscreen", "Windows default fixture should keep defaultMode");
-    Require(cfg.windowsPassthroughRoot.contains("debug"), "Windows default should preserve debug passthrough");
-    Require(cfg.windowsPassthroughRoot.contains("image"), "Windows default should preserve image passthrough");
-    Require(cfg.windowsPassthroughRoot.contains("windowOverlay"), "Windows default should preserve windowOverlay passthrough");
 
     const toml::table saved = LinuxscreenConfigToToml(cfg);
-    Require(saved.contains("debug"), "Saved Windows default should keep debug table");
-    Require(saved.contains("image"), "Saved Windows default should keep image array");
-    Require(saved.contains("windowOverlay"), "Saved Windows default should keep windowOverlay array");
+    Require(saved.contains("mode"), "Saved default config should keep modes");
+    Require(saved.contains("mirror"), "Saved default config should keep mirrors");
 
     const toml::array& savedModes = RequireArray(saved, "mode");
     const toml::table& fullscreenMode = RequireTableAt(savedModes, 0, "saved mode");
@@ -116,7 +113,6 @@ void TestWindowsDefaultFixture() {
     Require(!fullscreenMode.contains("name"), "Saved Windows default mode should not use legacy name");
 
     const LinuxscreenConfig reparsed = LinuxscreenConfigFromToml(saved);
-    Require(reparsed.windowsPassthroughRoot.contains("debug"), "Reparsed Windows default should keep debug passthrough");
     Require(!FindMode(reparsed, "Fullscreen").mirrorIds.empty(), "Reparsed Windows default should keep mirror ids");
 }
 
@@ -296,6 +292,200 @@ void TestHotkeyRoundTripFields() {
     Require(RequireBool(savedSensitivity, "triggerOnHold"), "Sensitivity hotkey triggerOnHold should serialize");
 }
 
+void TestMirrorSourceRoundTrip() {
+    toml::table mirrorTbl;
+    mirrorTbl.insert("name", "Chat");
+    mirrorTbl.insert("captureWidth", int64_t(640));
+    mirrorTbl.insert("captureHeight", int64_t(360));
+    mirrorTbl.insert("fps", int64_t(45));
+    mirrorTbl.insert("input", toml::array{
+        toml::table{{"relativeTo", "topLeftScreen"}, {"x", int64_t(12)}, {"y", int64_t(18)}, {"enabled", true}}
+    });
+    mirrorTbl.insert("source", toml::table{
+        {"type", "window"},
+        {"appId", "com.apple.TextEdit"},
+        {"windowTitle", "Notes"},
+        {"titleMatchMode", "startsWith"},
+        {"fallbackMode", "sameApp"},
+        {"useWindowSize", true},
+        {"selectionToken", "persist-token-123"}
+    });
+
+    const MirrorConfig mirror = MirrorConfigFromToml(mirrorTbl);
+    Require(mirror.source.type == MirrorSourceType::Window, "Mirror source type should parse");
+    Require(mirror.source.appId == "com.apple.TextEdit", "Mirror source appId should parse");
+    Require(mirror.source.windowTitle == "Notes", "Mirror source windowTitle should parse");
+    Require(mirror.source.titleMatchMode == MirrorSourceTitleMatchMode::StartsWith,
+            "Mirror source title match mode should parse");
+    Require(mirror.source.fallbackMode == MirrorSourceFallbackMode::SameApp,
+            "Mirror source fallback mode should parse");
+    Require(mirror.source.useWindowSize, "Mirror source useWindowSize should parse");
+    Require(mirror.source.selectionToken == "persist-token-123", "Mirror source selectionToken should parse");
+    Require(mirror.input.size() == 1 && mirror.input[0].relativeTo == "topLeftScreen",
+            "Mirror input anchors should parse");
+
+    toml::table savedMirror;
+    MirrorConfigToToml(mirror, savedMirror);
+    const toml::table& savedSource = RequireTable(savedMirror, "source");
+    Require(RequireString(savedSource, "type") == "window", "Mirror source type should serialize");
+    Require(RequireString(savedSource, "appId") == "com.apple.TextEdit", "Mirror source appId should serialize");
+    Require(RequireString(savedSource, "windowTitle") == "Notes", "Mirror source windowTitle should serialize");
+    Require(RequireString(savedSource, "titleMatchMode") == "startsWith",
+            "Mirror source title match mode should serialize");
+    Require(RequireString(savedSource, "fallbackMode") == "sameApp",
+            "Mirror source fallback mode should serialize");
+    Require(RequireBool(savedSource, "useWindowSize"), "Mirror source useWindowSize should serialize");
+    Require(RequireString(savedSource, "selectionToken") == "persist-token-123",
+            "Mirror source selectionToken should serialize");
+
+    const MirrorConfig defaultMirror = MirrorConfigFromToml(toml::table{});
+    Require(defaultMirror.source.type == MirrorSourceType::GameFramebuffer,
+            "Missing mirror source should default to gameFramebuffer");
+}
+
+void TestWindowCaptureHelpers() {
+    Require(platform::x11::NormalizeMirrorCaptureAnchor("bottomRightScreen") == "bottomRightScreen",
+            "Known anchors should normalize to themselves");
+    MirrorSourceConfig source;
+    source.type = MirrorSourceType::Window;
+    source.appId = "com.apple.TextEdit";
+    source.titleMatchMode = MirrorSourceTitleMatchMode::Exact;
+    source.fallbackMode = MirrorSourceFallbackMode::None;
+    Require(platform::x11::IsWindowCaptureSource(source),
+            "Window sources should remain window-backed even when the match pattern is incomplete");
+    Require(!platform::x11::HasConfiguredWindowCaptureSource(source),
+            "Incomplete window sources should not be considered capture-ready");
+
+    std::vector<platform::x11::WindowCaptureRequest> requests = {
+        { "com.apple.TextEdit", "Notes", MirrorSourceTitleMatchMode::Exact, MirrorSourceFallbackMode::None, "", 30, 640, 480 },
+        { "com.apple.TextEdit", "Notes", MirrorSourceTitleMatchMode::Exact, MirrorSourceFallbackMode::None, "", 75, 0, 0 },
+        { "com.apple.TextEdit", "Notes", MirrorSourceTitleMatchMode::Contains, MirrorSourceFallbackMode::SameApp, "", 45, 0, 0 },
+        { "com.apple.Terminal", "Shell", MirrorSourceTitleMatchMode::Exact, MirrorSourceFallbackMode::None, "", 12, 0, 0 },
+        { "", "", MirrorSourceTitleMatchMode::Disabled, MirrorSourceFallbackMode::None, "persist-token-123", 20, 0, 0 },
+        { "", "", MirrorSourceTitleMatchMode::Disabled, MirrorSourceFallbackMode::None, "persist-token-123", 60, 1920, 1080 },
+    };
+    const auto normalized = platform::x11::NormalizeWindowCaptureRequests(requests);
+    Require(normalized.size() == 4, "Window capture requests should dedupe token-backed and identity-backed requests separately");
+    Require(normalized[0].fps == 75, "Window capture dedupe should keep the highest fps request");
+    Require(normalized[0].titleMatchMode == MirrorSourceTitleMatchMode::Exact,
+            "Window capture dedupe should preserve the requested title match mode");
+    Require(normalized[0].fallbackMode == MirrorSourceFallbackMode::None,
+            "Window capture dedupe should preserve the requested fallback mode");
+    Require(normalized[0].preferredWidth == 640 && normalized[0].preferredHeight == 480,
+            "Window capture dedupe should preserve preferred size hints");
+    Require(normalized[3].selectionToken == "persist-token-123",
+            "Window capture dedupe should preserve token-backed selection identity");
+    Require(normalized[3].fps == 60,
+            "Token-backed dedupe should keep the highest fps request");
+
+    std::vector<platform::x11::AvailableWindow> windows = {
+        { 1u, "com.apple.TextEdit", "TextEdit", "Notes", "", 400, 300, false, false },
+        { 2u, "com.apple.TextEdit", "TextEdit", "Notes", "", 800, 600, true, false },
+        { 3u, "com.apple.TextEdit", "TextEdit", "Notes", "", 700, 500, true, true },
+    };
+    const int bestIndex = platform::x11::FindBestMatchingWindowIndex(windows,
+                                                                     "com.apple.TextEdit",
+                                                                     "Notes");
+    Require(bestIndex == 2, "Window matching should prefer active onscreen windows");
+
+    std::vector<platform::x11::AvailableWindow> renamedWindows = {
+        { 11u, "com.apple.TextEdit", "TextEdit", "Notes - Edited", "", 700, 500, true, false },
+        { 12u, "com.apple.TextEdit", "TextEdit", "Notes", "", 300, 200, false, false },
+    };
+    const int reboundIndex = platform::x11::FindBestMatchingWindowIndex(renamedWindows,
+                                                                        "com.apple.TextEdit",
+                                                                        "Notes",
+                                                                        MirrorSourceTitleMatchMode::Contains,
+                                                                        MirrorSourceFallbackMode::SameApp,
+                                                                        11u,
+                                                                        700,
+                                                                        500);
+    Require(reboundIndex == 0, "Window matching should prefer a remembered windowId even if the title changed");
+
+    const int exactMismatchIndex = platform::x11::FindBestMatchingWindowIndex(renamedWindows,
+                                                                               "com.apple.TextEdit",
+                                                                               "Notes",
+                                                                               MirrorSourceTitleMatchMode::Exact,
+                                                                               MirrorSourceFallbackMode::None,
+                                                                               11u,
+                                                                               700,
+                                                                               500);
+    Require(exactMismatchIndex == 1,
+            "Remembered windowId should not bypass the current title policy when another valid match exists");
+
+    std::vector<platform::x11::AvailableWindow> noExactMatchWindows = {
+        { 51u, "com.apple.TextEdit", "TextEdit", "Completely Different", "", 700, 500, true, false },
+    };
+    const int noExactMatchIndex = platform::x11::FindBestMatchingWindowIndex(noExactMatchWindows,
+                                                                              "com.apple.TextEdit",
+                                                                              "Notes",
+                                                                              MirrorSourceTitleMatchMode::Exact,
+                                                                              MirrorSourceFallbackMode::None,
+                                                                              51u,
+                                                                              700,
+                                                                              500);
+    Require(noExactMatchIndex == -1,
+            "Remembered windowId should not make a non-matching window eligible by itself");
+
+    std::vector<platform::x11::AvailableWindow> fallbackWindows = {
+        { 21u, "com.apple.TextEdit", "TextEdit", "Project Alpha", "", 640, 480, true, false },
+        { 22u, "com.apple.TextEdit", "TextEdit", "Scratch Pad", "", 1200, 900, true, true },
+    };
+    const int fallbackIndex = platform::x11::FindBestMatchingWindowIndex(fallbackWindows,
+                                                                         "com.apple.TextEdit",
+                                                                         "Notes",
+                                                                         MirrorSourceTitleMatchMode::Disabled,
+                                                                         MirrorSourceFallbackMode::SameApp,
+                                                                         0,
+                                                                         640,
+                                                                         480);
+    Require(fallbackIndex == 0, "Same-app fallback should prefer the closest remembered size");
+
+    std::vector<platform::x11::AvailableWindow> prefixWindows = {
+        { 31u, "com.apple.TextEdit", "TextEdit", "Notes - Edited", "", 640, 480, true, false },
+        { 32u, "com.apple.TextEdit", "TextEdit", "Edited Notes", "", 640, 480, true, false },
+    };
+    const int prefixIndex = platform::x11::FindBestMatchingWindowIndex(prefixWindows,
+                                                                       "com.apple.TextEdit",
+                                                                       "Notes",
+                                                                       MirrorSourceTitleMatchMode::StartsWith,
+                                                                       MirrorSourceFallbackMode::None);
+    Require(prefixIndex == 0, "Starts-with title matching should prefer windows that begin with the pattern");
+
+    std::vector<platform::x11::AvailableWindow> suffixWindows = {
+        { 41u, "com.apple.Safari", "Safari", "Docs - Safari", "", 900, 600, true, false },
+        { 42u, "com.apple.Safari", "Safari", "Safari - Docs", "", 900, 600, true, false },
+    };
+    const int suffixIndex = platform::x11::FindBestMatchingWindowIndex(suffixWindows,
+                                                                       "com.apple.Safari",
+                                                                       "Safari",
+                                                                       MirrorSourceTitleMatchMode::EndsWith,
+                                                                       MirrorSourceFallbackMode::None);
+    Require(suffixIndex == 0, "Ends-with title matching should prefer windows that end with the pattern");
+
+    Require(platform::x11::DetectLinuxWindowCaptureBackendForEnvironment("wayland", nullptr, nullptr) ==
+                platform::x11::WindowCaptureBackend::Wayland,
+            "Explicit wayland session type should select the Wayland backend");
+    Require(platform::x11::DetectLinuxWindowCaptureBackendForEnvironment("x11", ":0", "wayland-0") ==
+                platform::x11::WindowCaptureBackend::X11,
+            "Explicit x11 session type should select the X11 backend even when both displays exist");
+    Require(platform::x11::DetectLinuxWindowCaptureBackendForEnvironment(nullptr, ":0", nullptr) ==
+                platform::x11::WindowCaptureBackend::X11,
+            "DISPLAY alone should select the X11 backend");
+    Require(platform::x11::DetectLinuxWindowCaptureBackendForEnvironment(nullptr, nullptr, "wayland-0") ==
+                platform::x11::WindowCaptureBackend::Wayland,
+            "WAYLAND_DISPLAY alone should select the Wayland backend");
+
+    Require(platform::x11::ShouldDowngradeX11CompositeCapture(true, 0, 0),
+            "Invalid composite geometry should immediately downgrade to the image path");
+    Require(platform::x11::ShouldDowngradeX11CompositeCapture(false, 3, 0),
+            "Repeated composite failures should downgrade to the image path");
+    Require(platform::x11::ShouldDowngradeX11CompositeCapture(false, 0, 6),
+            "Repeated stale composite frames should downgrade to the image path");
+    Require(!platform::x11::ShouldDowngradeX11CompositeCapture(false, 2, 5),
+            "Composite capture should not downgrade before the policy thresholds are reached");
+}
+
 } // namespace
 
 int main() {
@@ -306,6 +496,8 @@ int main() {
         { "negative_fixture", TestNegativeFixture },
         { "game_state_equivalence", TestGameStateEquivalence },
         { "hotkey_round_trip_fields", TestHotkeyRoundTripFields },
+        { "mirror_source_round_trip", TestMirrorSourceRoundTrip },
+        { "window_capture_helpers", TestWindowCaptureHelpers },
     };
 
     try {

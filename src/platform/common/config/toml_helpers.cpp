@@ -46,20 +46,6 @@ void EraseKeys(toml::table& tbl, std::initializer_list<const char*> keys) {
     }
 }
 
-void MergeTomlTables(toml::table& base, const toml::table& overlay) {
-    for (const auto& [key, value] : overlay) {
-        if (const toml::table* overlayTable = value.as_table()) {
-            if (toml::node* existing = base.get(key.str())) {
-                if (toml::table* existingTable = existing->as_table()) {
-                    MergeTomlTables(*existingTable, *overlayTable);
-                    continue;
-                }
-            }
-        }
-        base.insert_or_assign(key.str(), value);
-    }
-}
-
 const char* MirrorBorderTypeToString(MirrorBorderType type) {
     switch (type) {
     case MirrorBorderType::Static:

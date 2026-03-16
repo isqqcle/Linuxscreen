@@ -60,8 +60,8 @@ void LogResolveFailureDetail(const char* source, const char* errorText) {
     }
 }
 
-void EnsureLibGlHandle() {
 #ifndef __APPLE__
+void EnsureLibGlHandle() {
     std::call_once(g_libGlOpenOnce, []() {
         void* handle = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
         g_libGlHandle.store(handle, std::memory_order_release);
@@ -70,11 +70,11 @@ void EnsureLibGlHandle() {
             LogResolveFailureDetail("dlopen(libGL.so.1)", openErr);
         }
     });
-#endif
 }
+#endif
 
-void EnsureLibGlfwHandle() {
 #ifndef __APPLE__
+void EnsureLibGlfwHandle() {
     std::call_once(g_libGlfwOpenOnce, []() {
         void* handle = dlopen("libglfw.so.3", RTLD_NOW | RTLD_LOCAL);
         if (!handle) { handle = dlopen("libglfw.so", RTLD_NOW | RTLD_LOCAL); }
@@ -85,9 +85,10 @@ void EnsureLibGlfwHandle() {
             LogResolveFailureDetail("dlopen(libglfw.so.3/libglfw.so)", openErr);
         }
     });
-#endif
 }
+#endif
 
+#ifndef __APPLE__
 void* GetGlfwFallbackHandle(const char*& label) {
     void* hinted = g_glfwResolverHandle.load(std::memory_order_acquire);
     if (hinted != nullptr) {
@@ -99,6 +100,7 @@ void* GetGlfwFallbackHandle(const char*& label) {
     label = "libglfw.so.3/libglfw.so";
     return g_libGlfwHandle.load(std::memory_order_acquire);
 }
+#endif
 
 void* GetGlfwCapturedHandle(const char*& label) {
     void* hinted = g_glfwResolverHandle.load(std::memory_order_acquire);
@@ -204,10 +206,12 @@ void* ResolveSymbol(const char* symbolName, void* fallbackHandle, const char* fa
     return symbol;
 }
 
+#ifndef __APPLE__
 bool IsRequestedProcName(const GLubyte* procName, const char* expectedName) {
     if (!procName || !expectedName) { return false; }
     return std::strcmp(reinterpret_cast<const char*>(procName), expectedName) == 0;
 }
+#endif
 
 const char* RuntimeStateToString(platform::RuntimeState state) {
     switch (state) {
@@ -252,6 +256,7 @@ void ResolveRealGlXSwapBuffersMscOML() {
 }
 #endif
 
+#ifndef __APPLE__
 void ResolveRealGlfwSwapBuffers() {
     const char* fallbackLabel = nullptr;
     void* fallbackHandle = GetGlfwFallbackHandle(fallbackLabel);
@@ -264,6 +269,7 @@ void ResolveRealGlfwSwapBuffers() {
         LogDebug("glfwSwapBuffers symbol unavailable in current process");
     }
 }
+#endif
 
 void ResolveRealGlfwSetKeyCallback() {
     const char* fallbackLabel = nullptr;
@@ -590,10 +596,12 @@ GlXSwapBuffersMscOMLFn GetRealGlXSwapBuffersMscOML() {
 }
 #endif
 
+#ifndef __APPLE__
 GlfwSwapBuffersFn GetRealGlfwSwapBuffers() {
     if (!g_realGlfwSwapBuffers.load(std::memory_order_acquire)) { ResolveRealGlfwSwapBuffers(); }
     return g_realGlfwSwapBuffers.load(std::memory_order_acquire);
 }
+#endif
 
 GlfwSetKeyCallbackFn GetRealGlfwSetKeyCallback() {
     if (!g_realGlfwSetKeyCallback.load(std::memory_order_acquire)) { ResolveRealGlfwSetKeyCallback(); }

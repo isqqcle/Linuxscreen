@@ -5,6 +5,8 @@
 #include "tab_mirrors_helpers.h"
 #include "tab_mirrors_state.h"
 
+#include <thread>
+
 namespace platform::x11 {
 
 MirrorEditorState g_mirrorEditorState;
@@ -103,7 +105,10 @@ int FindMirrorRelativeToOptionIndex(const std::string& value) {
 bool DrawRelativeToCombo(const char* label, std::string& relativeTo) {
     bool changed = false;
     const int currentIndex = FindMirrorRelativeToOptionIndex(relativeTo);
-    const char* preview = (currentIndex >= 0) ? kMirrorRelativeToOptions[currentIndex].label : "Unknown";
+    const char* preview = "Unknown";
+    if (currentIndex >= 0) {
+        preview = kMirrorRelativeToOptions[currentIndex].label;
+    }
     if (ImGui::BeginCombo(label, preview)) {
         for (const auto& option : kMirrorRelativeToOptions) {
             const bool selected = (relativeTo == option.value);

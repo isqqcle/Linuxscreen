@@ -466,6 +466,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
         // Refresh mirror configs from mode state
         g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+        ResetAllMirrorInstanceCaptureTimers();
         g_currentActiveMode = refreshMode;
 
         if (IsDebugEnabled()) {
@@ -484,6 +485,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
             ApplyModeSwitchWithResolvedContainer(activeMode, *configSnapshot, viewportWidth, viewportHeight);
         }
         g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+        ResetAllMirrorInstanceCaptureTimers();
         if (IsDebugEnabled()) {
             fprintf(stderr, "[Linuxscreen][mirror] Mode changed to '%s', loaded %zu mirror(s)\n",
                     activeMode.empty() ? "<none>" : activeMode.c_str(), g_mirrorConfigs.size());
@@ -497,6 +499,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         if (!activeMode.empty() && configSnapshot) {
             ApplyModeSwitchWithResolvedContainer(activeMode, *configSnapshot, viewportWidth, viewportHeight);
             g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+            ResetAllMirrorInstanceCaptureTimers();
             if (IsDebugEnabled()) {
                 fprintf(stderr,
                         "[Linuxscreen][mirror] Viewport size changed to %dx%d, refreshed %zu mirror(s)\n",
@@ -640,19 +643,6 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
     g_stickyBackgroundPending = false;
 
-    // On Linux, the worker thread uses a separate GL context. Insert a GPU-side
-    // wait on the worker's publish fence so the GPU won't read mirror textures
-    // until the worker's rendering is complete. glWaitSync does NOT block the
-    // CPU — it only inserts a dependency in the GPU command queue.
-#ifndef __APPLE__
-    {
-        std::lock_guard<std::mutex> lock(g_publishFenceMutex);
-        if (g_publishFence && g_gl.waitSync) {
-            g_gl.waitSync(g_publishFence, 0, GL_TIMEOUT_IGNORED);
-        }
-    }
-#endif
-
     int renderedCount = 0;
     std::vector<PendingStaticMirrorBorder> pendingStaticBorders;
     pendingStaticBorders.reserve(g_mirrorConfigs.size());
@@ -757,6 +747,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 void ShutdownGlxMirrorPipeline() {
     StopMirrorWorker();
     StopBackgroundDecodeWorker();
+    ShutdownWindowCaptureForProcessExit();
 
     std::lock_guard<std::mutex> lock(g_stateMutex);
 #ifdef __APPLE__
@@ -777,6 +768,7 @@ void ShutdownGlxMirrorPipeline() {
         if (g_overlayStaticBorderProgram) { g_gl.deleteProgram(g_overlayStaticBorderProgram); g_overlayStaticBorderProgram = 0; }
     } else {
         g_instances.clear();
+        g_windowCaptureSourceTextures.clear();
         g_modeBackgroundImages.clear();
         g_gameFrameTexture = 0;
         g_gameFrameFbo = 0;
@@ -802,6 +794,7 @@ void ShutdownGlxMirrorPipeline() {
 }
 
 void ShutdownGlxMirrorPipelineForProcessExit() {
+    ShutdownWindowCaptureForProcessExit();
     g_stopWorker.store(true, std::memory_order_release);
     g_slotCV.notify_all();
 
@@ -840,6 +833,7 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
 
     std::lock_guard<std::mutex> lock(g_stateMutex);
     g_instances.clear();
+    g_windowCaptureSourceTextures.clear();
     g_modeBackgroundImages.clear();
     g_gameFrameTexture = 0;
     g_gameFrameFbo = 0;

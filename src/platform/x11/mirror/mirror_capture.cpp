@@ -2,6 +2,46 @@ bool IsGlxMirrorPipelineEnabledInternal() {
     return true;
 }
 
+void RefreshMirrorConfigsForActiveMode(int width,
+                                       int height,
+                                       const std::string& activeMode,
+                                       const char* debugPrefix) {
+    auto config = platform::config::GetConfigSnapshot();
+    if (!activeMode.empty() && config) {
+        ApplyModeSwitchWithResolvedContainer(activeMode, *config, width, height);
+    }
+
+    g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+    ResetAllMirrorInstanceCaptureTimers();
+    g_currentActiveMode = activeMode;
+    if (debugPrefix && IsDebugEnabled()) {
+        fprintf(stderr,
+                "[Linuxscreen][mirror] %s '%s', %zu mirror(s)\n",
+                debugPrefix,
+                activeMode.empty() ? "<none>" : activeMode.c_str(),
+                g_mirrorConfigs.size());
+    }
+}
+
+void EnsureMirrorConfigsLoaded(int width, int height) {
+    std::lock_guard<std::mutex> lock(g_stateMutex);
+    if (g_configsLoaded) {
+        return;
+    }
+
+    RefreshMirrorConfigsForActiveMode(width, height, g_modeState.GetActiveModeName(), nullptr);
+    g_configsLoaded = true;
+    if (IsDebugEnabled()) {
+        fprintf(stderr, "[Linuxscreen][mirror] Loaded %zu mirror config(s)\n", g_mirrorConfigs.size());
+        for (const auto& c : g_mirrorConfigs) {
+            fprintf(stderr, "[Linuxscreen][mirror]   '%s' capture=%dx%d output=(%d,%d,%.1f) colors=%zu sensitivity=%.3f\n",
+                    c.config.name.c_str(), c.config.captureWidth, c.config.captureHeight,
+                    c.config.output.x, c.config.output.y, c.config.output.scale,
+                    c.config.colors.targetColors.size(), c.config.colorSensitivity);
+        }
+    }
+}
+
 void SubmitGlxMirrorCaptureInternal(int width, int height) {
     if (!IsGlxMirrorPipelineEnabledInternal()) { return; }
     if (width <= 0 || height <= 0) { return; }
@@ -28,30 +68,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     if (!EnsureGlFunctions()) { return; }
 
     if (!g_configsLoaded) {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
-        if (!g_configsLoaded) {
-            std::string activeMode = g_modeState.GetActiveModeName();
-            if (!activeMode.empty()) {
-                auto config = platform::config::GetConfigSnapshot();
-                if (config) {
-                    ApplyModeSwitchWithResolvedContainer(activeMode, *config, width, height);
-                }
-            }
-
-            // Get mirrors from the current mode state (which is initialized from config)
-            g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
-            g_configsLoaded = true;
-            g_currentActiveMode = g_modeState.GetActiveModeName();
-            if (IsDebugEnabled()) {
-                fprintf(stderr, "[Linuxscreen][mirror] Loaded %zu mirror config(s)\n", g_mirrorConfigs.size());
-                for (const auto& c : g_mirrorConfigs) {
-                    fprintf(stderr, "[Linuxscreen][mirror]   '%s' capture=%dx%d output=(%d,%d,%.1f) colors=%zu sensitivity=%.3f\n",
-                            c.config.name.c_str(), c.config.captureWidth, c.config.captureHeight,
-                            c.config.output.x, c.config.output.y, c.config.output.scale,
-                            c.config.colors.targetColors.size(), c.config.colorSensitivity);
-                }
-            }
-        }
+        EnsureMirrorConfigsLoaded(width, height);
     }
 
     // Check for mode switches outside of initial load
@@ -59,20 +76,24 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         std::string activeMode = g_modeState.GetActiveModeName();
         if (activeMode != g_currentActiveMode) {
             std::lock_guard<std::mutex> lock(g_stateMutex);
-            g_currentActiveMode = activeMode;
-            auto config = platform::config::GetConfigSnapshot();
-            if (!activeMode.empty() && config) {
-                ApplyModeSwitchWithResolvedContainer(activeMode, *config, width, height);
-            }
-            g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
-            if (IsDebugEnabled()) {
-                fprintf(stderr, "[Linuxscreen][mirror] Mode switch detected in capture: '%s', %zu mirror(s)\n",
-                        activeMode.empty() ? "<none>" : activeMode.c_str(), g_mirrorConfigs.size());
-            }
+            RefreshMirrorConfigsForActiveMode(width,
+                                             height,
+                                             activeMode,
+                                             "Mode switch detected in capture:");
         }
     }
 
     if (g_mirrorConfigs.empty() && g_currentActiveMode != "EyeZoom") { return; }
+
+    bool requiresGameFramebuffer = (g_currentActiveMode == "EyeZoom");
+    if (!requiresGameFramebuffer) {
+        for (const auto& mirror : g_mirrorConfigs) {
+            if (!IsWindowCaptureSource(mirror.config.source)) {
+                requiresGameFramebuffer = true;
+                break;
+            }
+        }
+    }
 
     const std::uint64_t generation = GetSharedGlxContextGeneration();
     if (generation != 0 && generation != g_lastGeneration.load(std::memory_order_acquire)) {
@@ -140,63 +161,68 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     const int captureW = overscan ? g_overscanDims.totalWidth : containerWidth;
     const int captureH = overscan ? g_overscanDims.totalHeight : containerHeight;
 
-    // Ensure game frame texture sized to capture dimensions
-    EnsureGameFrameTexture(captureW, captureH);
-    const int copyW = std::min(captureW, g_gameFrameW);
-    const int copyH = std::min(captureH, g_gameFrameH);
-    if (copyW != captureW || copyH != captureH) {
-        fprintf(stderr, "[Linuxscreen][mirror] WARNING: Capture copy %dx%d exceeds game frame texture %dx%d, clamping to %dx%d\n",
-                captureW, captureH, g_gameFrameW, g_gameFrameH, copyW, copyH);
-    }
-    if (copyW <= 0 || copyH <= 0) { return; }
-
-    // Capture game frame on the game context
-    GLint prevActiveUnit = 0;
-    GLint prevReadFbo = 0;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveUnit);
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
-    // Switch to TEXTURE0 and save whatever the game had bound there, then restore it exactly.
-    glActiveTexture(GL_TEXTURE0);
-    GLint prevTex0Binding = 0;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
-    glBindTexture(GL_TEXTURE_2D, g_gameFrameTexture);
-
-    // Read from overscan FBO if active, otherwise from default framebuffer (FBO 0)
-    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, overscan ? g_overscanFbo : 0);
-
+    int copyW = width;
+    int copyH = height;
     int copySrcX = 0;
     int copySrcY = 0;
     int copiedH = copyH;
-    if (overscan) {
-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
-    } else {
-        // Mirror capture coordinates are resolved in full-container space. Copy the
-        // whole drawable so the non-overscan path matches the oversized/OOB path and
-        // larger capture rectangles do not sample past the edge of a viewport-sized
-        // texture.
-        const int viewportX = 0;
-        const int viewportY = 0;
-        int safeW = copyW;
-        int safeH = copyH;
-        if (containerWidth > 0 && containerHeight > 0) {
-            safeW = std::min(safeW, std::max(0, containerWidth - viewportX));
-            safeH = std::min(safeH, std::max(0, containerHeight - viewportY));
+
+    if (requiresGameFramebuffer) {
+        // Ensure game frame texture sized to capture dimensions
+        EnsureGameFrameTexture(captureW, captureH);
+        copyW = std::min(captureW, g_gameFrameW);
+        copyH = std::min(captureH, g_gameFrameH);
+        if (copyW != captureW || copyH != captureH) {
+            fprintf(stderr, "[Linuxscreen][mirror] WARNING: Capture copy %dx%d exceeds game frame texture %dx%d, clamping to %dx%d\n",
+                    captureW, captureH, g_gameFrameW, g_gameFrameH, copyW, copyH);
         }
-        copySrcX = viewportX;
-        copySrcY = viewportY;
-        copiedH = safeH;
-        if (safeW > 0 && safeH > 0) {
-            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewportX, viewportY, safeW, safeH);
+        if (copyW <= 0 || copyH <= 0) { return; }
+
+        // Capture game frame on the game context
+        GLint prevActiveUnit = 0;
+        GLint prevReadFbo = 0;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveUnit);
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+        // Switch to TEXTURE0 and save whatever the game had bound there, then restore it exactly.
+        glActiveTexture(GL_TEXTURE0);
+        GLint prevTex0Binding = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
+        glBindTexture(GL_TEXTURE_2D, g_gameFrameTexture);
+
+        // Read from overscan FBO if active, otherwise from default framebuffer (FBO 0)
+        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, overscan ? g_overscanFbo : 0);
+
+        if (overscan) {
+            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
+        } else {
+            // Mirror capture coordinates are resolved in full-container space. Copy the
+            // whole drawable so the non-overscan path matches the oversized/OOB path and
+            // larger capture rectangles do not sample past the edge of a viewport-sized
+            // texture.
+            const int viewportX = 0;
+            const int viewportY = 0;
+            int safeW = copyW;
+            int safeH = copyH;
+            if (containerWidth > 0 && containerHeight > 0) {
+                safeW = std::min(safeW, std::max(0, containerWidth - viewportX));
+                safeH = std::min(safeH, std::max(0, containerHeight - viewportY));
+            }
+            copySrcX = viewportX;
+            copySrcY = viewportY;
+            copiedH = safeH;
+            if (safeW > 0 && safeH > 0) {
+                glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewportX, viewportY, safeW, safeH);
+            }
         }
+
+        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
+        glActiveTexture(prevActiveUnit);
     }
-    
-    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
-    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
-    glActiveTexture(prevActiveUnit);
 
     GLsync fence = nullptr;
-    if (!useInlineMirrorProcessing && g_gl.fenceSync) {
-        fence = g_gl.fenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!useInlineMirrorProcessing) {
+        glFinish();
     }
 
     int viewportBottomLeftX = currentViewport[0];
@@ -214,8 +240,8 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         textureOriginTopLeftX = -overscanSnap.marginLeft;
         textureOriginTopLeftY = -overscanSnap.marginTop;
     } else {
-        textureOriginTopLeftX = copySrcX;
-        textureOriginTopLeftY = containerHeight - (copySrcY + copiedH);
+        textureOriginTopLeftX = requiresGameFramebuffer ? copySrcX : 0;
+        textureOriginTopLeftY = requiresGameFramebuffer ? (containerHeight - (copySrcY + copiedH)) : 0;
     }
 
     if (useInlineMirrorProcessing) {

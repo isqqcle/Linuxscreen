@@ -5,6 +5,7 @@
 #endif
 
 #include "../glx_mirror_pipeline.h"
+#include "../window_capture.h"
 #include "../mirror/glx_shared_contexts.h"
 #include "imgui_input_bridge.h"
 #include "../x11_clipboard.h"

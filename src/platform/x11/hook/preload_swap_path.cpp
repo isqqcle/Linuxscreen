@@ -1,3 +1,5 @@
+#include "../window_capture.h"
+
 void RenderGuiOverlay(GLFWwindow* preferredWindow, const char* sourceLabel) {
     if (!platform::x11::IsImGuiRenderEnabled()) {
         DrainImGuiInputBridgeQueue(sourceLabel);
@@ -154,6 +156,10 @@ CGLError my_CGLFlushDrawable(CGLContextObj ctx) {
         platform::x11::RegisterImGuiOverlayWindow(window);
     }
 
+    if (!platform::x11::IsWindowCaptureRuntimeReady()) {
+        platform::x11::SetWindowCaptureRuntimeReady(true);
+    }
+
     MaybeInitSharedGlxContexts(nullptr, 0, reinterpret_cast<void*>(ctx), "CGLFlushDrawable");
     MaybeApplyGameStateTransitionReset();
     TickModeResolutionTransition();
@@ -184,6 +190,9 @@ extern "C" void glXSwapBuffers(Display* dpy, GLXDrawable drawable) {
     GLXContext currentContext = glXGetCurrentContext();
     RecordAndLogSwap(SwapHookSource::GlXSwapBuffers, dpy, drawable, currentContext);
     MaybeInitSharedGlxContexts(dpy, drawable, currentContext, "glXSwapBuffers");
+    if (!platform::x11::IsWindowCaptureRuntimeReady()) {
+        platform::x11::SetWindowCaptureRuntimeReady(true);
+    }
     MaybeApplyGameStateTransitionReset();
     TickModeResolutionTransition();
     PumpManagedRepeatScheduler(nullptr);
@@ -215,6 +224,9 @@ extern "C" Bool glXSwapBuffersMscOML(Display* dpy, GLXDrawable drawable, int64_t
     GLXContext currentContext = glXGetCurrentContext();
     RecordAndLogSwap(SwapHookSource::GlXSwapBuffersMscOML, dpy, drawable, currentContext);
     MaybeInitSharedGlxContexts(dpy, drawable, currentContext, "glXSwapBuffersMscOML");
+    if (!platform::x11::IsWindowCaptureRuntimeReady()) {
+        platform::x11::SetWindowCaptureRuntimeReady(true);
+    }
     MaybeApplyGameStateTransitionReset();
     TickModeResolutionTransition();
     PumpManagedRepeatScheduler(nullptr);
@@ -273,6 +285,9 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window) {
     if (currentDisplay || currentDrawable || currentContext) {
         RecordAndLogSwap(SwapHookSource::GlfwSwapBuffers, currentDisplay, currentDrawable, currentContext);
         MaybeInitSharedGlxContexts(currentDisplay, currentDrawable, currentContext, "glfwSwapBuffers");
+        if (!platform::x11::IsWindowCaptureRuntimeReady()) {
+            platform::x11::SetWindowCaptureRuntimeReady(true);
+        }
         MaybeApplyGameStateTransitionReset();
         TickModeResolutionTransition();
         SubmitMirrorPipelineCapture();

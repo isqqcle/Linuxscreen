@@ -484,6 +484,9 @@ struct ViewportPlacementBypassGuard {
 void ClearTempSensitivityOverrideInternal();
 void UpdateSensitivityStateForModeSwitchInternal(const std::string& targetMode,
                                                  const platform::config::LinuxscreenConfig& config);
+GlfwGetCursorPosProc GetRealGlfwGetCursorPos();
+void StoreTrackedRawCursorPosition(double rawX, double rawY);
+bool IsCursorDisabledForGameInput();
 void ResetCursorSensitivityState();
 
 } // namespace
@@ -528,6 +531,25 @@ bool ReleaseHeldSensitivityOverrideForInputReset() {
 
 void UpdateSensitivityStateForModeSwitch(const std::string& targetMode, const config::LinuxscreenConfig& config) {
     UpdateSensitivityStateForModeSwitchInternal(targetMode, config);
+}
+
+bool PollGuiWindowCursorPosition(GLFWwindow* preferredWindow, double& outX, double& outY) {
+    outX = 0.0;
+    outY = 0.0;
+
+    if (IsCursorDisabledForGameInput()) {
+        return false;
+    }
+
+    GLFWwindow* window = preferredWindow ? preferredWindow : g_lastSwapWindow.load(std::memory_order_acquire);
+    GlfwGetCursorPosProc realGetCursorPos = GetRealGlfwGetCursorPos();
+    if (!window || !realGetCursorPos) {
+        return false;
+    }
+
+    realGetCursorPos(window, &outX, &outY);
+    StoreTrackedRawCursorPosition(outX, outY);
+    return true;
 }
 
 } // namespace platform::x11

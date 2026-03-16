@@ -284,6 +284,15 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
         platform::config::ResetHotkeyCapture();
     }
 
+    if (guiVisible) {
+        double polledCursorX = 0.0;
+        double polledCursorY = 0.0;
+        if (platform::x11::PollGuiWindowCursorPosition(preferredWindow, polledCursorX, polledCursorY)) {
+            io.AddMousePosEvent(static_cast<float>(polledCursorX), static_cast<float>(polledCursorY));
+            platform::x11::UpdateImGuiOverlayPointerPosition(polledCursorX, polledCursorY);
+        }
+    }
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
     iam_update_begin_frame();

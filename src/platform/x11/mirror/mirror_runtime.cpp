@@ -1,6 +1,7 @@
 #include "glx_mirror_pipeline.h"
 
 #include "glx_shared_contexts.h"
+#include "window_capture.h"
 #include "x11_runtime.h"
 
 #include "../common/anchor_coords.h"
@@ -95,6 +96,15 @@ typedef void (*PFNGLWAITSYNCPROC)(GLsync sync, GLbitfield flags, GLuint64 timeou
 #ifndef GL_MAP_READ_BIT
 #define GL_MAP_READ_BIT 0x0001
 #endif
+#ifndef GL_MAP_WRITE_BIT
+#define GL_MAP_WRITE_BIT 0x0002
+#endif
+#ifndef GL_MAP_INVALIDATE_BUFFER_BIT
+#define GL_MAP_INVALIDATE_BUFFER_BIT 0x0008
+#endif
+#ifndef GL_MAP_UNSYNCHRONIZED_BIT
+#define GL_MAP_UNSYNCHRONIZED_BIT 0x0020
+#endif
 #ifndef GL_VERTEX_ARRAY_BINDING
 #define GL_VERTEX_ARRAY_BINDING 0x85B5
 #endif
@@ -106,6 +116,7 @@ typedef void (*PFNGLWAITSYNCPROC)(GLsync sync, GLbitfield flags, GLuint64 timeou
 
 #include <atomic>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
@@ -684,6 +695,17 @@ struct X11MirrorInstance {
     bool contentDetectionPending = false;
 };
 
+struct WindowCaptureSourceTexture {
+    GLuint texture = 0;
+    int width = 0;
+    int height = 0;
+    std::uint64_t frameNumber = 0;
+    std::array<GLuint, 3> unpackPbos{};
+    std::size_t unpackPboSize = 0;
+    std::size_t nextUnpackPboIndex = 0;
+    std::vector<std::uint8_t> repackBuffer;
+};
+
 GlFunctions g_gl;
 std::mutex g_stateMutex;
 std::mutex g_glResolveMutex;
@@ -691,6 +713,7 @@ std::atomic<bool> g_glReady{ false };
 std::atomic<std::uint64_t> g_lastGeneration{ 0 };
 
 std::unordered_map<std::string, X11MirrorInstance> g_instances;
+std::unordered_map<std::string, WindowCaptureSourceTexture> g_windowCaptureSourceTextures;
 MirrorShaderPrograms g_shaders;
 std::vector<ResolvedMirrorRender> g_mirrorConfigs;
 bool g_configsLoaded = false;
@@ -875,6 +898,8 @@ bool IsPieAnchor(const std::string& relativeTo) {
     std::string anchor = relativeTo;
     if (EndsWith(anchor, "Viewport")) {
         anchor = anchor.substr(0, anchor.size() - 8);
+    } else if (EndsWith(anchor, "Source")) {
+        anchor = anchor.substr(0, anchor.size() - 6);
     } else if (EndsWith(anchor, "Screen")) {
         anchor = anchor.substr(0, anchor.size() - 6);
     }
@@ -889,6 +914,8 @@ std::string GetAnchorBase(const std::string& relativeTo) {
     std::string anchor = relativeTo;
     if (EndsWith(anchor, "Viewport")) {
         anchor = anchor.substr(0, anchor.size() - 8);
+    } else if (EndsWith(anchor, "Source")) {
+        anchor = anchor.substr(0, anchor.size() - 6);
     } else if (EndsWith(anchor, "Screen")) {
         anchor = anchor.substr(0, anchor.size() - 6);
     }

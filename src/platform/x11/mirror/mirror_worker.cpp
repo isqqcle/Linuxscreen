@@ -21,11 +21,378 @@ void DestroyMirrorInstance(X11MirrorInstance& inst) {
     inst.contentDetectionPending = false;
 }
 
+void DestroyWindowCaptureSourceTexture(WindowCaptureSourceTexture& texture) {
+    if (texture.texture) {
+        glDeleteTextures(1, &texture.texture);
+        texture.texture = 0;
+    }
+    for (GLuint& unpackPbo : texture.unpackPbos) {
+        if (unpackPbo) {
+            g_gl.deleteBuffers(1, &unpackPbo);
+            unpackPbo = 0;
+        }
+    }
+    texture.unpackPboSize = 0;
+    texture.nextUnpackPboIndex = 0;
+    texture.repackBuffer.clear();
+}
+
 void DestroyAllInstances() {
     for (auto& kv : g_instances) {
         DestroyMirrorInstance(kv.second);
     }
     g_instances.clear();
+
+    for (auto& kv : g_windowCaptureSourceTextures) {
+        DestroyWindowCaptureSourceTexture(kv.second);
+    }
+    g_windowCaptureSourceTextures.clear();
+}
+
+void ResetAllMirrorInstanceCaptureTimers() {
+    for (auto& kv : g_instances) {
+        X11MirrorInstance& inst = kv.second;
+        inst.contentDetectionPending = false;
+        inst.lastCaptureTime = std::chrono::steady_clock::time_point{};
+    }
+}
+
+const platform::config::ModeConfig* FindModeConfigByName(const platform::config::LinuxscreenConfig& config,
+                                                         const std::string& modeName);
+
+bool EnsureWindowCaptureUploadPbos(WindowCaptureSourceTexture& texture, std::size_t uploadBytes) {
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+    if (!g_gl.genBuffers || !g_gl.deleteBuffers || !g_gl.bindBuffer || !g_gl.bufferData ||
+        !g_gl.mapBufferRange || !g_gl.unmapBuffer || uploadBytes == 0) {
+        return false;
+    }
+
+    bool needsInit = texture.unpackPboSize != uploadBytes;
+    for (const GLuint unpackPbo : texture.unpackPbos) {
+        if (unpackPbo == 0) {
+            needsInit = true;
+            break;
+        }
+    }
+
+    if (!needsInit) {
+        return true;
+    }
+
+    for (GLuint& unpackPbo : texture.unpackPbos) {
+        if (unpackPbo) {
+            g_gl.deleteBuffers(1, &unpackPbo);
+            unpackPbo = 0;
+        }
+    }
+
+    g_gl.genBuffers(static_cast<GLsizei>(texture.unpackPbos.size()), texture.unpackPbos.data());
+    for (GLuint unpackPbo : texture.unpackPbos) {
+        if (unpackPbo == 0) {
+            return false;
+        }
+    }
+
+    for (GLuint unpackPbo : texture.unpackPbos) {
+        g_gl.bindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackPbo);
+        g_gl.bufferData(GL_PIXEL_UNPACK_BUFFER,
+                        static_cast<GLsizeiptr>(uploadBytes),
+                        nullptr,
+                        GL_STREAM_DRAW);
+    }
+    g_gl.bindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    texture.unpackPboSize = uploadBytes;
+    texture.nextUnpackPboIndex = 0;
+    return true;
+#else
+    (void)texture;
+    (void)uploadBytes;
+    return false;
+#endif
+}
+
+void CopyWindowCaptureFrameRowsTopToBottom(const LatestFrameSnapshot& frame,
+                                           int contentX,
+                                           int contentY,
+                                           int uploadWidth,
+                                           int uploadHeight,
+                                           std::uint8_t* destination) {
+    if (!destination || uploadWidth <= 0 || uploadHeight <= 0) {
+        return;
+    }
+
+    const std::size_t dstRowBytes = static_cast<std::size_t>(uploadWidth) * 4;
+    for (int row = 0; row < uploadHeight; ++row) {
+        const int srcRow = contentY + row;
+        const auto* src = frame.pixels.data() +
+                          static_cast<std::size_t>(srcRow) * static_cast<std::size_t>(frame.bytesPerRow) +
+                          static_cast<std::size_t>(contentX) * 4;
+        auto* dst = destination + static_cast<std::size_t>(row) * dstRowBytes;
+        std::memcpy(dst, src, dstRowBytes);
+    }
+}
+
+bool ResolveOutputContainerSizeWorker(const platform::config::MirrorRenderConfig& output,
+                                      int screenWidth,
+                                      int screenHeight,
+                                      int& outContainerWidth,
+                                      int& outContainerHeight) {
+    outContainerWidth = screenWidth;
+    outContainerHeight = screenHeight;
+    if (screenWidth <= 0 || screenHeight <= 0) {
+        return false;
+    }
+
+    if (!ShouldUseViewportAnchor(output.relativeTo)) {
+        return true;
+    }
+
+    auto configSnapshot = g_modeState.GetConfigSnapshot();
+    if (!configSnapshot) {
+        return true;
+    }
+
+    const platform::config::ModeConfig* activeMode =
+        FindModeConfigByName(*configSnapshot, g_modeState.GetActiveModeName());
+    if (!activeMode) {
+        return true;
+    }
+
+    int modeWidth = 0;
+    int modeHeight = 0;
+    MirrorModeState::CalculateModeDimensions(*activeMode, screenWidth, screenHeight, modeWidth, modeHeight);
+    if (modeWidth > 0 && modeHeight > 0) {
+        outContainerWidth = modeWidth;
+        outContainerHeight = modeHeight;
+    }
+    return outContainerWidth > 0 && outContainerHeight > 0;
+}
+
+void ApplyLiveRelativeSizeToOutput(platform::config::MirrorConfig& config,
+                                   int screenWidth,
+                                   int screenHeight) {
+    if (!config.output.useRelativeSize || screenWidth <= 0 || screenHeight <= 0) {
+        return;
+    }
+
+    int containerWidth = screenWidth;
+    int containerHeight = screenHeight;
+    if (!ResolveOutputContainerSizeWorker(config.output,
+                                          screenWidth,
+                                          screenHeight,
+                                          containerWidth,
+                                          containerHeight)) {
+        return;
+    }
+
+    const int dynamicBorder = platform::config::GetMirrorDynamicBorderPadding(config.border);
+    const int baseWidth = config.captureWidth + 2 * dynamicBorder;
+    const int baseHeight = config.captureHeight + 2 * dynamicBorder;
+    if (baseWidth <= 0 || baseHeight <= 0) {
+        return;
+    }
+
+    const float relativeWidth = std::clamp(config.output.relativeWidth, 0.01f, 20.0f);
+    const float relativeHeight = std::clamp(config.output.relativeHeight, 0.01f, 20.0f);
+    config.output.relativeWidth = relativeWidth;
+    config.output.relativeHeight = relativeHeight;
+
+    const int targetWidth = std::max(1, static_cast<int>(static_cast<float>(containerWidth) * relativeWidth));
+    const int targetHeight = std::max(1, static_cast<int>(static_cast<float>(containerHeight) * relativeHeight));
+    const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(baseWidth);
+    const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(baseHeight);
+    if (!(scaleX > 0.0f) || !(scaleY > 0.0f)) {
+        return;
+    }
+
+    if (config.output.preserveAspectRatio) {
+        const float uniformScale = ResolveUniformScaleByFitMode(scaleX, scaleY, config.output.aspectFitMode);
+        if (!(uniformScale > 0.0f)) {
+            return;
+        }
+        config.output.separateScale = false;
+        config.output.scale = uniformScale;
+        config.output.scaleX = uniformScale;
+        config.output.scaleY = uniformScale;
+    } else {
+        config.output.separateScale = true;
+        config.output.scale = scaleX;
+        config.output.scaleX = scaleX;
+        config.output.scaleY = scaleY;
+    }
+}
+
+bool EnsureWindowCaptureSourceTexture(const platform::config::MirrorSourceConfig& source,
+                              GLuint& outTexture,
+                              int& outWidth,
+                              int& outHeight,
+                              bool& outYInverted) {
+    outTexture = 0;
+    outWidth = 0;
+    outHeight = 0;
+    outYInverted = false;
+
+    WindowCaptureTextureSnapshot gpuTexture;
+    if (CopyLatestWindowCaptureTexture(source, gpuTexture) &&
+        gpuTexture.textureId != 0 &&
+        gpuTexture.width > 0 &&
+        gpuTexture.height > 0) {
+        outTexture = static_cast<GLuint>(gpuTexture.textureId);
+        outWidth = gpuTexture.width;
+        outHeight = gpuTexture.height;
+        outYInverted = gpuTexture.yInverted;
+        return true;
+    }
+
+    LatestFrameSnapshot frame;
+    if (!CopyLatestWindowCaptureFrame(source, frame) ||
+        frame.width <= 0 ||
+        frame.height <= 0 ||
+        frame.bytesPerRow <= 0) {
+        return false;
+    }
+
+    if (source.useWindowSize && frame.fromCache) {
+        return false;
+    }
+
+    const int contentX = std::clamp(frame.contentX, 0, frame.width);
+    const int contentY = std::clamp(frame.contentY, 0, frame.height);
+    const int uploadWidth = std::clamp(frame.contentWidth, 1, frame.width - contentX);
+    const int uploadHeight = std::clamp(frame.contentHeight, 1, frame.height - contentY);
+
+    const std::string sourceKey = MakeWindowCaptureKey(source);
+    auto& texture = g_windowCaptureSourceTextures[sourceKey];
+    if (texture.texture == 0) {
+        glGenTextures(1, &texture.texture);
+        glBindTexture(GL_TEXTURE_2D, texture.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, texture.texture);
+    }
+
+    if (texture.width != uploadWidth || texture.height != uploadHeight) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, uploadWidth, uploadHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+        texture.width = uploadWidth;
+        texture.height = uploadHeight;
+        texture.frameNumber = 0;
+    }
+
+    if (texture.frameNumber != frame.frameNumber) {
+        const std::size_t uploadBytes =
+            static_cast<std::size_t>(uploadWidth) * static_cast<std::size_t>(uploadHeight) * 4;
+        GLint prevUnpackAlignment = 0;
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevUnpackAlignment);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#ifdef GL_UNPACK_ROW_LENGTH
+        GLint prevUnpackRowLength = 0;
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &prevUnpackRowLength);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+#endif
+#ifdef GL_UNPACK_SKIP_ROWS
+        GLint prevUnpackSkipRows = 0;
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS, &prevUnpackSkipRows);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+#ifdef GL_UNPACK_SKIP_PIXELS
+        GLint prevUnpackSkipPixels = 0;
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &prevUnpackSkipPixels);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+        GLint prevUnpackBuffer = 0;
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &prevUnpackBuffer);
+        bool uploadedFromPbo = false;
+        if (EnsureWindowCaptureUploadPbos(texture, uploadBytes)) {
+            const std::size_t pboIndex = texture.nextUnpackPboIndex % texture.unpackPbos.size();
+            texture.nextUnpackPboIndex = (pboIndex + 1) % texture.unpackPbos.size();
+            const GLuint unpackPbo = texture.unpackPbos[pboIndex];
+            g_gl.bindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackPbo);
+            void* mapped = g_gl.mapBufferRange(GL_PIXEL_UNPACK_BUFFER,
+                                               0,
+                                               static_cast<GLsizeiptr>(uploadBytes),
+                                               GL_MAP_WRITE_BIT |
+                                               GL_MAP_INVALIDATE_BUFFER_BIT |
+                                               GL_MAP_UNSYNCHRONIZED_BIT);
+            if (mapped) {
+                CopyWindowCaptureFrameRowsTopToBottom(frame,
+                                                      contentX,
+                                                      contentY,
+                                                      uploadWidth,
+                                                      uploadHeight,
+                                                      static_cast<std::uint8_t*>(mapped));
+                g_gl.unmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+                glTexSubImage2D(GL_TEXTURE_2D,
+                                0,
+                                0,
+                                0,
+                                uploadWidth,
+                                uploadHeight,
+                                GL_BGRA,
+                                GL_UNSIGNED_BYTE,
+                                nullptr);
+                uploadedFromPbo = true;
+            }
+        }
+        if (!uploadedFromPbo) {
+            texture.repackBuffer.resize(uploadBytes);
+            CopyWindowCaptureFrameRowsTopToBottom(frame,
+                                                  contentX,
+                                                  contentY,
+                                                  uploadWidth,
+                                                  uploadHeight,
+                                                  texture.repackBuffer.data());
+            g_gl.bindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glTexSubImage2D(GL_TEXTURE_2D,
+                            0,
+                            0,
+                            0,
+                            uploadWidth,
+                            uploadHeight,
+                            GL_BGRA,
+                            GL_UNSIGNED_BYTE,
+                            texture.repackBuffer.data());
+        }
+        g_gl.bindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpackBuffer));
+#else
+        texture.repackBuffer.resize(uploadBytes);
+        CopyWindowCaptureFrameRowsTopToBottom(frame,
+                                              contentX,
+                                              contentY,
+                                              uploadWidth,
+                                              uploadHeight,
+                                              texture.repackBuffer.data());
+        glTexSubImage2D(GL_TEXTURE_2D,
+                        0,
+                        0,
+                        0,
+                        uploadWidth,
+                        uploadHeight,
+                        GL_BGRA,
+                        GL_UNSIGNED_BYTE,
+                        texture.repackBuffer.data());
+#endif
+#ifdef GL_UNPACK_SKIP_PIXELS
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, prevUnpackSkipPixels);
+#endif
+#ifdef GL_UNPACK_SKIP_ROWS
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, prevUnpackSkipRows);
+#endif
+#ifdef GL_UNPACK_ROW_LENGTH
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, prevUnpackRowLength);
+#endif
+        glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpackAlignment);
+        texture.frameNumber = frame.frameNumber;
+    }
+
+    outTexture = texture.texture;
+    outWidth = texture.width;
+    outHeight = texture.height;
+    outYInverted = true;
+    return outTexture != 0 && outWidth > 0 && outHeight > 0;
 }
 
 void EnsureGameFrameTexture(int w, int h) {
@@ -431,11 +798,46 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             }
         }
 
-        // Ensure FBO resources
-        EnsureMirrorResources(mirrorRender, inst);
+        GLuint sourceTexture = g_gameFrameTexture;
+        int sourceWidth = width;
+        int sourceHeight = height;
+        bool sourceYInverted = false;
+        MirrorFrameSlot sourceSlot = slot;
+        if (IsWindowCaptureSource(config.source)) {
+            if (!EnsureWindowCaptureSourceTexture(config.source, sourceTexture, sourceWidth, sourceHeight, sourceYInverted)) {
+                inst.hasValidContent = false;
+                inst.hasFrameContent = false;
+                inst.contentDetectionPending = false;
+                continue;
+            }
+            sourceSlot.containerWidth = sourceWidth;
+            sourceSlot.containerHeight = sourceHeight;
+            sourceSlot.viewportTopLeftX = 0;
+            sourceSlot.viewportTopLeftY = 0;
+            sourceSlot.viewportWidth = sourceWidth;
+            sourceSlot.viewportHeight = sourceHeight;
+            sourceSlot.textureOriginTopLeftX = 0;
+            sourceSlot.textureOriginTopLeftY = 0;
+        }
+
+        ResolvedMirrorRender effectiveMirrorRender = mirrorRender;
+        auto& effectiveConfig = effectiveMirrorRender.config;
+        if (IsWindowCaptureSource(effectiveConfig.source) &&
+            effectiveConfig.source.useWindowSize &&
+            sourceWidth > 0 &&
+            sourceHeight > 0) {
+            effectiveConfig.captureWidth = sourceWidth;
+            effectiveConfig.captureHeight = sourceHeight;
+            ApplyLiveRelativeSizeToOutput(effectiveConfig,
+                                          slot.containerWidth > 0 ? slot.containerWidth : width,
+                                          slot.containerHeight > 0 ? slot.containerHeight : height);
+        }
+
+        // Ensure FBO resources after the active source dimensions are known.
+        EnsureMirrorResources(effectiveMirrorRender, inst);
         if (!inst.filterFbo || !inst.finalFbo[0]) { continue; }
 
-        const int border = platform::config::GetMirrorDynamicBorderPadding(config.border);
+        const int border = platform::config::GetMirrorDynamicBorderPadding(effectiveConfig.border);
         const int fboW = inst.filterW;
         const int fboH = inst.filterH;
         const int finalW = inst.finalW;
@@ -450,19 +852,19 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         glClear(GL_COLOR_BUFFER_BIT);
 
         // Select shader based on mode
-        const bool useRaw = config.rawOutput;
-        const bool useColorPt = !useRaw && config.colorPassthrough;
+        const bool useRaw = effectiveConfig.rawOutput;
+        const bool useColorPt = !useRaw && effectiveConfig.colorPassthrough;
         const bool useFilter = !useRaw && !useColorPt;
         (void)useFilter;
 
-        // Bind game frame texture on unit 0
+        // Bind active source texture on unit 0
         g_gl.activeTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, g_gameFrameTexture);
+        glBindTexture(GL_TEXTURE_2D, sourceTexture);
 
         // Multiple input regions: additive blend after first
         bool firstInput = true;
 
-        for (const auto& region : config.input) {
+        for (const auto& region : effectiveConfig.input) {
             if (!region.enabled) {
                 continue;
             }
@@ -473,25 +875,31 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             ResolveMirrorCaptureInputCoords(region.relativeTo,
                                             region.x,
                                             region.y,
-                                            config.captureWidth,
-                                            config.captureHeight,
-                                            slot,
-                                            width,
-                                            height,
+                                            effectiveConfig.captureWidth,
+                                            effectiveConfig.captureHeight,
+                                            sourceSlot,
+                                            sourceWidth,
+                                            sourceHeight,
                                             capX,
                                             capY);
 
             // Convert top-left texture coords to GL's bottom-left texture coords.
-            int capY_gl = height - capY - config.captureHeight;
+            int capY_gl = sourceYInverted
+                ? capY
+                : (sourceHeight - capY - effectiveConfig.captureHeight);
 
             // Set up viewport for this input region (border padding around capture area)
-            glViewport(border, border, config.captureWidth, config.captureHeight);
+            glViewport(border, border, effectiveConfig.captureWidth, effectiveConfig.captureHeight);
 
             // Compute normalized texture coordinates relative to the full texture size
-            float sx = static_cast<float>(capX) / static_cast<float>(width);
-            float sy = static_cast<float>(capY_gl) / static_cast<float>(height);
-            float sw = static_cast<float>(config.captureWidth) / static_cast<float>(width);
-            float sh = static_cast<float>(config.captureHeight) / static_cast<float>(height);
+            float sx = static_cast<float>(capX) / static_cast<float>(sourceWidth);
+            float sy = static_cast<float>(capY_gl) / static_cast<float>(sourceHeight);
+            float sw = static_cast<float>(effectiveConfig.captureWidth) / static_cast<float>(sourceWidth);
+            float sh = static_cast<float>(effectiveConfig.captureHeight) / static_cast<float>(sourceHeight);
+            if (sourceYInverted) {
+                sh = -sh;
+                sy += static_cast<float>(effectiveConfig.captureHeight) / static_cast<float>(sourceHeight);
+            }
 
             // Enable additive blend for second+ inputs (accumulate color contributions)
             if (!firstInput) {
@@ -511,40 +919,40 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
                 g_gl.uniform1i(g_shaders.filterPassthroughLocs.screenTexture, 0);
                 g_gl.uniform4f(g_shaders.filterPassthroughLocs.sourceRect, sx, sy, sw, sh);
                 g_gl.uniform1i(g_shaders.filterPassthroughLocs.gammaMode, 1); // AssumeSRGB
-                const int nColors = static_cast<int>(config.colors.targetColors.size());
+                const int nColors = static_cast<int>(effectiveConfig.colors.targetColors.size());
                 g_gl.uniform1i(g_shaders.filterPassthroughLocs.targetColorCount, nColors);
                 if (nColors > 0) {
                     // Pack colors into float array for glUniform3fv
                     float colorData[8 * 3] = {};
                     for (int ci = 0; ci < nColors && ci < 8; ++ci) {
-                        colorData[ci * 3 + 0] = config.colors.targetColors[ci].r;
-                        colorData[ci * 3 + 1] = config.colors.targetColors[ci].g;
-                        colorData[ci * 3 + 2] = config.colors.targetColors[ci].b;
+                        colorData[ci * 3 + 0] = effectiveConfig.colors.targetColors[ci].r;
+                        colorData[ci * 3 + 1] = effectiveConfig.colors.targetColors[ci].g;
+                        colorData[ci * 3 + 2] = effectiveConfig.colors.targetColors[ci].b;
                     }
                     g_gl.uniform3fv(g_shaders.filterPassthroughLocs.targetColors, nColors, colorData);
                 }
-                g_gl.uniform1f(g_shaders.filterPassthroughLocs.sensitivity, config.colorSensitivity);
+                g_gl.uniform1f(g_shaders.filterPassthroughLocs.sensitivity, effectiveConfig.colorSensitivity);
             } else {
                 // useFilter
                 g_gl.useProgram(g_shaders.filterProgram);
                 g_gl.uniform1i(g_shaders.filterLocs.screenTexture, 0);
                 g_gl.uniform4f(g_shaders.filterLocs.sourceRect, sx, sy, sw, sh);
                 g_gl.uniform1i(g_shaders.filterLocs.gammaMode, 1); // AssumeSRGB
-                const int nColors = static_cast<int>(config.colors.targetColors.size());
+                const int nColors = static_cast<int>(effectiveConfig.colors.targetColors.size());
                 g_gl.uniform1i(g_shaders.filterLocs.targetColorCount, nColors);
                 if (nColors > 0) {
                     float colorData[8 * 3] = {};
                     for (int ci = 0; ci < nColors && ci < 8; ++ci) {
-                        colorData[ci * 3 + 0] = config.colors.targetColors[ci].r;
-                        colorData[ci * 3 + 1] = config.colors.targetColors[ci].g;
-                        colorData[ci * 3 + 2] = config.colors.targetColors[ci].b;
+                        colorData[ci * 3 + 0] = effectiveConfig.colors.targetColors[ci].r;
+                        colorData[ci * 3 + 1] = effectiveConfig.colors.targetColors[ci].g;
+                        colorData[ci * 3 + 2] = effectiveConfig.colors.targetColors[ci].b;
                     }
                     g_gl.uniform3fv(g_shaders.filterLocs.targetColors, nColors, colorData);
                 }
                 g_gl.uniform4f(g_shaders.filterLocs.outputColor,
-                               config.colors.output.r, config.colors.output.g,
-                               config.colors.output.b, config.colors.output.a);
-                g_gl.uniform1f(g_shaders.filterLocs.sensitivity, config.colorSensitivity);
+                               effectiveConfig.colors.output.r, effectiveConfig.colors.output.g,
+                               effectiveConfig.colors.output.b, effectiveConfig.colors.output.a);
+                g_gl.uniform1f(g_shaders.filterLocs.sensitivity, effectiveConfig.colorSensitivity);
             }
 
             glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -554,8 +962,8 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
 
         const bool needsFrameContentDetection =
             !useRaw &&
-            config.border.type == platform::config::MirrorBorderType::Static &&
-            config.border.staticThickness > 0;
+            effectiveConfig.border.type == platform::config::MirrorBorderType::Static &&
+            effectiveConfig.border.staticThickness > 0;
 
         // Async content detection: read the *previous* frame's PBO result
         // (should be ready by now, no stall), then initiate this frame's read.
@@ -585,28 +993,28 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             g_gl.uniform1i(g_shaders.passthroughLocs.screenTexture, 0);
             // Full-texture source rect
             g_gl.uniform4f(g_shaders.passthroughLocs.sourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
-        } else if (config.border.type == platform::config::MirrorBorderType::Dynamic && useColorPt) {
+        } else if (effectiveConfig.border.type == platform::config::MirrorBorderType::Dynamic && useColorPt) {
             // Render passthrough: dynamic border, preserves pixel color
             g_gl.useProgram(g_shaders.renderPassthroughProgram);
             g_gl.uniform1i(g_shaders.renderPassthroughLocs.filterTexture, 0);
             g_gl.uniform1i(g_shaders.renderPassthroughLocs.borderWidth, border);
             g_gl.uniform4f(g_shaders.renderPassthroughLocs.borderColor,
-                           config.colors.border.r, config.colors.border.g,
-                           config.colors.border.b, config.colors.border.a);
+                           effectiveConfig.colors.border.r, effectiveConfig.colors.border.g,
+                           effectiveConfig.colors.border.b, effectiveConfig.colors.border.a);
             g_gl.uniform2f(g_shaders.renderPassthroughLocs.screenPixel,
                            1.0f / static_cast<float>(finalW),
                            1.0f / static_cast<float>(finalH));
-        } else if (config.border.type == platform::config::MirrorBorderType::Dynamic) {
+        } else if (effectiveConfig.border.type == platform::config::MirrorBorderType::Dynamic) {
             // Render: dynamic border, replaces pixel color
             g_gl.useProgram(g_shaders.renderProgram);
             g_gl.uniform1i(g_shaders.renderLocs.filterTexture, 0);
             g_gl.uniform1i(g_shaders.renderLocs.borderWidth, border);
             g_gl.uniform4f(g_shaders.renderLocs.outputColor,
-                           config.colors.output.r, config.colors.output.g,
-                           config.colors.output.b, config.colors.output.a);
+                           effectiveConfig.colors.output.r, effectiveConfig.colors.output.g,
+                           effectiveConfig.colors.output.b, effectiveConfig.colors.output.a);
             g_gl.uniform4f(g_shaders.renderLocs.borderColor,
-                           config.colors.border.r, config.colors.border.g,
-                           config.colors.border.b, config.colors.border.a);
+                           effectiveConfig.colors.border.r, effectiveConfig.colors.border.g,
+                           effectiveConfig.colors.border.b, effectiveConfig.colors.border.a);
             g_gl.uniform2f(g_shaders.renderLocs.screenPixel,
                            1.0f / static_cast<float>(finalW),
                            1.0f / static_cast<float>(finalH));
@@ -624,8 +1032,8 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             g_gl.uniform1i(g_shaders.renderLocs.filterTexture, 0);
             g_gl.uniform1i(g_shaders.renderLocs.borderWidth, 0);
             g_gl.uniform4f(g_shaders.renderLocs.outputColor,
-                           config.colors.output.r, config.colors.output.g,
-                           config.colors.output.b, config.colors.output.a);
+                           effectiveConfig.colors.output.r, effectiveConfig.colors.output.g,
+                           effectiveConfig.colors.output.b, effectiveConfig.colors.output.a);
             g_gl.uniform4f(g_shaders.renderLocs.borderColor, 0.0f, 0.0f, 0.0f, 0.0f);
             g_gl.uniform2f(g_shaders.renderLocs.screenPixel,
                            1.0f / static_cast<float>(finalW),
@@ -646,29 +1054,9 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         glFlush();
 #else
         // Linux worker thread: the worker and game thread use separate GL
-        // contexts that share textures. We need to ensure the game thread's
-        // overlay renderer doesn't sample textures that are still being
-        // rendered to.
-        //
-        // If glWaitSync is available, use glFlush + fence. The overlay
-        // renderer will call glWaitSync (a non-blocking GPU-side wait) before
-        // reading the textures. This avoids blocking either CPU thread.
-        //
-        // Fall back to glFinish when glWaitSync is not available.
-        if (g_gl.waitSync && g_gl.fenceSync) {
-            glFlush();
-            GLsync newFence = g_gl.fenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-            {
-                std::lock_guard<std::mutex> lock(g_publishFenceMutex);
-                GLsync oldFence = g_publishFence;
-                g_publishFence = newFence;
-                if (oldFence) {
-                    EnqueueStaleFence(oldFence);
-                }
-            }
-        } else {
-            glFinish();
-        }
+        // contexts. Cross-context GLsync handoff is fragile on X11, so block
+        // here and only publish fully rendered textures.
+        glFinish();
 #endif
 
         for (const PendingMirrorPublish& pending : pendingPublishes) {
@@ -750,30 +1138,7 @@ void WorkerThreadMain() {
             }
         }
 
-        // Wait on fence for texture data to be ready
-#ifdef __APPLE__
-        (void)slot; // CGL shared contexts have implicit sync; no fence needed
-#else
-        if (slot.fence && g_gl.clientWaitSync) {
-            GLenum waitResult = g_gl.clientWaitSync(slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 16'000'000); // 16ms
-            g_gl.deleteSync(slot.fence);
-            slot.fence = nullptr;
-
-            if (waitResult == GL_TIMEOUT_EXPIRED) {
-                g_fenceTimeoutCount.fetch_add(1, std::memory_order_relaxed);
-                if (IsDebugEnabled()) {
-                    static std::atomic<std::uint64_t> lastLog{ 0 };
-                    std::uint64_t count = g_fenceTimeoutCount.load(std::memory_order_relaxed);
-                    if (count - lastLog.load() >= 1) {
-                        lastLog.store(count);
-                        fprintf(stderr, "[Linuxscreen][mirror] Fence wait timeout (total=%llu)\n",
-                                static_cast<unsigned long long>(count));
-                    }
-                }
-                continue; // Skip this frame
-            }
-        }
-#endif
+        (void)slot;
 
         if (!shadersInitialized) {
             if (!InitMirrorShaders()) {
@@ -784,15 +1149,6 @@ void WorkerThreadMain() {
         }
 
         ProcessAllMirrorsWorker(slot.width, slot.height, slot);
-    }
-
-    // Clean up publish fence
-    {
-        std::lock_guard<std::mutex> lock(g_publishFenceMutex);
-        if (g_publishFence && g_gl.deleteSync) {
-            g_gl.deleteSync(g_publishFence);
-            g_publishFence = nullptr;
-        }
     }
 
     DrainStaleFenceQueue();

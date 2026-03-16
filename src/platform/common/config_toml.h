@@ -14,6 +14,9 @@ Color ColorFromTomlArray(const toml::array* arr, const Color& defaultColor = {0.
 void MirrorCaptureConfigToToml(const MirrorCaptureConfig& cfg, toml::table& out);
 MirrorCaptureConfig MirrorCaptureConfigFromToml(const toml::table& tbl);
 
+void MirrorSourceConfigToToml(const MirrorSourceConfig& cfg, toml::table& out);
+MirrorSourceConfig MirrorSourceConfigFromToml(const toml::table& tbl);
+
 void MirrorRenderConfigToToml(const MirrorRenderConfig& cfg, toml::table& out);
 MirrorRenderConfig MirrorRenderConfigFromToml(const toml::table& tbl);
 
