@@ -24,12 +24,6 @@ void ForceCursorNormalForGuiOpen(GLFWwindow* window) {
     ClearPendingSyntheticCursorPosCallbackState();
     ClearTrackedCursorCaptureState();
     ResetCursorSensitivityState();
-
-    double logicalCenterX = 0.0;
-    double logicalCenterY = 0.0;
-    if (ResolveCurrentLogicalCursorCenter(logicalCenterX, logicalCenterY)) {
-        ::glfwSetCursorPos(window, logicalCenterX, logicalCenterY);
-    }
 }
 
 void RestoreCursorDisabledAfterGuiClose(GLFWwindow* window) {
