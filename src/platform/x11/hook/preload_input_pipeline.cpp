@@ -2188,6 +2188,7 @@ bool ShouldSuppressPendingSyntheticCursorPosCallback(GLFWwindow* window,
     }
 
     if (deltaX > 32.0 || deltaY > 32.0) {
+        g_pendingSyntheticCursorPosCallback.valid.store(false, std::memory_order_release);
         outReason = "stale";
         return true;
     }
