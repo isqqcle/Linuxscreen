@@ -600,6 +600,74 @@ extern "C" void glfwGetCursorPos(GLFWwindow* window, double* xpos, double* ypos)
     }
 }
 
+extern "C" void glfwGetWindowSize(GLFWwindow* window, int* width, int* height) {
+    GlfwGetWindowSizeFn realFn = GetRealGlfwGetWindowSize();
+    if (!realFn) {
+        if (width) { *width = 0; }
+        if (height) { *height = 0; }
+        return;
+    }
+
+    int realWidth = 0;
+    int realHeight = 0;
+    realFn(window, &realWidth, &realHeight);
+
+    int windowWidth = 0;
+    int windowHeight = 0;
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+    if (GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
+        int logicalWidth = 0;
+        int logicalHeight = 0;
+        if (ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace::WindowLogical,
+                                                       windowWidth, windowHeight,
+                                                       framebufferWidth, framebufferHeight,
+                                                       logicalWidth, logicalHeight) &&
+            logicalWidth > 0 && logicalHeight > 0) {
+            if (width) { *width = logicalWidth; }
+            if (height) { *height = logicalHeight; }
+            return;
+        }
+    }
+
+    if (width) { *width = realWidth; }
+    if (height) { *height = realHeight; }
+}
+
+extern "C" void glfwGetFramebufferSize(GLFWwindow* window, int* width, int* height) {
+    GlfwGetFramebufferSizeFn realFn = GetRealGlfwGetFramebufferSize();
+    if (!realFn) {
+        if (width) { *width = 0; }
+        if (height) { *height = 0; }
+        return;
+    }
+
+    int realWidth = 0;
+    int realHeight = 0;
+    realFn(window, &realWidth, &realHeight);
+
+    int windowWidth = 0;
+    int windowHeight = 0;
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+    if (GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
+        int physicalWidth = 0;
+        int physicalHeight = 0;
+        if (ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace::FramebufferPhysical,
+                                                       windowWidth, windowHeight,
+                                                       framebufferWidth, framebufferHeight,
+                                                       physicalWidth, physicalHeight) &&
+            physicalWidth > 0 && physicalHeight > 0) {
+            if (width) { *width = physicalWidth; }
+            if (height) { *height = physicalHeight; }
+            return;
+        }
+    }
+
+    if (width) { *width = realWidth; }
+    if (height) { *height = realHeight; }
+}
+
 extern "C" int glfwGetKey(GLFWwindow* window, int key) {
     GlfwGetKeyFn realFn = GetRealGlfwGetKey();
     if (!realFn) {
@@ -729,6 +797,14 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
 
     if (std::strcmp(symbolName, "glfwSetFramebufferSizeCallback") == 0) {
         return reinterpret_cast<void*>(glfwSetFramebufferSizeCallback);
+    }
+
+    if (std::strcmp(symbolName, "glfwGetWindowSize") == 0) {
+        return reinterpret_cast<void*>(glfwGetWindowSize);
+    }
+
+    if (std::strcmp(symbolName, "glfwGetFramebufferSize") == 0) {
+        return reinterpret_cast<void*>(glfwGetFramebufferSize);
     }
 
     if (std::strcmp(symbolName, "glfwGetCursorPos") == 0) {

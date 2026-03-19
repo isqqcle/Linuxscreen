@@ -410,6 +410,9 @@ std::atomic<double> g_captureEntrySuppressCenterY{ 0.0 };
 TrackedCursorState g_trackedCursorState;
 PendingSyntheticCursorPosCallback g_pendingSyntheticCursorPosCallback;
 
+using CursorPositionDispatchFn = void (*)(GLFWwindow*);
+CursorPositionDispatchFn g_dispatchCursorAfterResize = nullptr;
+
 // HotkeyDispatcher for mode-switch hotkeys — lazily initialized via function
 // to avoid static init order issues on macOS (mutex must be constructed before
 // the __attribute__((constructor)) runs).
@@ -881,6 +884,9 @@ bool DispatchResizeEventToGame(int width, int height) {
                                                            dispatchWidth,
                                                            dispatchHeight);
         framebufferSizeCallback(window, dispatchWidth, dispatchHeight);
+    }
+    if (g_dispatchCursorAfterResize) {
+        g_dispatchCursorAfterResize(window);
     }
     return true;
 }

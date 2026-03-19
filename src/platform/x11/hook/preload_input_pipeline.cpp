@@ -2372,6 +2372,11 @@ void DispatchCurrentFreeCursorPosition(GLFWwindow* window) {
     DispatchSyntheticGlfwCursorPosCallback(window, rawX, rawY);
 }
 
+struct CursorDispatchRegistrar {
+    CursorDispatchRegistrar() { g_dispatchCursorAfterResize = &DispatchCurrentFreeCursorPosition; }
+};
+static CursorDispatchRegistrar g_cursorDispatchRegistrar;
+
 void HookedGlfwCursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     DispatchGlfwCursorPosCallback(window, xpos, ypos, true, "real");
 }
