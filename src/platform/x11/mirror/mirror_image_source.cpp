@@ -32,7 +32,7 @@ namespace platform::x11 {
 
 namespace {
 
-constexpr int kMinMirrorImageReloadPollMs = 50;
+constexpr int kMinMirrorImageReloadPollMs = 1;
 constexpr int kMaxMirrorImageReloadPollMs = 10000;
 
 struct MirrorSourceImageGpu {

@@ -8,6 +8,7 @@ namespace platform::x11 {
 namespace {
 
 constexpr auto kDeferredConfigSaveDelay = std::chrono::milliseconds(150);
+constexpr int kImageReloadPollWarningThresholdMs = 50;
 
 bool g_hasPendingConfigSave = false;
 platform::config::LinuxscreenConfig g_pendingConfigSave;
@@ -36,6 +37,19 @@ void RenderHotkeySlotRepeatRateWarningMarker() {
             "Repeat rates above 20 Hz can cause issues with hotkey switching. This is due to a bug with keybind "
             "handling, and can be avoided by either using a longer start delay, keeping repeat delay to 20 Hz or "
             "lower (globally or for affected inputs).");
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+void RenderImageReloadPollWarningMarker() {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+    ImGui::TextUnformatted("[!]");
+    ImGui::PopStyleColor();
+    if (ImGui::BeginItemTooltip()) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+        ImGui::Text("Reload poll values below %d ms can cause excessive filesystem polling and CPU usage.",
+                    kImageReloadPollWarningThresholdMs);
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }

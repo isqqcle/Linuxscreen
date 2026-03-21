@@ -36,6 +36,7 @@ void SetHotkeyReturnMode(platform::config::HotkeyConfig& hotkey,
                          const platform::config::LinuxscreenConfig& config,
                          const std::string& modeName);
 void RenderHotkeySlotRepeatRateWarningMarker();
+void RenderImageReloadPollWarningMarker();
 void RenderHotkeyCaptureModal();
 
 } // namespace platform::x11

@@ -61,11 +61,15 @@
 
     int imageReloadPollMs = mirror.source.imageReloadPollMs;
     if (ImGui::InputInt("Reload poll (ms)", &imageReloadPollMs)) {
-        imageReloadPollMs = std::clamp(imageReloadPollMs, 50, 10000);
+        imageReloadPollMs = std::clamp(imageReloadPollMs, 1, 10000);
         if (mirror.source.imageReloadPollMs != imageReloadPollMs) {
             mirror.source.imageReloadPollMs = imageReloadPollMs;
             AutoSaveConfig(config);
         }
+    }
+    if (mirror.source.imageReloadPollMs < 50) {
+        ImGui::SameLine();
+        RenderImageReloadPollWarningMarker();
     }
 
     if (mirror.source.useImageSize && hasKnownSize &&
