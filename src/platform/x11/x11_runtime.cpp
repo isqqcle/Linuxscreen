@@ -1,4 +1,5 @@
 #include "x11_runtime.h"
+#include "calc_overlay_runtime.h"
 
 #ifndef __APPLE__
 #include <X11/Xlib.h>
@@ -158,6 +159,7 @@ bool InstallHooks() {
 
 void Shutdown() {
     g_runtimeState.store(RuntimeState::ShuttingDown, std::memory_order_release);
+    ShutdownCalcOverlayRuntime();
 
     {
         std::lock_guard<std::mutex> lock(g_runtimeHandlesMutex);

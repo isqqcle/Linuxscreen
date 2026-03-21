@@ -348,6 +348,130 @@ struct EyeZoomConfig {
     toml::table windowsPassthrough;
 };
 
+enum class CalcOverlayPosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+};
+
+enum class CalcOverlayHeaderRow {
+    Nothing,
+    Icon,
+    Text,
+};
+
+enum class CalcOverlayEyeColumnType {
+    OverworldCoords,
+    Certainty,
+    Distance,
+    NetherCoords,
+    Angle,
+};
+
+struct CalcOverlayEyeColumnConfig {
+    CalcOverlayEyeColumnType type = CalcOverlayEyeColumnType::OverworldCoords;
+    CalcOverlayHeaderRow headerRow = CalcOverlayHeaderRow::Icon;
+    bool visible = true;
+};
+
+enum class CalcOverlayOverworldCoordsMode {
+    Chunk,
+    EightEight,
+    FourFour,
+};
+
+enum class CalcOverlayClearOverlayTimeUnit {
+    Never,
+    Seconds,
+    Minutes,
+};
+
+struct CalcOverlayNegativeCoordsConfig {
+    bool use = true;
+    Color color{1.0f, 0.7059f, 0.7059f, 1.0f};
+};
+
+enum class CalcOverlayAngleDisplayMode {
+    All,
+    OnlyAngle,
+    OnlyAngleChange,
+};
+
+enum class CalcOverlayAaColumnType {
+    Icons,
+    Location,
+    NetherCoords,
+    Angle,
+};
+
+struct CalcOverlayAaColumnConfig {
+    CalcOverlayAaColumnType type = CalcOverlayAaColumnType::Icons;
+    CalcOverlayHeaderRow headerRow = CalcOverlayHeaderRow::Nothing;
+    bool visible = true;
+};
+
+enum class CalcOverlayAaRowType {
+    Stronghold,
+    Spawn,
+    Outpost,
+    Monument,
+};
+
+struct CalcOverlayAaRowConfig {
+    CalcOverlayAaRowType type = CalcOverlayAaRowType::Stronghold;
+    bool visible = true;
+};
+
+struct CalcOverlayAaConfig {
+    std::vector<CalcOverlayAaColumnConfig> columns;
+    std::vector<CalcOverlayAaRowConfig> rows;
+};
+
+struct CalcOverlayConfig {
+    bool enabled = false;
+    CalcOverlayPosition overlayPosition = CalcOverlayPosition::TopLeft;
+    std::string fontName;
+    int fontSize = 48;
+    int outlineWidth = 3;
+    Color netherCoordsColor{1.0f, 1.0f, 1.0f, 1.0f};
+    CalcOverlayNegativeCoordsConfig negativeCoords;
+    CalcOverlayClearOverlayTimeUnit clearOverlayTimeUnit = CalcOverlayClearOverlayTimeUnit::Never;
+    int clearOverlayAmount = 1;
+
+    std::vector<CalcOverlayEyeColumnConfig> eyeColumns{
+        {CalcOverlayEyeColumnType::OverworldCoords, CalcOverlayHeaderRow::Icon, true},
+        {CalcOverlayEyeColumnType::Certainty, CalcOverlayHeaderRow::Icon, true},
+        {CalcOverlayEyeColumnType::Distance, CalcOverlayHeaderRow::Icon, true},
+        {CalcOverlayEyeColumnType::NetherCoords, CalcOverlayHeaderRow::Icon, true},
+        {CalcOverlayEyeColumnType::Angle, CalcOverlayHeaderRow::Icon, true},
+    };
+    CalcOverlayAngleDisplayMode angleDisplay = CalcOverlayAngleDisplayMode::All;
+    bool onlyShowCurrentDimensionCoords = false;
+    bool showInfoBar = false;
+    CalcOverlayOverworldCoordsMode overworldCoordsMode = CalcOverlayOverworldCoordsMode::Chunk;
+    int shownMeasurements = 3;
+
+    bool blindCoordsEnabled = true;
+    bool showDirectionAndDistance = false;
+
+    bool allAdvancementsEnabled = true;
+    CalcOverlayAaConfig allAdvancements{
+        {
+            {CalcOverlayAaColumnType::Icons, CalcOverlayHeaderRow::Nothing, true},
+            {CalcOverlayAaColumnType::Location, CalcOverlayHeaderRow::Text, true},
+            {CalcOverlayAaColumnType::NetherCoords, CalcOverlayHeaderRow::Text, true},
+            {CalcOverlayAaColumnType::Angle, CalcOverlayHeaderRow::Text, true},
+        },
+        {
+            {CalcOverlayAaRowType::Stronghold, true},
+            {CalcOverlayAaRowType::Spawn, true},
+            {CalcOverlayAaRowType::Outpost, true},
+            {CalcOverlayAaRowType::Monument, true},
+        }
+    };
+};
+
 struct LinuxscreenConfig {
     std::string defaultMode;
     int fpsLimit = 0;
@@ -374,6 +498,7 @@ struct LinuxscreenConfig {
     std::string guiFontPath = "";
     int guiFontSize = 13;
     float guiOpacity = 1.0f;
+    CalcOverlayConfig calcOverlay;
     toml::table windowsPassthroughRoot;
 };
 

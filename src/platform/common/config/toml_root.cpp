@@ -102,6 +102,10 @@ toml::table LinuxscreenConfigToToml(const LinuxscreenConfig& cfg) {
     EyeZoomConfigToToml(cfg.eyezoom, eyezoomTbl);
     out.insert_or_assign("eyezoom", eyezoomTbl);
 
+    toml::table calcOverlayTbl;
+    CalcOverlayConfigToToml(cfg.calcOverlay, calcOverlayTbl);
+    out.insert_or_assign("calcOverlay", calcOverlayTbl);
+
     out.insert_or_assign("guiScale", static_cast<double>(cfg.guiScale));
     out.insert_or_assign("guiTheme", cfg.guiTheme);
     out.insert_or_assign("guiWidth", cfg.guiWidth);
@@ -198,6 +202,9 @@ LinuxscreenConfig LinuxscreenConfigFromToml(const toml::table& tbl) {
     if (auto eyezoomTbl = GetTable(tbl, "eyezoom")) {
         cfg.eyezoom = EyeZoomConfigFromToml(*eyezoomTbl);
     }
+    if (auto calcOverlayTbl = GetTable(tbl, "calcOverlay")) {
+        cfg.calcOverlay = CalcOverlayConfigFromToml(*calcOverlayTbl);
+    }
 
     cfg.guiScale = static_cast<float>(GetOr(tbl, "guiScale", 1.0));
     cfg.guiTheme = GetStringOr(tbl, "guiTheme", "Dark");
@@ -229,6 +236,7 @@ LinuxscreenConfig LinuxscreenConfigFromToml(const toml::table& tbl) {
                 "keyRepeatAffectsMouseButtons",
                 "keyRebinds",
                 "eyezoom",
+                "calcOverlay",
                 "guiScale",
                 "guiTheme",
                 "guiWidth",

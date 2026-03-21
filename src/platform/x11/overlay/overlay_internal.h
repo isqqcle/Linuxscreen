@@ -89,7 +89,8 @@ enum class MainSettingsTab : int {
     Mirrors = 1,
     EyeZoom = 2,
     Inputs = 3,
-    Misc = 4,
+    CalcOverlay = 4,
+    Misc = 5,
 };
 
 struct OverlayUiAnimationState {

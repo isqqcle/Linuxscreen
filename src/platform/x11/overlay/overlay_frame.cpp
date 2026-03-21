@@ -11,6 +11,10 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
     std::string activeMode = modeState.GetActiveModeName();
     bool needsEyeZoomText = (activeMode == "EyeZoom");
 
+    if (const auto config = platform::config::GetConfigSnapshot()) {
+        UpdateCalcOverlayRuntime(*config);
+    }
+
     bool guiVisible = IsGuiVisible();
 
     if (!guiVisible && !needsEyeZoomText) {
@@ -422,6 +426,17 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                 if (config) {
                     auto mutableConfig = *config;
                     RenderInputsTab(mutableConfig, isCapturing);
+                }
+                ImGui::PopStyleVar();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Calc Overlay")) {
+                NotifyMainTabSelected(MainSettingsTab::CalcOverlay);
+                PushMainTabContentAnimationStyle();
+                if (config) {
+                    auto mutableConfig = *config;
+                    RenderCalcOverlayTab(mutableConfig);
                 }
                 ImGui::PopStyleVar();
                 ImGui::EndTabItem();

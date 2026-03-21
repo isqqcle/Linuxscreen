@@ -7,6 +7,7 @@
 #include "glx_mirror_pipeline.h"
 #include "mirror/glx_shared_contexts.h"
 #include "imgui_input_bridge.h"
+#include "calc_overlay_runtime.h"
 #include "x11_clipboard.h"
 #include "x11_runtime.h"
 
@@ -56,6 +57,7 @@
 
 #include "overlay_internal.h"
 #include "gui/imgui_overlay_helpers.h"
+#include "gui/tab_calc_overlay.h"
 #include "gui/tab_inputs_helpers.h"
 #include "gui/tab_inputs_state.h"
 #include "gui/tab_misc.h"

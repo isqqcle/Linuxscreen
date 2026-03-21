@@ -5,4 +5,5 @@
 #include "config/toml_hotkey.cpp"
 #include "config/toml_key_rebind.cpp"
 #include "config/toml_eyezoom.cpp"
+#include "config/toml_calc_overlay.cpp"
 #include "config/toml_root.cpp"

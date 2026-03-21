@@ -56,6 +56,9 @@ KeyRebindsConfig KeyRebindsConfigFromToml(const toml::table& tbl);
 void EyeZoomConfigToToml(const EyeZoomConfig& cfg, toml::table& out);
 EyeZoomConfig EyeZoomConfigFromToml(const toml::table& tbl);
 
+void CalcOverlayConfigToToml(const CalcOverlayConfig& cfg, toml::table& out);
+CalcOverlayConfig CalcOverlayConfigFromToml(const toml::table& tbl);
+
 toml::table LinuxscreenConfigToToml(const LinuxscreenConfig& cfg);
 LinuxscreenConfig LinuxscreenConfigFromToml(const toml::table& tbl);
 
