@@ -806,6 +806,32 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         localConfigs = g_mirrorConfigs;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+
+    // Quick scan: skip expensive GL setup if no mirror is due for capture.
+    {
+        bool anyMirrorDue = false;
+        for (const auto& mirrorRender : localConfigs) {
+            const auto& config = mirrorRender.config;
+            if (config.fps <= 0) {
+                anyMirrorDue = true;
+                break;
+            }
+            auto it = g_instances.find(config.name);
+            if (it == g_instances.end()) {
+                anyMirrorDue = true;
+                break;
+            }
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - it->second.lastCaptureTime).count();
+            if (elapsed >= (1000 / config.fps)) {
+                anyMirrorDue = true;
+                break;
+            }
+        }
+        if (!anyMirrorDue) { return; }
+    }
+
     // Save GL state
     GlStateSnapshot savedState;
     SaveGlState(savedState);
@@ -818,8 +844,6 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
     // Bind quad VAO
     g_gl.bindVertexArray(g_shaders.quadVao);
     g_gl.bindBuffer(GL_ARRAY_BUFFER, g_shaders.quadVbo);
-
-    const auto now = std::chrono::steady_clock::now();
     struct PendingMirrorPublish {
         X11MirrorInstance* instance = nullptr;
         int backIdx = 0;

@@ -141,6 +141,32 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         return;
     }
 
+    // Throttle submissions to the fastest configured mirror FPS. The worker
+    // thread does its own per-mirror FPS check, so submitting faster than the
+    // fastest mirror just wastes CPU and GPU time (texture copy + glFinish on
+    // the game thread, wake-up + GL state save/restore on the worker).
+    if (g_currentActiveMode != "EyeZoom") {
+        static std::chrono::steady_clock::time_point s_lastSubmitTime{};
+        int maxFps = 0;
+        bool hasUncappedMirror = false;
+        for (const auto& mirror : g_mirrorConfigs) {
+            if (mirror.config.fps <= 0) {
+                hasUncappedMirror = true;
+                break;
+            }
+            maxFps = std::max(maxFps, mirror.config.fps);
+        }
+        if (!hasUncappedMirror && maxFps > 0) {
+            const auto submitNow = std::chrono::steady_clock::now();
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                submitNow - s_lastSubmitTime).count();
+            if (elapsedMs < (1000 / maxFps)) {
+                return;
+            }
+            s_lastSubmitTime = submitNow;
+        }
+    }
+
     const bool overscan = IsOverscanActiveInternal() && g_overscanFboRendered;
     OverscanDimensions overscanSnap = overscan ? g_overscanDims : OverscanDimensions{};
 
@@ -222,7 +248,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     }
 
     GLsync fence = nullptr;
-    if (!useInlineMirrorProcessing) {
+    if (requiresGameFramebuffer && !useInlineMirrorProcessing) {
         glFinish();
     }
 
