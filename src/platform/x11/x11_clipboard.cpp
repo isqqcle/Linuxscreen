@@ -20,14 +20,141 @@ Display* g_clipDisplay = nullptr;
 Window   g_clipWindow  = 0;
 
 std::string g_clipBuffer;
+std::string g_ownedClipboardText;
 
 constexpr int kClipboardTimeoutMs = 200;
 constexpr int kClipboardPollIntervalUs = 5000;
+
+Atom g_clipboardAtom = None;
+Atom g_targetsAtom = None;
+Atom g_utf8Atom = None;
+Atom g_textPlainUtf8Atom = None;
+Atom g_textPlainAtom = None;
+Atom g_textAtom = None;
+Atom g_compoundTextAtom = None;
+Atom g_targetPropAtom = None;
+
+void EnsureClipboardAtoms() {
+    if (!g_clipDisplay) {
+        return;
+    }
+    if (g_clipboardAtom == None) {
+        g_clipboardAtom = XInternAtom(g_clipDisplay, "CLIPBOARD", False);
+    }
+    if (g_targetsAtom == None) {
+        g_targetsAtom = XInternAtom(g_clipDisplay, "TARGETS", False);
+    }
+    if (g_utf8Atom == None) {
+        g_utf8Atom = XInternAtom(g_clipDisplay, "UTF8_STRING", False);
+    }
+    if (g_textPlainUtf8Atom == None) {
+        g_textPlainUtf8Atom = XInternAtom(g_clipDisplay, "text/plain;charset=utf-8", False);
+    }
+    if (g_textPlainAtom == None) {
+        g_textPlainAtom = XInternAtom(g_clipDisplay, "text/plain", False);
+    }
+    if (g_textAtom == None) {
+        g_textAtom = XInternAtom(g_clipDisplay, "TEXT", False);
+    }
+    if (g_compoundTextAtom == None) {
+        g_compoundTextAtom = XInternAtom(g_clipDisplay, "COMPOUND_TEXT", False);
+    }
+    if (g_targetPropAtom == None) {
+        g_targetPropAtom = XInternAtom(g_clipDisplay, "LINUXSCREEN_CLIP", False);
+    }
+}
+
+bool IsSupportedClipboardTarget(Atom target) {
+    return target == g_utf8Atom ||
+           target == g_textPlainUtf8Atom ||
+           target == g_textPlainAtom ||
+           target == g_textAtom ||
+           target == g_compoundTextAtom ||
+           target == XA_STRING;
+}
+
+void SendSelectionNotify(const XSelectionRequestEvent& request, Atom property) {
+    XEvent reply{};
+    reply.xselection.type = SelectionNotify;
+    reply.xselection.display = request.display;
+    reply.xselection.requestor = request.requestor;
+    reply.xselection.selection = request.selection;
+    reply.xselection.target = request.target;
+    reply.xselection.property = property;
+    reply.xselection.time = request.time;
+    XSendEvent(g_clipDisplay, request.requestor, False, 0, &reply);
+}
+
+void HandleClipboardSelectionRequest(const XSelectionRequestEvent& request) {
+    EnsureClipboardAtoms();
+
+    Atom property = request.property;
+    if (property == None) {
+        property = request.target;
+    }
+
+    if (request.target == g_targetsAtom) {
+        const Atom supportedTargets[] = {
+            g_targetsAtom,
+            g_utf8Atom,
+            g_textPlainUtf8Atom,
+            g_textPlainAtom,
+            g_textAtom,
+            g_compoundTextAtom,
+            XA_STRING,
+        };
+        XChangeProperty(g_clipDisplay,
+                        request.requestor,
+                        property,
+                        XA_ATOM,
+                        32,
+                        PropModeReplace,
+                        reinterpret_cast<const unsigned char*>(supportedTargets),
+                        static_cast<int>(sizeof(supportedTargets) / sizeof(supportedTargets[0])));
+        SendSelectionNotify(request, property);
+        return;
+    }
+
+    if (IsSupportedClipboardTarget(request.target)) {
+        const Atom dataType = request.target == XA_STRING ? XA_STRING : g_utf8Atom;
+        XChangeProperty(g_clipDisplay,
+                        request.requestor,
+                        property,
+                        dataType,
+                        8,
+                        PropModeReplace,
+                        reinterpret_cast<const unsigned char*>(g_ownedClipboardText.c_str()),
+                        static_cast<int>(g_ownedClipboardText.size()));
+        SendSelectionNotify(request, property);
+        return;
+    }
+
+    SendSelectionNotify(request, None);
+}
+
+void ProcessClipboardEvent(const XEvent& event) {
+    switch (event.type) {
+    case SelectionRequest:
+        HandleClipboardSelectionRequest(event.xselectionrequest);
+        XFlush(g_clipDisplay);
+        break;
+    case SelectionClear:
+        if (event.xselectionclear.selection == g_clipboardAtom) {
+            g_ownedClipboardText.clear();
+        }
+        break;
+    default:
+        break;
+    }
+}
 
 void ClearClipboardEventQueue() {
     while (XPending(g_clipDisplay) > 0) {
         XEvent event;
         XNextEvent(g_clipDisplay, &event);
+        if (event.type != SelectionNotify) {
+            ProcessClipboardEvent(event);
+        }
     }
 }
 
@@ -38,6 +165,7 @@ bool WaitForClipboardSelectionNotify(Atom property, XSelectionEvent& outSelectio
             XEvent event;
             XNextEvent(g_clipDisplay, &event);
             if (event.type != SelectionNotify) {
+                ProcessClipboardEvent(event);
                 continue;
             }
             if (event.xselection.requestor != g_clipWindow) {
@@ -237,6 +365,7 @@ bool EnsureClipboardConnection() {
     g_clipWindow = XCreateSimpleWindow(
         g_clipDisplay, DefaultRootWindow(g_clipDisplay),
         0, 0, 1, 1, 0, 0, 0);
+    EnsureClipboardAtoms();
 
     return true;
 }
@@ -245,21 +374,14 @@ bool EnsureClipboardConnection() {
 
 const char* X11GetClipboardText(ImGuiContext* /*ctx*/) {
     if (!EnsureClipboardConnection()) return nullptr;
-
-    Atom clipAtom    = XInternAtom(g_clipDisplay, "CLIPBOARD", False);
-    Atom utf8Atom    = XInternAtom(g_clipDisplay, "UTF8_STRING", False);
-    Atom textPlainUtf8Atom = XInternAtom(g_clipDisplay, "text/plain;charset=utf-8", False);
-    Atom textPlainAtom = XInternAtom(g_clipDisplay, "text/plain", False);
-    Atom textAtom = XInternAtom(g_clipDisplay, "TEXT", False);
-    Atom compoundTextAtom = XInternAtom(g_clipDisplay, "COMPOUND_TEXT", False);
-    Atom targetProp  = XInternAtom(g_clipDisplay, "LINUXSCREEN_CLIP", False);
+    EnsureClipboardAtoms();
 
     const std::array<Atom, 6> preferredTargets = {
-        utf8Atom,
-        textPlainUtf8Atom,
-        textPlainAtom,
-        textAtom,
-        compoundTextAtom,
+        g_utf8Atom,
+        g_textPlainUtf8Atom,
+        g_textPlainAtom,
+        g_textAtom,
+        g_compoundTextAtom,
         XA_STRING,
     };
 
@@ -267,19 +389,42 @@ const char* X11GetClipboardText(ImGuiContext* /*ctx*/) {
         if (target == None) {
             continue;
         }
-        if (TryReadClipboardTarget(clipAtom,
+        if (TryReadClipboardTarget(g_clipboardAtom,
                                    target,
-                                   targetProp,
-                                   utf8Atom,
-                                   textPlainUtf8Atom,
-                                   textAtom,
-                                   compoundTextAtom,
+                                   g_targetPropAtom,
+                                   g_utf8Atom,
+                                   g_textPlainUtf8Atom,
+                                   g_textAtom,
+                                   g_compoundTextAtom,
                                    g_clipBuffer)) {
             return g_clipBuffer.c_str();
         }
     }
 
     return nullptr;
+}
+
+void X11SetClipboardText(ImGuiContext* /*ctx*/, const char* text) {
+    if (!EnsureClipboardConnection()) {
+        return;
+    }
+    EnsureClipboardAtoms();
+
+    g_ownedClipboardText.assign(text != nullptr ? text : "");
+    XSetSelectionOwner(g_clipDisplay, g_clipboardAtom, g_clipWindow, CurrentTime);
+    XFlush(g_clipDisplay);
+}
+
+void X11PumpClipboardEvents() {
+    if (!g_clipDisplay) {
+        return;
+    }
+
+    while (XPending(g_clipDisplay) > 0) {
+        XEvent event;
+        XNextEvent(g_clipDisplay, &event);
+        ProcessClipboardEvent(event);
+    }
 }
 
 void ShutdownX11Clipboard() {
@@ -292,6 +437,15 @@ void ShutdownX11Clipboard() {
         g_clipDisplay = nullptr;
     }
     g_clipBuffer.clear();
+    g_ownedClipboardText.clear();
+    g_clipboardAtom = None;
+    g_targetsAtom = None;
+    g_utf8Atom = None;
+    g_textPlainUtf8Atom = None;
+    g_textPlainAtom = None;
+    g_textAtom = None;
+    g_compoundTextAtom = None;
+    g_targetPropAtom = None;
 }
 
 } // namespace platform::x11
@@ -317,6 +471,12 @@ const char* X11GetClipboardText(ImGuiContext* /*ctx*/) {
 
     return g_clipBuffer.c_str();
 }
+
+void X11SetClipboardText(ImGuiContext* /*ctx*/, const char* text) {
+    (void)SetMacOSClipboardText(text);
+}
+
+void X11PumpClipboardEvents() {}
 
 void ShutdownX11Clipboard() { g_clipBuffer.clear(); }
 

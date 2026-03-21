@@ -22,4 +22,22 @@ bool GetMacOSClipboardText(std::string& outText) {
     }
 }
 
+bool SetMacOSClipboardText(const char* text) {
+    @autoreleasepool {
+        NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+        if (pasteboard == nil) {
+            return false;
+        }
+
+        const char* value = text != nullptr ? text : "";
+        NSString* nsText = [NSString stringWithUTF8String:value];
+        if (nsText == nil) {
+            nsText = @"";
+        }
+
+        [pasteboard clearContents];
+        return [pasteboard setString:nsText forType:NSPasteboardTypeString];
+    }
+}
+
 } // namespace platform::x11

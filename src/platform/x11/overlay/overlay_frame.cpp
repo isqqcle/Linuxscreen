@@ -88,6 +88,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
     }
 
     ImGuiIO& io = ImGui::GetIO();
+    X11PumpClipboardEvents();
     float displayWidth = 1.0f;
     float displayHeight = 1.0f;
     float framebufferScaleX = 1.0f;

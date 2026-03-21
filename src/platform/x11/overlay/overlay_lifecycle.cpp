@@ -97,6 +97,7 @@ bool EnsureImGuiOverlayInitializedLocked(void* glContext) {
 
     ImGuiPlatformIO& platformIo = ImGui::GetPlatformIO();
     platformIo.Platform_GetClipboardTextFn = X11GetClipboardText;
+    platformIo.Platform_SetClipboardTextFn = X11SetClipboardText;
 
     ImFontConfig fontConfig;
     fontConfig.OversampleH = 1;
