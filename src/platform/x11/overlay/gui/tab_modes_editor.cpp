@@ -771,85 +771,124 @@ void RenderModesTab(platform::config::LinuxscreenConfig& config, const std::stri
                     bool layerDropAfter = false;
                     int layerPreviewRow = -1;
                     bool layerPreviewAfter = false;
-                    for (size_t k = 0; k < mode.layers.size(); ++k) {
-                        auto& layer = mode.layers[k];
-                        ImGui::PushID(static_cast<int>(k));
 
-                        const bool isMirrorLayer = layer.type == platform::config::ModeLayerType::Mirror;
-                        const char* typeLabel = isMirrorLayer ? "[Mirror]" : "[Group]";
+                    constexpr int layerTableColCount = 4; // drag, enabled, remove, name
+                    constexpr ImGuiTableFlags layerTableFlags =
+                        ImGuiTableFlags_BordersInnerH |
+                        ImGuiTableFlags_BordersInnerV |
+                        ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_SizingStretchProp |
+                        ImGuiTableFlags_PadOuterX;
 
-                        ImGui::SmallButton("::##mode_layer_drag");
-                        const ImVec2 rowMin = ImGui::GetItemRectMin();
-                        const ImVec2 rowMax = ImGui::GetItemRectMax();
-                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover)) {
-                            const int payloadIndex = static_cast<int>(k);
-                            ImGui::SetDragDropPayload("LINUXSCREEN_MODE_LAYER_REORDER", &payloadIndex, sizeof(payloadIndex));
+                    if (ImGui::BeginTable("##mode_layers_table", layerTableColCount, layerTableFlags)) {
+                        ImGuiTable* layerTable = ImGui::GetCurrentTable();
+                        ImGui::TableSetupColumn("##drag", ImGuiTableColumnFlags_WidthFixed, 24.0f);
+                        ImGui::TableSetupColumn("##en", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() + 4.0f);
+                        ImGui::TableSetupColumn("##rm", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() + 6.0f);
+                        ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch);
+
+                        for (size_t k = 0; k < mode.layers.size(); ++k) {
+                            auto& layer = mode.layers[k];
+                            const int idx = static_cast<int>(k);
+                            ImGui::PushID(idx);
+                            ImGui::TableNextRow();
+
+                            const bool isMirrorLayer = layer.type == platform::config::ModeLayerType::Mirror;
+                            const char* typeLabel = isMirrorLayer ? "[Mirror]" : "[Group]";
+
+                            // Drag handle
+                            ImGui::TableSetColumnIndex(0);
+                            (void)ImGui::SmallButton("::##mode_layer_drag");
+                            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover)) {
+                                const int payloadIndex = idx;
+                                ImGui::SetDragDropPayload("LINUXSCREEN_MODE_LAYER_REORDER", &payloadIndex, sizeof(payloadIndex));
+                                ImGui::Text("%s %s", typeLabel, layer.id.c_str());
+                                ImGui::EndDragDropSource();
+                            }
+
+                            // Enabled checkbox
+                            ImGui::TableSetColumnIndex(1);
+                            if (ImGui::Checkbox("##layer_enabled", &layer.enabled)) {
+                                AutoSaveConfig(config);
+                            }
+
+                            // Remove button
+                            ImGui::TableSetColumnIndex(2);
+                            if (ImGui::SmallButton("X##mode_layer_remove")) {
+                                layerIdxToRemove = idx;
+                            }
+
+                            // Name + missing indicator
+                            ImGui::TableSetColumnIndex(3);
                             ImGui::Text("%s %s", typeLabel, layer.id.c_str());
-                            ImGui::EndDragDropSource();
-                        }
-                        if (ImGui::BeginDragDropTarget()) {
-                            const float midY = (rowMin.y + rowMax.y) * 0.5f;
-                            const bool dropAfter = ImGui::GetIO().MousePos.y > midY;
-                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LINUXSCREEN_MODE_LAYER_REORDER",
-                                                                                            ImGuiDragDropFlags_AcceptBeforeDelivery)) {
-                                if (payload->DataSize == sizeof(int)) {
-                                    layerPreviewRow = static_cast<int>(k);
-                                    layerPreviewAfter = dropAfter;
-                                    if (payload->IsDelivery()) {
-                                        layerDragSource = *static_cast<const int*>(payload->Data);
-                                        layerDragTarget = static_cast<int>(k);
-                                        layerDropAfter = dropAfter;
+
+                            bool referenceExists = false;
+                            if (isMirrorLayer) {
+                                for (const auto& mirrorConf : config.mirrors) {
+                                    if (mirrorConf.name == layer.id) {
+                                        referenceExists = true;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                for (const auto& groupConf : config.mirrorGroups) {
+                                    if (groupConf.name == layer.id) {
+                                        referenceExists = true;
+                                        break;
                                     }
                                 }
                             }
-                            ImGui::EndDragDropTarget();
-                        }
-                        if (layerPreviewRow == static_cast<int>(k) && ImGui::GetDragDropPayload() != nullptr) {
-                            ImDrawList* dl = ImGui::GetWindowDrawList();
-                            ImVec2 fillMin = rowMin;
-                            ImVec2 fillMax = rowMax;
-                            fillMin.x = ImGui::GetWindowContentRegionMin().x + ImGui::GetWindowPos().x;
-                            fillMax.x = ImGui::GetWindowContentRegionMax().x + ImGui::GetWindowPos().x;
-                            dl->AddRectFilled(fillMin, fillMax, IM_COL32(88, 166, 236, 34));
-                            const float lineY = layerPreviewAfter ? fillMax.y : fillMin.y;
-                            dl->AddLine(ImVec2(fillMin.x, lineY), ImVec2(fillMax.x, lineY), IM_COL32(72, 190, 255, 255), 2.0f);
-                        }
-                        ImGui::SameLine();
+                            if (!referenceExists) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "(missing)");
+                            }
 
-                        if (ImGui::Checkbox("##layer_enabled", &layer.enabled)) {
-                            AutoSaveConfig(config);
-                        }
-                        ImGui::SameLine();
+                            // Full-row drop target across all columns
+                            if (layerTable != nullptr) {
+                                ImRect rowRect = ImGui::TableGetCellBgRect(layerTable, 0);
+                                const ImRect rightRect = ImGui::TableGetCellBgRect(layerTable, layerTableColCount - 1);
+                                rowRect.Max.x = rightRect.Max.x;
+                                const float midY = (rowRect.Min.y + rowRect.Max.y) * 0.5f;
 
-                        if (ImGui::SmallButton("X##mode_layer_remove")) {
-                            layerIdxToRemove = static_cast<int>(k);
-                        }
-                        ImGui::SameLine();
+                                for (int col = 0; col < layerTableColCount; ++col) {
+                                    ImGui::TableSetColumnIndex(col);
+                                    const ImRect cellRect = ImGui::TableGetCellBgRect(layerTable, col);
+                                    ImGui::PushID(col + 500);
+                                    if (ImGui::BeginDragDropTargetCustom(cellRect, ImGui::GetID("##layer_row_drop"))) {
+                                        const bool isAfter = ImGui::GetIO().MousePos.y > midY;
+                                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LINUXSCREEN_MODE_LAYER_REORDER",
+                                                                                                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                                            if (payload->DataSize == sizeof(int)) {
+                                                layerPreviewRow = idx;
+                                                layerPreviewAfter = isAfter;
+                                                if (payload->IsDelivery()) {
+                                                    layerDragSource = *static_cast<const int*>(payload->Data);
+                                                    layerDragTarget = idx;
+                                                    layerDropAfter = isAfter;
+                                                }
+                                            }
+                                        }
+                                        ImGui::EndDragDropTarget();
+                                    }
+                                    ImGui::PopID();
+                                }
 
-                        ImGui::Text("%s %s", typeLabel, layer.id.c_str());
-
-                        bool referenceExists = false;
-                        if (isMirrorLayer) {
-                            for (const auto& mirrorConf : config.mirrors) {
-                                if (mirrorConf.name == layer.id) {
-                                    referenceExists = true;
-                                    break;
+                                // Draw preview highlight
+                                ImGui::TableSetColumnIndex(layerTableColCount - 1);
+                                if (layerPreviewRow == idx && ImGui::GetDragDropPayload() != nullptr) {
+                                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                                    dl->AddRectFilled(rowRect.Min, rowRect.Max, IM_COL32(88, 166, 236, 34));
+                                    const float lineY = layerPreviewAfter ? rowRect.Max.y : rowRect.Min.y;
+                                    dl->AddLine(ImVec2(rowRect.Min.x, lineY),
+                                                ImVec2(rowRect.Max.x, lineY),
+                                                IM_COL32(72, 190, 255, 255),
+                                                2.0f);
                                 }
                             }
-                        } else {
-                            for (const auto& groupConf : config.mirrorGroups) {
-                                if (groupConf.name == layer.id) {
-                                    referenceExists = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!referenceExists) {
-                            ImGui::SameLine();
-                            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "(missing)");
-                        }
 
-                        ImGui::PopID();
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTable();
                     }
 
                     if (layerDragSource >= 0 &&

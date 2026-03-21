@@ -1719,7 +1719,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                     if (ImGui::BeginDragDropTargetCustom(cellRect, ImGui::GetID("##gm_row_drop_target"))) {
                                         const bool dropAfter = ImGui::GetIO().MousePos.y > midY;
                                         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LINUXSCREEN_GROUP_MIRROR_REORDER",
-                                                                                                        ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+                                                                                                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
                                             if (payload->DataSize == sizeof(int)) {
                                                 gm_preview_row = j;
                                                 gm_preview_after = dropAfter;
