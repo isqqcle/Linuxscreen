@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef LINUXSCREEN_PLATFORM_COMMON_LINUXSCREEN_CONFIG_H
+#define LINUXSCREEN_PLATFORM_COMMON_LINUXSCREEN_CONFIG_H
+
 #include <array>
 #include <cstdint>
 #include <map>
@@ -112,6 +115,8 @@ inline int GetMirrorDynamicBorderPadding(const MirrorBorderConfig& border) {
         ? border.dynamicThickness
         : 0;
 }
+
+#endif
 
 struct MirrorConfig {
     std::string name;
