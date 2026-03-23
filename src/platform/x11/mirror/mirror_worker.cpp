@@ -600,8 +600,7 @@ void InitiateContentDetectionRead(X11MirrorInstance& inst, int sourceFbo, int so
     glReadPixels(0, 0, detW, detH, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    // The caller rebinds before the next pass, so avoid redundant restores.
 
     inst.contentDetectionPending = true;
 }
@@ -778,7 +777,6 @@ void PostFrameSlot(int width,
     g_slotPool[nextIdx].overscanWindowHeight = overscanSnap.windowHeight;
     g_slotPool[nextIdx].overscanMarginLeft = overscanSnap.marginLeft;
     g_slotPool[nextIdx].overscanMarginBottom = overscanSnap.marginBottom;
-
     // Publish slot index
     int prevIdx = g_pendingSlotIdx.exchange(nextIdx, std::memory_order_release);
     if (prevIdx >= 0) {
@@ -805,7 +803,6 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         if (g_mirrorConfigs.empty()) { return; }
         localConfigs = g_mirrorConfigs;
     }
-
     const auto now = std::chrono::steady_clock::now();
 
     // Quick scan: skip expensive GL setup if no mirror is due for capture.
@@ -852,7 +849,20 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
     std::vector<PendingMirrorPublish> pendingPublishes;
     pendingPublishes.reserve(localConfigs.size());
 
-    for (auto& mirrorRender : localConfigs) {
+    // Only the macOS inline path uses round-robin staggering.
+#ifdef __APPLE__
+    const bool inlineStagger = localConfigs.size() > 1 &&
+                               !IsMacMirrorRedirectActive();
+#else
+    const bool inlineStagger = false;
+#endif
+    const size_t configCount = localConfigs.size();
+
+    for (size_t loopI = 0; loopI < configCount; ++loopI) {
+        const size_t idx = inlineStagger
+            ? ((static_cast<size_t>(g_inlineRoundRobinIdx) + loopI) % configCount)
+            : loopI;
+        auto& mirrorRender = localConfigs[idx];
         const auto& config = mirrorRender.config;
         auto& inst = g_instances[config.name];
         if (config.fps > 0) {
@@ -906,11 +916,11 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         const int finalW = inst.finalW;
         const int finalH = inst.finalH;
 
-        // ===== PASS 1: Filter pass =====
+        int backIdx = 1 - inst.frontIdx.load(std::memory_order_relaxed);
         g_gl.bindFramebuffer(GL_FRAMEBUFFER, inst.filterFbo);
-
-        // Clear the full FBO with transparent black before rendering inputs
         glViewport(0, 0, fboW, fboH);
+
+        // Clear the target before rendering inputs.
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1031,8 +1041,6 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             effectiveConfig.border.type == platform::config::MirrorBorderType::Static &&
             effectiveConfig.border.staticThickness > 0;
 
-        // Async content detection: read the *previous* frame's PBO result
-        // (should be ready by now, no stall), then initiate this frame's read.
         bool hasFrameContent = true;
         if (needsFrameContentDetection) {
             if (inst.contentDetectionPending) {
@@ -1044,8 +1052,6 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         }
 
         // ===== PASS 2: Border/render pass =====
-        // Write to back buffer (will be flipped after processing)
-        int backIdx = 1 - inst.frontIdx.load(std::memory_order_relaxed);
         g_gl.bindFramebuffer(GL_FRAMEBUFFER, inst.finalFbo[backIdx]);
         glViewport(0, 0, finalW, finalH);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1113,6 +1119,11 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
 
         inst.lastCaptureTime = now;
         pendingPublishes.push_back(PendingMirrorPublish{ &inst, backIdx, hasFrameContent });
+
+        if (inlineStagger) {
+            g_inlineRoundRobinIdx = static_cast<int>((idx + 1) % configCount);
+            break;
+        }
     }
 
     if (!pendingPublishes.empty()) {

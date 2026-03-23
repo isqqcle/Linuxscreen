@@ -380,7 +380,6 @@ void RenderBackgroundImageLetterbox(GLuint texture,
     g_gl.uniform1i(g_overlayLocScreenTexture, 0);
     g_gl.uniform4f(g_overlayLocSourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
     g_gl.uniform1f(g_overlayLocOpacity, 1.0f);
-
     glEnable(GL_SCISSOR_TEST);
     for (int i = 0; i < regionCount; ++i) {
         glScissor(regions[i].x, regions[i].y, regions[i].width, regions[i].height);
@@ -536,6 +535,43 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         }
     }
 
+    // Determine rendering needs before touching GL state (pure CPU lookups).
+    const platform::config::ModeConfig* activeModeConfig = nullptr;
+    const platform::config::ModeConfig* sourceModeConfig = nullptr;
+    if (configSnapshot) {
+        activeModeConfig = FindModeConfigByName(*configSnapshot, activeMode);
+
+        std::string sourceModeName = activeMode;
+        if (g_stickyBackgroundPending && !g_stickyBackgroundModeName.empty()) {
+            sourceModeName = g_stickyBackgroundModeName;
+        }
+        sourceModeConfig = FindModeConfigByName(*configSnapshot, sourceModeName);
+        if (!sourceModeConfig) {
+            sourceModeConfig = activeModeConfig;
+        }
+    }
+
+    bool anyMirrorHasContent = false;
+    for (const auto& mirrorRender : g_mirrorConfigs) {
+        auto it = g_instances.find(mirrorRender.config.name);
+        if (it != g_instances.end() && it->second.hasValidContent &&
+            it->second.finalFbo[0] && it->second.finalTexture[0]) {
+            anyMirrorHasContent = true;
+            break;
+        }
+    }
+
+    const bool needsBackground = (sourceModeConfig != nullptr);
+    const bool needsBorder = (activeModeConfig != nullptr &&
+                              activeModeConfig->border.enabled &&
+                              activeModeConfig->border.width > 0);
+
+    if (!anyMirrorHasContent && !needsBackground && !needsBorder) {
+        g_stickyBackgroundPending = false;
+        // RAII guard handles deferred state restore on return.
+        return;
+    }
+
     GlStateSnapshot savedState;
     SaveGlState(savedState);
 
@@ -570,21 +606,6 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
     glViewport(0, 0, viewportWidth, viewportHeight);
 
     DrainDecodedModeBackgroundImages();
-
-    const platform::config::ModeConfig* activeModeConfig = nullptr;
-    const platform::config::ModeConfig* sourceModeConfig = nullptr;
-    if (configSnapshot) {
-        activeModeConfig = FindModeConfigByName(*configSnapshot, activeMode);
-
-        std::string sourceModeName = activeMode;
-        if (g_stickyBackgroundPending && !g_stickyBackgroundModeName.empty()) {
-            sourceModeName = g_stickyBackgroundModeName;
-        }
-        sourceModeConfig = FindModeConfigByName(*configSnapshot, sourceModeName);
-        if (!sourceModeConfig) {
-            sourceModeConfig = activeModeConfig;
-        }
-    }
 
     if (activeModeConfig && activeModeConfig->background.selectedMode == "image") {
         EnsureModeBackgroundImageRequested(activeModeConfig->name, activeModeConfig->background);
@@ -644,93 +665,122 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
     g_stickyBackgroundPending = false;
 
     int renderedCount = 0;
-    std::vector<PendingStaticMirrorBorder> pendingStaticBorders;
-    pendingStaticBorders.reserve(g_mirrorConfigs.size());
 
-    // Set up common GL state once before the mirror loop.
-    g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, viewportWidth, viewportHeight);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    g_gl.activeTexture(GL_TEXTURE0);
-    g_gl.useProgram(g_overlayProgram);
-    g_gl.uniform1i(g_overlayLocScreenTexture, 0);
-    g_gl.uniform4f(g_overlayLocSourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
-    g_gl.bindVertexArray(g_overlayVao);
-    g_gl.bindBuffer(GL_ARRAY_BUFFER, g_overlayVbo);
+    // Only set up mirror compositing GL state and run the loop when at least
+    // one mirror has rendered content.  This avoids ~10+ GL calls per frame
+    // (useProgram, uniforms, bindVertexArray, etc.) on frames where mirrors
+    // have no valid output (e.g. invalid image path).
+    if (anyMirrorHasContent) {
+        std::vector<PendingStaticMirrorBorder> pendingStaticBorders;
+        pendingStaticBorders.reserve(g_mirrorConfigs.size());
 
-    for (const auto& mirrorRender : g_mirrorConfigs) {
-        const auto& config = mirrorRender.config;
-        auto it = g_instances.find(config.name);
-        if (it == g_instances.end()) { continue; }
-        const X11MirrorInstance& inst = it->second;
-        if (!inst.hasValidContent || !inst.finalFbo[0] || !inst.finalTexture[0]) { continue; }
-
-        const int outW = inst.finalW;
-        const int outH = inst.finalH;
-        if (outW <= 0 || outH <= 0) { continue; }
-
-        int screenX, screenY;
-        ResolveMirrorAnchorCoords(
-            config.output.relativeTo,
-            config.output.x,
-            config.output.y,
-            outW,
-            outH,
-            viewportWidth,
-            viewportHeight,
-            modeViewportRect,
-            screenX,
-            screenY
-        );
-        const int destX = screenX;
-        const int destY = viewportHeight - screenY - outH;
-
-        int f = inst.frontIdx.load(std::memory_order_acquire);
-
-        glBindTexture(GL_TEXTURE_2D, inst.finalTexture[f]);
-        g_gl.uniform1f(g_overlayLocOpacity, config.opacity);
-
-        float ndcL = (2.0f * static_cast<float>(destX) / static_cast<float>(viewportWidth)) - 1.0f;
-        float ndcR = (2.0f * static_cast<float>(destX + outW) / static_cast<float>(viewportWidth)) - 1.0f;
-        float ndcB = (2.0f * static_cast<float>(destY) / static_cast<float>(viewportHeight)) - 1.0f;
-        float ndcT = (2.0f * static_cast<float>(destY + outH) / static_cast<float>(viewportHeight)) - 1.0f;
-
-        float quadVerts[] = {
-            ndcL, ndcB,  0.0f, 0.0f,
-            ndcR, ndcB,  1.0f, 0.0f,
-            ndcR, ndcT,  1.0f, 1.0f,
-
-            ndcL, ndcB,  0.0f, 0.0f,
-            ndcR, ndcT,  1.0f, 1.0f,
-            ndcL, ndcT,  0.0f, 1.0f,
-        };
-
-        g_gl.bufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quadVerts), quadVerts);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        if (config.border.type == platform::config::MirrorBorderType::Static &&
-            config.border.staticThickness > 0) {
-            pendingStaticBorders.push_back(PendingStaticMirrorBorder{ &config, screenX, screenY, outW, outH, inst.hasFrameContent });
+        GLuint targetFramebuffer = 0;
+        int targetWidth = viewportWidth;
+        int targetHeight = viewportHeight;
+#ifdef __APPLE__
+        if (IsMacMirrorRedirectActiveInternal()) {
+            int redirectWidth = 0;
+            int redirectHeight = 0;
+            if (GetMacMirrorRedirectSizeInternal(redirectWidth, redirectHeight) &&
+                redirectWidth == viewportWidth &&
+                redirectHeight == viewportHeight) {
+                targetFramebuffer = g_macMirrorRedirect.fbo;
+                targetWidth = redirectWidth;
+                targetHeight = redirectHeight;
+            }
         }
-        renderedCount++;
-    }
-    g_gl.bindVertexArray(0);
-    glDisable(GL_BLEND);
+#endif
 
-    if (!pendingStaticBorders.empty()) {
-        g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, viewportWidth, viewportHeight);
+        g_gl.bindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+        glViewport(0, 0, targetWidth, targetHeight);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        for (const PendingStaticMirrorBorder& pending : pendingStaticBorders) {
-            if (!pending.hasFrameContent) {
+        g_gl.activeTexture(GL_TEXTURE0);
+        g_gl.useProgram(g_overlayProgram);
+        g_gl.uniform1i(g_overlayLocScreenTexture, 0);
+        g_gl.uniform4f(g_overlayLocSourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
+        g_gl.bindVertexArray(g_overlayVao);
+        g_gl.bindBuffer(GL_ARRAY_BUFFER, g_overlayVbo);
+
+        for (const auto& mirrorRender : g_mirrorConfigs) {
+            const auto& config = mirrorRender.config;
+            auto it = g_instances.find(config.name);
+            if (it == g_instances.end()) { continue; }
+            const X11MirrorInstance& inst = it->second;
+            if (!inst.hasValidContent || !inst.finalFbo[0] || !inst.finalTexture[0]) { continue; }
+
+            const int outW = inst.finalW;
+            const int outH = inst.finalH;
+            if (outW <= 0 || outH <= 0) { continue; }
+
+            int screenX, screenY;
+            ResolveMirrorAnchorCoords(
+                config.output.relativeTo,
+                config.output.x,
+                config.output.y,
+                outW,
+                outH,
+                viewportWidth,
+                viewportHeight,
+                modeViewportRect,
+                screenX,
+                screenY
+            );
+            const int destX = screenX;
+            const int destY = targetHeight - screenY - outH;
+
+            int f = inst.frontIdx.load(std::memory_order_acquire);
+            if (!inst.finalTexture[f]) {
                 continue;
             }
-            RenderStaticMirrorBorderOverlay(viewportWidth, viewportHeight, pending);
+
+            glBindTexture(GL_TEXTURE_2D, inst.finalTexture[f]);
+            g_gl.uniform1f(g_overlayLocOpacity, config.opacity);
+
+            float ndcL = (2.0f * static_cast<float>(destX) / static_cast<float>(targetWidth)) - 1.0f;
+            float ndcR = (2.0f * static_cast<float>(destX + outW) / static_cast<float>(targetWidth)) - 1.0f;
+            float ndcB = (2.0f * static_cast<float>(destY) / static_cast<float>(targetHeight)) - 1.0f;
+            float ndcT = (2.0f * static_cast<float>(destY + outH) / static_cast<float>(targetHeight)) - 1.0f;
+
+            float quadVerts[] = {
+                ndcL, ndcB,  0.0f, 0.0f,
+                ndcR, ndcB,  1.0f, 0.0f,
+                ndcR, ndcT,  1.0f, 1.0f,
+
+                ndcL, ndcB,  0.0f, 0.0f,
+                ndcR, ndcT,  1.0f, 1.0f,
+                ndcL, ndcT,  0.0f, 1.0f,
+            };
+
+            g_gl.bufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quadVerts), quadVerts);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            if (config.border.type == platform::config::MirrorBorderType::Static &&
+                config.border.staticThickness > 0) {
+                pendingStaticBorders.push_back(PendingStaticMirrorBorder{ &config, screenX, screenY, outW, outH, inst.hasFrameContent });
+            }
+            renderedCount++;
         }
         g_gl.bindVertexArray(0);
         glDisable(GL_BLEND);
+
+        if (!pendingStaticBorders.empty()) {
+            g_gl.bindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+            glViewport(0, 0, targetWidth, targetHeight);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            for (const PendingStaticMirrorBorder& pending : pendingStaticBorders) {
+                if (!pending.hasFrameContent) {
+                    continue;
+                }
+                RenderStaticMirrorBorderOverlay(targetWidth, targetHeight, pending);
+            }
+            g_gl.bindVertexArray(0);
+            glDisable(GL_BLEND);
+        }
     }
 
     if (IsDebugEnabled()) {
@@ -740,7 +790,6 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
                     viewportWidth, viewportHeight, renderedCount);
         }
     }
-
     RestoreGlState(savedState);
 }
 
@@ -764,6 +813,7 @@ void ShutdownGlxMirrorPipeline() {
         if (g_overlayVao) { g_gl.deleteVertexArrays(1, &g_overlayVao); g_overlayVao = 0; }
         if (g_overlayVbo) { g_gl.deleteBuffers(1, &g_overlayVbo); g_overlayVbo = 0; }
         if (g_overlayProgram) { g_gl.deleteProgram(g_overlayProgram); g_overlayProgram = 0; }
+        DestroyMacMirrorRedirectTargetInternal();
         if (g_solidColorProgram) { g_gl.deleteProgram(g_solidColorProgram); g_solidColorProgram = 0; }
         if (g_gradientProgram) { g_gl.deleteProgram(g_gradientProgram); g_gradientProgram = 0; }
         if (g_overlayStaticBorderProgram) { g_gl.deleteProgram(g_overlayStaticBorderProgram); g_overlayStaticBorderProgram = 0; }
@@ -773,9 +823,11 @@ void ShutdownGlxMirrorPipeline() {
         g_modeBackgroundImages.clear();
         g_gameFrameTexture = 0;
         g_gameFrameFbo = 0;
+        g_macMirrorRedirect = MacMirrorRedirectState{};
     }
     g_gameFrameW = 0;
     g_gameFrameH = 0;
+    g_inlineRoundRobinIdx = 0;
     g_mirrorConfigs.clear();
     g_configsLoaded = false;
     g_lastOverlayViewportWidth = 0;
@@ -786,6 +838,7 @@ void ShutdownGlxMirrorPipeline() {
     g_solidColorProgramReady = false;
     g_gradientProgramReady = false;
     g_overlayStaticBorderProgramReady = false;
+    g_macMirrorRedirect = MacMirrorRedirectState{};
     g_solidColorLocColor = -1;
     g_gradientLocs = GradientShaderLocs{};
     g_overlayStaticBorderLocs = StaticBorderShaderLocs{};
@@ -842,6 +895,7 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
     g_gameFrameFbo = 0;
     g_gameFrameW = 0;
     g_gameFrameH = 0;
+    g_inlineRoundRobinIdx = 0;
     g_mirrorConfigs.clear();
     g_configsLoaded = false;
     g_lastOverlayViewportWidth = 0;
@@ -851,6 +905,7 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
     g_overlayVao = 0;
     g_overlayVbo = 0;
     g_overlayProgram = 0;
+    g_macMirrorRedirect = MacMirrorRedirectState{};
     g_solidColorProgram = 0;
     g_gradientProgram = 0;
     g_overlayStaticBorderProgram = 0;
@@ -1012,7 +1067,6 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
     g_gl.useProgram(g_overlayProgram);
     g_gl.uniform1i(g_overlayLocScreenTexture, 0);
     g_gl.uniform1f(g_overlayLocOpacity, 1.0f);
-
     float sx = (float)srcLeft / g_gameFrameW;
     float sy = (float)srcBottom / g_gameFrameH;
     float sw = (float)(srcRight - srcLeft) / g_gameFrameW;

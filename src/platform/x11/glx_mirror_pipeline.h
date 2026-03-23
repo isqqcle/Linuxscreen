@@ -23,12 +23,17 @@ MirrorModeState& GetMirrorModeState();
 void InitializeMirrorPipelineFromConfig();
 
 GLuint GetOverscanFboId();
+GLuint GetMacMirrorRedirectFboId();
+bool GetMacMirrorRedirectSize(int& width, int& height);
 
 bool IsOverscanActive();
+bool IsMacMirrorRedirectActive();
 
 bool IsOverscanFboRendered();
+bool IsMacMirrorRedirectRendered();
 
 void MarkOverscanFboRendered();
+void MarkMacMirrorRedirectRendered();
 
 struct OverscanDimensions {
     int totalWidth = 0;
@@ -44,6 +49,7 @@ struct OverscanDimensions {
 OverscanDimensions GetOverscanDimensions();
 
 bool UpdateOverscanState(int windowWidth, int windowHeight);
+bool UpdateMacMirrorRedirectState(int windowWidth, int windowHeight);
 
 void SetViewportPlacementBypass(bool bypass);
 
@@ -53,5 +59,12 @@ void BlitOverscanToWindow(int dstX,
                           int dstHeight,
                           int surfaceWidth,
                           int surfaceHeight);
+
+void BlitMacMirrorRedirectToWindow(int dstX,
+                                   int dstY,
+                                   int dstWidth,
+                                   int dstHeight,
+                                   int surfaceWidth,
+                                   int surfaceHeight);
 
 } // namespace platform::x11

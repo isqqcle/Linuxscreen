@@ -132,6 +132,7 @@ void SubmitMirrorPipelineCapture() {
     }
 
     platform::x11::UpdateOverscanState(containerW, containerH);
+    platform::x11::UpdateMacMirrorRedirectState(containerW, containerH);
 
     g_lastSwapViewportX.store(viewport[0], std::memory_order_relaxed);
     g_lastSwapViewportY.store(viewport[1], std::memory_order_relaxed);
@@ -170,13 +171,49 @@ void BlitOverscanAndPrepareWindow() {
                                         surfaceHeight);
 }
 
+void BlitMacMirrorRedirectAndPrepareWindow() {
+    if (!platform::x11::IsMacMirrorRedirectActive() ||
+        !platform::x11::IsMacMirrorRedirectRendered()) {
+        return;
+    }
+
+    int redirectWidth = 0;
+    int redirectHeight = 0;
+    if (!platform::x11::GetMacMirrorRedirectSize(redirectWidth, redirectHeight)) {
+        return;
+    }
+
+    int dstX = 0;
+    int dstY = 0;
+    int surfaceWidth = redirectWidth;
+    int surfaceHeight = redirectHeight;
+
+    PlacementTransform transform;
+    if (ResolvePlacementTransform(transform)) {
+        dstX = transform.framebufferBottomLeftX;
+        dstY = transform.framebufferBottomLeftY;
+        surfaceWidth = transform.framebufferWidth;
+        surfaceHeight = transform.framebufferHeight;
+    }
+
+    platform::x11::BlitMacMirrorRedirectToWindow(dstX,
+                                                 dstY,
+                                                 redirectWidth,
+                                                 redirectHeight,
+                                                 surfaceWidth,
+                                                 surfaceHeight);
+}
+
 void PrepareDefaultFramebufferForSwap() {
     GlBindFramebufferFn bindFn = GetRealGlBindFramebuffer();
     if (!bindFn) { return; }
 
+    // One bind is enough here.
+    if (platform::x11::IsMacMirrorRedirectActive() &&
+        platform::x11::IsMacMirrorRedirectRendered()) {
+        return;
+    }
     bindFn(GL_FRAMEBUFFER, 0);
-    bindFn(GL_DRAW_FRAMEBUFFER, 0);
-    bindFn(GL_READ_FRAMEBUFFER, 0);
 }
 
 namespace platform::x11 {
@@ -229,9 +266,12 @@ CGLError my_CGLFlushDrawable(CGLContextObj ctx) {
     PumpManagedRepeatScheduler(window);
     ViewportPlacementBypassGuard bypassGuard(true);
     SubmitMirrorPipelineCapture();
-    BlitOverscanAndPrepareWindow();
-    PrepareDefaultFramebufferForSwap();
+    if (!platform::x11::IsMacMirrorRedirectActive()) {
+        BlitOverscanAndPrepareWindow();
+    }
     RenderMirrorPipelineOverlay();
+    BlitMacMirrorRedirectAndPrepareWindow();
+    PrepareDefaultFramebufferForSwap();
     RenderGuiOverlay(window, "CGLFlushDrawable");
     RenderRebindToggleIndicatorOverlay();
 
@@ -385,7 +425,8 @@ bool IsMainFramebufferDrawTarget() {
     }
 
     if (!platform::x11::IsOverscanActive()) {
-        return false;
+        const GLuint redirectFbo = platform::x11::GetMacMirrorRedirectFboId();
+        return redirectFbo != 0 && static_cast<GLuint>(drawFramebuffer) == redirectFbo;
     }
 
     const GLuint overscanFbo = platform::x11::GetOverscanFboId();
@@ -469,6 +510,17 @@ extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer) {
             realFn(target, overscanFbo);
             if (target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER) {
                 platform::x11::MarkOverscanFboRendered();
+            }
+            return;
+        }
+    }
+
+    if (framebuffer == 0 && platform::x11::IsMacMirrorRedirectActive()) {
+        const GLuint redirectFbo = platform::x11::GetMacMirrorRedirectFboId();
+        if (redirectFbo != 0) {
+            realFn(target, redirectFbo);
+            if (target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER) {
+                platform::x11::MarkMacMirrorRedirectRendered();
             }
             return;
         }

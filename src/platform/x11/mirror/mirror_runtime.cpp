@@ -734,6 +734,11 @@ GLuint g_gameFrameFbo = 0;
 int g_gameFrameW = 0;
 int g_gameFrameH = 0;
 
+// Round-robin index for macOS inline path staggered mirror processing.
+// When multiple mirrors are active, only 1 is processed per frame to avoid
+// GPU bandwidth saturation that causes non-linear FPS degradation.
+int g_inlineRoundRobinIdx = 0;
+
 // Overscan FBO state
 GLuint g_overscanFbo = 0;
 GLuint g_overscanColorTex = 0;
@@ -764,6 +769,19 @@ static GLint g_overlayLocScreenTexture = -1;
 static GLint g_overlayLocSourceRect = -1;
 static GLint g_overlayLocOpacity = -1;
 static bool g_overlayProgramReady = false;
+
+struct MacMirrorRedirectState {
+    GLuint fbo = 0;
+    GLuint colorTexture = 0;
+    GLuint depthStencilRb = 0;
+    int width = 0;
+    int height = 0;
+    bool active = false;
+    bool renderedThisFrame = false;
+};
+
+static MacMirrorRedirectState g_macMirrorRedirect;
+
 static GLuint g_solidColorProgram = 0;
 static GLint g_solidColorLocColor = -1;
 static bool g_solidColorProgramReady = false;

@@ -13,6 +13,7 @@ void RefreshMirrorConfigsForActiveMode(int width,
 
     g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
     ResetAllMirrorInstanceCaptureTimers();
+    g_inlineRoundRobinIdx = 0;
     g_currentActiveMode = activeMode;
     if (debugPrefix && IsDebugEnabled()) {
         fprintf(stderr,
@@ -83,7 +84,9 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         }
     }
 
-    if (g_mirrorConfigs.empty() && g_currentActiveMode != "EyeZoom") { return; }
+    if (g_mirrorConfigs.empty() && g_currentActiveMode != "EyeZoom") {
+        return;
+    }
 
     bool requiresGameFramebuffer = (g_currentActiveMode == "EyeZoom");
     if (!requiresGameFramebuffer) {
@@ -95,7 +98,6 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
             }
         }
     }
-
     const std::uint64_t generation = GetSharedGlxContextGeneration();
     if (generation != 0 && generation != g_lastGeneration.load(std::memory_order_acquire)) {
 #ifdef __APPLE__
@@ -127,6 +129,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         }
         g_gameFrameW = 0;
         g_gameFrameH = 0;
+        g_inlineRoundRobinIdx = 0;
         g_configsLoaded = false;
 
         if (IsDebugEnabled()) {
@@ -168,6 +171,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     }
 
     const bool overscan = IsOverscanActiveInternal() && g_overscanFboRendered;
+    const bool macRedirect = IsMacMirrorRedirectActiveInternal() && IsMacMirrorRedirectRenderedInternal();
     OverscanDimensions overscanSnap = overscan ? g_overscanDims : OverscanDimensions{};
 
     GLint currentViewport[4] = { 0, 0, 0, 0 };
@@ -185,8 +189,16 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         containerHeight = height;
     }
 
-    const int captureW = overscan ? g_overscanDims.totalWidth : containerWidth;
-    const int captureH = overscan ? g_overscanDims.totalHeight : containerHeight;
+    int redirectWidth = 0;
+    int redirectHeight = 0;
+    if (macRedirect) {
+        (void)GetMacMirrorRedirectSizeInternal(redirectWidth, redirectHeight);
+    }
+
+    const int captureW = overscan ? g_overscanDims.totalWidth :
+                       (macRedirect && redirectWidth > 0 ? redirectWidth : containerWidth);
+    const int captureH = overscan ? g_overscanDims.totalHeight :
+                       (macRedirect && redirectHeight > 0 ? redirectHeight : containerHeight);
 
     int copyW = width;
     int copyH = height;
@@ -197,6 +209,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     if (requiresGameFramebuffer) {
         // Ensure game frame texture sized to capture dimensions
         EnsureGameFrameTexture(captureW, captureH);
+
         copyW = std::min(captureW, g_gameFrameW);
         copyH = std::min(captureH, g_gameFrameH);
         if (copyW != captureW || copyH != captureH) {
@@ -216,10 +229,14 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
         glBindTexture(GL_TEXTURE_2D, g_gameFrameTexture);
 
-        // Read from overscan FBO if active, otherwise from default framebuffer (FBO 0)
-        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, overscan ? g_overscanFbo : 0);
+        // Read from overscan, redirect, or the default framebuffer.
+        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER,
+                             overscan ? g_overscanFbo :
+                             (macRedirect ? g_macMirrorRedirect.fbo : 0));
 
         if (overscan) {
+            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
+        } else if (macRedirect) {
             glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
         } else {
             // Mirror capture coordinates are resolved in full-container space. Copy the
@@ -289,7 +306,6 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         slot.overscanWindowHeight = overscanSnap.windowHeight;
         slot.overscanMarginLeft = overscanSnap.marginLeft;
         slot.overscanMarginBottom = overscanSnap.marginBottom;
-
         DrainStaleFenceQueue();
         if (!InitMirrorShaders()) {
             fprintf(stderr, "[Linuxscreen][mirror] Inline path failed to initialize shaders\n");
