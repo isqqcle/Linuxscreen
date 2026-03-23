@@ -7,6 +7,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#import <objc/message.h>
 
 #include <algorithm>
 #include <atomic>
@@ -58,6 +59,11 @@ void HandleStreamStopForKeyFromObjC(const std::string& key, NSError* error);
 
 namespace platform::x11 {
 namespace {
+
+template <typename Fn>
+Fn ObjCMessageSend() {
+    return reinterpret_cast<Fn>(objc_msgSend);
+}
 
 struct SourceRecord {
     WindowCaptureRequest request;
@@ -162,8 +168,8 @@ AvailableWindow ToAvailableWindow(SCWindow* window) {
     result.width = std::max(0, static_cast<int>(std::lround(window.frame.size.width)));
     result.height = std::max(0, static_cast<int>(std::lround(window.frame.size.height)));
     result.onScreen = window.isOnScreen;
-    if (@available(macOS 13.1, *)) {
-        result.active = window.isActive;
+    if ([(id)window respondsToSelector:@selector(isActive)]) {
+        result.active = ObjCMessageSend<BOOL (*)(id, SEL)>()(window, @selector(isActive));
     }
 
     SCRunningApplication* application = window.owningApplication;
@@ -505,9 +511,12 @@ void StartRecordForWindowOnManagerQueue(const std::string& key, SourceRecord& re
     const int captureFps = std::clamp(record.request.fps, 1, 240);
     int configuredWidth = std::max(1, static_cast<int>(std::lround(window.frame.size.width)));
     int configuredHeight = std::max(1, static_cast<int>(std::lround(window.frame.size.height)));
-    if (@available(macOS 14.0, *)) {
-        const int scaledWidth = std::max(1, static_cast<int>(std::lround(filter.contentRect.size.width * filter.pointPixelScale)));
-        const int scaledHeight = std::max(1, static_cast<int>(std::lround(filter.contentRect.size.height * filter.pointPixelScale)));
+    if ([(id)filter respondsToSelector:@selector(contentRect)] &&
+        [(id)filter respondsToSelector:@selector(pointPixelScale)]) {
+        const CGRect contentRect = ObjCMessageSend<CGRect (*)(id, SEL)>()(filter, @selector(contentRect));
+        const CGFloat pointPixelScale = ObjCMessageSend<CGFloat (*)(id, SEL)>()(filter, @selector(pointPixelScale));
+        const int scaledWidth = std::max(1, static_cast<int>(std::lround(contentRect.size.width * pointPixelScale)));
+        const int scaledHeight = std::max(1, static_cast<int>(std::lround(contentRect.size.height * pointPixelScale)));
         configuredWidth = scaledWidth;
         configuredHeight = scaledHeight;
     }

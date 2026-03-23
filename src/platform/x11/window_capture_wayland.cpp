@@ -199,8 +199,10 @@ const char* DescribeSpaDataType(std::uint32_t dataType) {
         return "DmaBuf";
     case SPA_DATA_MemId:
         return "MemId";
+#ifdef SPA_DATA_SyncObj
     case SPA_DATA_SyncObj:
         return "SyncObj";
+#endif
     default:
         return "Unknown";
     }
