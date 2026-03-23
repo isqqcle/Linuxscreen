@@ -16,6 +16,7 @@ void SubmitGlxMirrorCapture(int width, int height);
 void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight);
 void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight);
 void ShutdownGlxMirrorPipeline();
+void ShutdownGlxMirrorThreadsForProcessExit();
 void ShutdownGlxMirrorPipelineForProcessExit();
 
 MirrorModeState& GetMirrorModeState();

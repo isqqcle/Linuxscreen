@@ -1,3 +1,5 @@
+std::atomic<bool> g_macosEarlyShutdownCompleted{ false };
+
 bool RemoveWindowCallbacksIfEmpty(GLFWwindow* window) {
     if (!window) { return false; }
 
@@ -19,6 +21,13 @@ void MaybeShutdownMirrorPipelineAfterCallbackClear(bool callbackSet, bool remove
     if (!removedWindowCallbacks) { return; }
     if (!platform::x11::IsGlxMirrorPipelineEnabled()) { return; }
 #ifdef __APPLE__
+    if (g_macosEarlyShutdownCompleted.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    LogAlways("macOS early shutdown starting after GLFW callback teardown");
+    platform::config::StopGameStateMonitor();
+    platform::config::ShutdownConfigSaveThread();
+    platform::x11::ShutdownGlxMirrorThreadsForProcessExit();
     return;
 #endif
     platform::x11::ShutdownGlxMirrorPipeline();

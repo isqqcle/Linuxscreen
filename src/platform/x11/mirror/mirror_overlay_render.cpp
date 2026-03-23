@@ -847,6 +847,12 @@ void ShutdownGlxMirrorPipeline() {
     g_lastRenderedBackgroundActiveMode.clear();
 }
 
+void ShutdownGlxMirrorThreadsForProcessExit() {
+    StopMirrorWorker();
+    StopBackgroundDecodeWorker();
+    StopMirrorImageDecodeWorker();
+}
+
 void ShutdownGlxMirrorPipelineForProcessExit() {
     ShutdownWindowCaptureForProcessExit();
     g_stopWorker.store(true, std::memory_order_release);
