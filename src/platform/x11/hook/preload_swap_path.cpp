@@ -188,14 +188,6 @@ void BlitMacMirrorRedirectAndPrepareWindow() {
     int surfaceWidth = redirectWidth;
     int surfaceHeight = redirectHeight;
 
-    PlacementTransform transform;
-    if (ResolvePlacementTransform(transform)) {
-        dstX = transform.framebufferBottomLeftX;
-        dstY = transform.framebufferBottomLeftY;
-        surfaceWidth = transform.framebufferWidth;
-        surfaceHeight = transform.framebufferHeight;
-    }
-
     platform::x11::BlitMacMirrorRedirectToWindow(dstX,
                                                  dstY,
                                                  redirectWidth,

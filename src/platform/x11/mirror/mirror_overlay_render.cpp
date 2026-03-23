@@ -599,11 +599,28 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         return;
     }
 
+    GLuint targetFramebuffer = 0;
+    int targetWidth = viewportWidth;
+    int targetHeight = viewportHeight;
+#ifdef __APPLE__
+    if (IsMacMirrorRedirectActiveInternal()) {
+        int redirectWidth = 0;
+        int redirectHeight = 0;
+        if (GetMacMirrorRedirectSizeInternal(redirectWidth, redirectHeight) &&
+            redirectWidth == viewportWidth &&
+            redirectHeight == viewportHeight) {
+            targetFramebuffer = g_macMirrorRedirect.fbo;
+            targetWidth = redirectWidth;
+            targetHeight = redirectHeight;
+        }
+    }
+#endif
+
     ModeViewportRect modeViewportRect;
     (void)ResolveModeViewportRect(viewportWidth, viewportHeight, modeViewportRect);
 
-    g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, viewportWidth, viewportHeight);
+    g_gl.bindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+    glViewport(0, 0, targetWidth, targetHeight);
 
     DrainDecodedModeBackgroundImages();
 
@@ -673,23 +690,6 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
     if (anyMirrorHasContent) {
         std::vector<PendingStaticMirrorBorder> pendingStaticBorders;
         pendingStaticBorders.reserve(g_mirrorConfigs.size());
-
-        GLuint targetFramebuffer = 0;
-        int targetWidth = viewportWidth;
-        int targetHeight = viewportHeight;
-#ifdef __APPLE__
-        if (IsMacMirrorRedirectActiveInternal()) {
-            int redirectWidth = 0;
-            int redirectHeight = 0;
-            if (GetMacMirrorRedirectSizeInternal(redirectWidth, redirectHeight) &&
-                redirectWidth == viewportWidth &&
-                redirectHeight == viewportHeight) {
-                targetFramebuffer = g_macMirrorRedirect.fbo;
-                targetWidth = redirectWidth;
-                targetHeight = redirectHeight;
-            }
-        }
-#endif
 
         g_gl.bindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
         glViewport(0, 0, targetWidth, targetHeight);
