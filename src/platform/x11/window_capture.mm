@@ -517,8 +517,10 @@ void StartRecordForWindowOnManagerQueue(const std::string& key, SourceRecord& re
         const CGFloat pointPixelScale = ObjCMessageSend<CGFloat (*)(id, SEL)>()(filter, @selector(pointPixelScale));
         const int scaledWidth = std::max(1, static_cast<int>(std::lround(contentRect.size.width * pointPixelScale)));
         const int scaledHeight = std::max(1, static_cast<int>(std::lround(contentRect.size.height * pointPixelScale)));
-        configuredWidth = scaledWidth;
-        configuredHeight = scaledHeight;
+        if (scaledWidth > 1 && scaledHeight > 1) {
+            configuredWidth = scaledWidth;
+            configuredHeight = scaledHeight;
+        }
     }
 
     SCStreamConfiguration* configuration = [[SCStreamConfiguration alloc] init];

@@ -32,9 +32,49 @@ GLuint CreateRgbaTexture(int width, int height, const unsigned char* pixels) {
         return 0;
     }
 
+    GLint prevTextureBinding = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTextureBinding);
+    GLint prevUnpackAlignment = 0;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevUnpackAlignment);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#ifdef GL_UNPACK_ROW_LENGTH
+    GLint prevUnpackRowLength = 0;
+    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &prevUnpackRowLength);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+#endif
+#ifdef GL_UNPACK_SKIP_ROWS
+    GLint prevUnpackSkipRows = 0;
+    glGetIntegerv(GL_UNPACK_SKIP_ROWS, &prevUnpackSkipRows);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+#ifdef GL_UNPACK_SKIP_PIXELS
+    GLint prevUnpackSkipPixels = 0;
+    glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &prevUnpackSkipPixels);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+    GLint prevUnpackBuffer = 0;
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &prevUnpackBuffer);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#endif
+
     GLuint texture = 0;
     glGenTextures(1, &texture);
     if (texture == 0) {
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpackBuffer));
+#endif
+#ifdef GL_UNPACK_SKIP_PIXELS
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, prevUnpackSkipPixels);
+#endif
+#ifdef GL_UNPACK_SKIP_ROWS
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, prevUnpackSkipRows);
+#endif
+#ifdef GL_UNPACK_ROW_LENGTH
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, prevUnpackRowLength);
+#endif
+        glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpackAlignment);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTextureBinding));
         return 0;
     }
 
@@ -44,7 +84,20 @@ GLuint CreateRgbaTexture(int width, int height, const unsigned char* pixels) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glBindTexture(GL_TEXTURE_2D, 0);
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpackBuffer));
+#endif
+#ifdef GL_UNPACK_SKIP_PIXELS
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, prevUnpackSkipPixels);
+#endif
+#ifdef GL_UNPACK_SKIP_ROWS
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, prevUnpackSkipRows);
+#endif
+#ifdef GL_UNPACK_ROW_LENGTH
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, prevUnpackRowLength);
+#endif
+    glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpackAlignment);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTextureBinding));
     return texture;
 }
 
