@@ -94,6 +94,14 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
 
 __attribute__((destructor)) static void LinuxscreenX11PreloadShutdown() {
     LogAlways("preload shutdown starting (destructor context)");
+
+#ifdef __APPLE__
+    // Orderly cleanup seems to be unsafe on macOS? JVM's exit leaves global
+    // mutexes in a destroyed state, and locking them crashes the process.
+    // Need to look into this more :)
+    return;
+#endif
+
     platform::config::StopGameStateMonitor();
     platform::config::ShutdownConfigSaveThread();
 
