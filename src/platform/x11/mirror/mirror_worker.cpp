@@ -187,13 +187,13 @@ bool ResolveOutputContainerSizeWorker(const platform::config::MirrorRenderConfig
         return true;
     }
 
-    auto configSnapshot = g_modeState.GetConfigSnapshot();
+    auto configSnapshot = GetMirrorModeState().GetConfigSnapshot();
     if (!configSnapshot) {
         return true;
     }
 
     const platform::config::ModeConfig* activeMode =
-        FindModeConfigByName(*configSnapshot, g_modeState.GetActiveModeName());
+        FindModeConfigByName(*configSnapshot, GetMirrorModeState().GetActiveModeName());
     if (!activeMode) {
         return true;
     }

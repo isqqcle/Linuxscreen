@@ -11,7 +11,7 @@ void RefreshMirrorConfigsForActiveMode(int width,
         ApplyModeSwitchWithResolvedContainer(activeMode, *config, width, height);
     }
 
-    g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+    g_mirrorConfigs = GetMirrorModeState().GetActiveMirrorRenderList();
     ResetAllMirrorInstanceCaptureTimers();
     g_inlineRoundRobinIdx = 0;
     g_currentActiveMode = activeMode;
@@ -30,7 +30,7 @@ void EnsureMirrorConfigsLoaded(int width, int height) {
         return;
     }
 
-    RefreshMirrorConfigsForActiveMode(width, height, g_modeState.GetActiveModeName(), nullptr);
+    RefreshMirrorConfigsForActiveMode(width, height, GetMirrorModeState().GetActiveModeName(), nullptr);
     g_configsLoaded = true;
     if (IsDebugEnabled()) {
         fprintf(stderr, "[Linuxscreen][mirror] Loaded %zu mirror config(s)\n", g_mirrorConfigs.size());
@@ -74,7 +74,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
 
     // Check for mode switches outside of initial load
     if (g_configsLoaded) {
-        std::string activeMode = g_modeState.GetActiveModeName();
+        std::string activeMode = GetMirrorModeState().GetActiveModeName();
         if (activeMode != g_currentActiveMode) {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             RefreshMirrorConfigsForActiveMode(width,

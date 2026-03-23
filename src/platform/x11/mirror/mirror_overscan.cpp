@@ -11,7 +11,7 @@ static bool ResolveOverscanTargetForActiveMode(int containerWidth,
         return false;
     }
 
-    if (!g_modeState.GetActiveModeTargetDimensions(containerWidth, containerHeight, outTargetWidth, outTargetHeight)) {
+    if (!GetMirrorModeState().GetActiveModeTargetDimensions(containerWidth, containerHeight, outTargetWidth, outTargetHeight)) {
         return false;
     }
 

@@ -724,7 +724,6 @@ std::unordered_map<std::string, WindowCaptureSourceTexture> g_windowCaptureSourc
 MirrorShaderPrograms g_shaders;
 std::vector<ResolvedMirrorRender> g_mirrorConfigs;
 bool g_configsLoaded = false;
-MirrorModeState g_modeState;
 std::string g_currentActiveMode;
 int g_lastOverlayViewportWidth = 0;
 int g_lastOverlayViewportHeight = 0;
@@ -1017,12 +1016,12 @@ bool ResolveModeViewportRect(int containerWidth, int containerHeight, ModeViewpo
         return false;
     }
 
-    auto config = g_modeState.GetConfigSnapshot();
+    auto config = GetMirrorModeState().GetConfigSnapshot();
     if (!config) {
         return false;
     }
 
-    const std::string activeMode = g_modeState.GetActiveModeName();
+    const std::string activeMode = GetMirrorModeState().GetActiveModeName();
     if (activeMode.empty()) {
         return false;
     }
@@ -1141,7 +1140,7 @@ void ApplyModeSwitchWithResolvedContainer(const std::string& modeName,
     int resolvedWidth = fallbackWidth;
     int resolvedHeight = fallbackHeight;
     ResolveMirrorConfigContainerSize(fallbackWidth, fallbackHeight, resolvedWidth, resolvedHeight);
-    g_modeState.ApplyModeSwitch(modeName, config, resolvedWidth, resolvedHeight);
+    GetMirrorModeState().ApplyModeSwitch(modeName, config, resolvedWidth, resolvedHeight);
 }
 
 void ResolveEyeZoomAspectBasis(const platform::config::EyeZoomConfig& zoomConfig, int& outWidth, int& outHeight) {

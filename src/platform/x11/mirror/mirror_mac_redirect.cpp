@@ -113,7 +113,7 @@ static bool ShouldActivateMacMirrorRedirectInternal(int windowWidth, int windowH
     if (windowWidth <= 0 || windowHeight <= 0) {
         return false;
     }
-    return !g_modeState.GetActiveMirrorRenderList().empty();
+    return !GetMirrorModeState().GetActiveMirrorRenderList().empty();
 #else
     (void)windowWidth;
     (void)windowHeight;

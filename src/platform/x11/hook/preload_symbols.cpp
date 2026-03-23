@@ -18,6 +18,9 @@ void MaybeShutdownMirrorPipelineAfterCallbackClear(bool callbackSet, bool remove
     if (callbackSet) { return; }
     if (!removedWindowCallbacks) { return; }
     if (!platform::x11::IsGlxMirrorPipelineEnabled()) { return; }
+#ifdef __APPLE__
+    return;
+#endif
     platform::x11::ShutdownGlxMirrorPipeline();
 }
 

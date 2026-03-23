@@ -458,13 +458,13 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         g_lastConfigVersion.store(currentVersion, std::memory_order_relaxed);
 
         // Re-apply current mode to pick up mirror definition changes
-        const std::string refreshMode = g_modeState.GetActiveModeName();
+        const std::string refreshMode = GetMirrorModeState().GetActiveModeName();
         if (!refreshMode.empty() && configSnapshot) {
             ApplyModeSwitchWithResolvedContainer(refreshMode, *configSnapshot, viewportWidth, viewportHeight);
         }
 
         // Refresh mirror configs from mode state
-        g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+        g_mirrorConfigs = GetMirrorModeState().GetActiveMirrorRenderList();
         ResetAllMirrorInstanceCaptureTimers();
         g_currentActiveMode = refreshMode;
 
@@ -477,13 +477,13 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
     }
 
     // Check for mode changes and refresh mirror configs
-    std::string activeMode = g_modeState.GetActiveModeName();
+    std::string activeMode = GetMirrorModeState().GetActiveModeName();
     if (activeMode != g_currentActiveMode) {
         g_currentActiveMode = activeMode;
         if (!activeMode.empty() && configSnapshot) {
             ApplyModeSwitchWithResolvedContainer(activeMode, *configSnapshot, viewportWidth, viewportHeight);
         }
-        g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+        g_mirrorConfigs = GetMirrorModeState().GetActiveMirrorRenderList();
         ResetAllMirrorInstanceCaptureTimers();
         if (IsDebugEnabled()) {
             fprintf(stderr, "[Linuxscreen][mirror] Mode changed to '%s', loaded %zu mirror(s)\n",
@@ -497,7 +497,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         g_lastOverlayViewportHeight = viewportHeight;
         if (!activeMode.empty() && configSnapshot) {
             ApplyModeSwitchWithResolvedContainer(activeMode, *configSnapshot, viewportWidth, viewportHeight);
-            g_mirrorConfigs = g_modeState.GetActiveMirrorRenderList();
+            g_mirrorConfigs = GetMirrorModeState().GetActiveMirrorRenderList();
             ResetAllMirrorInstanceCaptureTimers();
             if (IsDebugEnabled()) {
                 fprintf(stderr,
@@ -923,7 +923,8 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
 }
 
 MirrorModeState& GetMirrorModeState() {
-    return g_modeState;
+    static MirrorModeState modeState;
+    return modeState;
 }
 
 void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
@@ -933,7 +934,7 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
 
     std::lock_guard<std::mutex> lock(g_stateMutex);
     
-    std::string activeMode = g_modeState.GetActiveModeName();
+    std::string activeMode = GetMirrorModeState().GetActiveModeName();
 
     if (activeMode != "EyeZoom") {
         return;
