@@ -387,6 +387,32 @@ bool IsSyntheticRebindStateEmpty(const SyntheticRebindKeyState& state) {
            state.targetSuppressedKeys.empty() && state.suppressedKeyRefCount.empty();
 }
 
+int GetEffectiveNativeMods(GLFWwindow* window, int nativeMods) {
+    if (!window) {
+        return nativeMods;
+    }
+
+    std::lock_guard<std::mutex> lock(g_syntheticRebindKeyMutex);
+    const auto windowIt = g_syntheticRebindKeyStates.find(window);
+    if (windowIt == g_syntheticRebindKeyStates.end()) {
+        return nativeMods;
+    }
+
+    const SyntheticRebindKeyState& state = windowIt->second;
+    for (const auto& targetEntry : state.targetPressCount) {
+        if (targetEntry.second <= 0) {
+            continue;
+        }
+
+        const platform::input::VkCode targetVk = platform::input::GlfwKeyToVk(targetEntry.first, 0, 0);
+        if (platform::input::IsShiftVariant(targetVk)) {
+            nativeMods |= static_cast<int>(platform::input::GlfwMod::Shift);
+        }
+    }
+
+    return nativeMods;
+}
+
 void DecrementSyntheticSuppressedKeyRefCount(SyntheticRebindKeyState& state, int key) {
     auto it = state.suppressedKeyRefCount.find(key);
     if (it == state.suppressedKeyRefCount.end()) {
@@ -878,9 +904,14 @@ std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::
     return std::nullopt;
 }
 
-bool TryResolveRebindOutputCodepoint(const ResolvedRebindOutput& rebindOutput, int nativeMods, std::uint32_t& outCodepoint);
+bool TryResolveRebindOutputCodepoint(GLFWwindow* window,
+                                     const ResolvedRebindOutput& rebindOutput,
+                                     int nativeMods,
+                                     std::uint32_t& outCodepoint);
 
-void QueuePendingCharRemap(const ResolvedRebindOutput& rebindOutput, const platform::input::InputEvent& event) {
+void QueuePendingCharRemap(GLFWwindow* window,
+                          const ResolvedRebindOutput& rebindOutput,
+                          const platform::input::InputEvent& event) {
     if (event.type != platform::input::InputEventType::Key) {
         return;
     }
@@ -896,7 +927,7 @@ void QueuePendingCharRemap(const ResolvedRebindOutput& rebindOutput, const platf
     g_pendingCharRemaps.emplace_back();
     PendingCharRemap& pending = g_pendingCharRemaps.back();
     pending.sequence = g_pendingCharRemapSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
-    pending.consume = !TryResolveRebindOutputCodepoint(rebindOutput, event.nativeMods, pending.outputCodepoint);
+    pending.consume = !TryResolveRebindOutputCodepoint(window, rebindOutput, event.nativeMods, pending.outputCodepoint);
     while (g_pendingCharRemaps.size() > kMaxPendingCharRemaps) {
         g_pendingCharRemaps.pop_front();
     }
@@ -949,9 +980,13 @@ void MaybeClearPendingCharRemapsForRebindDisable(const platform::config::Linuxsc
     }
 }
 
-bool TryResolveRebindOutputCodepoint(const ResolvedRebindOutput& rebindOutput, int nativeMods, std::uint32_t& outCodepoint) {
+bool TryResolveRebindOutputCodepoint(GLFWwindow* window,
+                                     const ResolvedRebindOutput& rebindOutput,
+                                     int nativeMods,
+                                     std::uint32_t& outCodepoint) {
     outCodepoint = 0;
-    const bool shiftDown = (nativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
+    const int effectiveNativeMods = GetEffectiveNativeMods(window, nativeMods);
+    const bool shiftDown = (effectiveNativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
 
     if (shiftDown &&
         IsValidUnicodeScalar(rebindOutput.customShiftUnicode) &&
@@ -1253,7 +1288,8 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
         }
 
         std::uint32_t mappedCodepoint = 0;
-        if (TryResolveRebindOutputCodepoint(*rebindOutput, state.nativeMods, mappedCodepoint) && mappedCodepoint != 0) {
+        if (TryResolveRebindOutputCodepoint(state.key.window, *rebindOutput, state.nativeMods, mappedCodepoint) &&
+            mappedCodepoint != 0) {
             if (platform::input::IsNonTextVk(state.sourceVk)) {
                 return ManagedRepeatCharMode::HandledByKeyCallback;
             }
@@ -1266,7 +1302,8 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
         return ManagedRepeatCharMode::NoCharacter;
     }
 
-    const bool shiftDown = (state.nativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
+    const int effectiveNativeMods = GetEffectiveNativeMods(state.key.window, state.nativeMods);
+    const bool shiftDown = (effectiveNativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
     if (platform::input::TryMapVkToCodepoint(state.sourceVk, shiftDown, outCodepoint) && outCodepoint != 0) {
         return ManagedRepeatCharMode::InjectSynthetic;
     }
@@ -1770,7 +1807,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
         }
 
         if (!sourceIsNonText && !skipManagedSyntheticRepeatCharQueue) {
-            QueuePendingCharRemap(*rebindOutput, event);
+            QueuePendingCharRemap(window, *rebindOutput, event);
         }
 
         if (rebindOutput->targetIsMouse) {
@@ -1800,17 +1837,19 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
             } else if (userCallback) {
                 const int mappedScanCode = rebindOutput->outputScanCode;
                 UpdateSyntheticRebindKeyState(window, key, mappedKey, action);
-                userCallback(window, mappedKey, mappedScanCode, action, mods);
+                const int effectiveMods = GetEffectiveNativeMods(window, mods);
+                userCallback(window, mappedKey, mappedScanCode, action, effectiveMods);
                 if (sourceIsNonText &&
                     (event.action == platform::input::InputAction::Press ||
                      event.action == platform::input::InputAction::Repeat)) {
                     std::uint32_t remappedCodepoint = 0;
-                    if (!HasShortcutModifiersThatSuppressText(mods) &&
-                        TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
+                    if (!HasShortcutModifiersThatSuppressText(effectiveMods) &&
+                        TryResolveRebindOutputCodepoint(window, *rebindOutput, effectiveMods, remappedCodepoint) &&
+                        remappedCodepoint != 0) {
                         if (userCharCallback) {
                             userCharCallback(window, remappedCodepoint);
                         } else if (userCharModsCallback) {
-                            userCharModsCallback(window, remappedCodepoint, mods);
+                            userCharModsCallback(window, remappedCodepoint, effectiveMods);
                         }
                     }
                 }
@@ -2105,7 +2144,8 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                 if (forwardedAction == static_cast<int>(platform::input::GlfwAction::Repeat)) {
                     forwardedAction = static_cast<int>(platform::input::GlfwAction::Press);
                 }
-                userCallback(window, mappedButton, forwardedAction, mods);
+                const int effectiveMods = GetEffectiveNativeMods(window, mods);
+                userCallback(window, mappedButton, forwardedAction, effectiveMods);
                 return;
             }
             if (mappedButton < 0) {
@@ -2119,20 +2159,22 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
             const int mappedKey = platform::input::VkToGlfwKey(rebindOutput->triggerVk);
             if (mappedKey >= 0 && userKeyCallback) {
                 UpdateSyntheticRebindKeyState(window, syntheticMouseSourceKey, mappedKey, action);
+                const int effectiveMods = GetEffectiveNativeMods(window, mods);
                 int mappedAction = action;
                 if (mappedAction == static_cast<int>(platform::input::GlfwAction::Repeat)) {
                     mappedAction = static_cast<int>(platform::input::GlfwAction::Press);
                 }
-                userKeyCallback(window, mappedKey, rebindOutput->outputScanCode, mappedAction, mods);
+                userKeyCallback(window, mappedKey, rebindOutput->outputScanCode, mappedAction, effectiveMods);
                 if (event.action == platform::input::InputAction::Press ||
                     event.action == platform::input::InputAction::Repeat) {
                     std::uint32_t remappedCodepoint = 0;
-                    if (!HasShortcutModifiersThatSuppressText(mods) &&
-                        TryResolveRebindOutputCodepoint(*rebindOutput, mods, remappedCodepoint) && remappedCodepoint != 0) {
+                    if (!HasShortcutModifiersThatSuppressText(effectiveMods) &&
+                        TryResolveRebindOutputCodepoint(window, *rebindOutput, effectiveMods, remappedCodepoint) &&
+                        remappedCodepoint != 0) {
                         if (userCharCallback) {
                             userCharCallback(window, remappedCodepoint);
                         } else if (userCharModsCallback) {
-                            userCharModsCallback(window, remappedCodepoint, mods);
+                            userCharModsCallback(window, remappedCodepoint, effectiveMods);
                         }
                     }
                 }
