@@ -1,4 +1,5 @@
 #include "../mirror_image_source.h"
+#include "../calc_overlay_runtime.h"
 
 #include "../../common/config_io.h"
 
@@ -104,6 +105,9 @@ std::string GetMirrorImageStateKey(const std::string& mirrorName, const std::str
 }
 
 std::string ResolveMirrorImageSourcePath(const platform::config::MirrorSourceConfig& source) {
+    if (IsCalcOverlaySource(source)) {
+        return GetCalcOverlayImagePath();
+    }
     if (!HasConfiguredImageSource(source)) {
         return {};
     }

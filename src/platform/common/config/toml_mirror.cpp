@@ -5,6 +5,9 @@ MirrorSourceType MirrorSourceTypeFromString(const std::string& value) {
     if (value == "image") {
         return MirrorSourceType::Image;
     }
+    if (value == "calcOverlay") {
+        return MirrorSourceType::CalcOverlay;
+    }
     return MirrorSourceType::GameFramebuffer;
 }
 
@@ -14,6 +17,8 @@ const char* MirrorSourceTypeToString(MirrorSourceType type) {
         return "window";
     case MirrorSourceType::Image:
         return "image";
+    case MirrorSourceType::CalcOverlay:
+        return "calcOverlay";
     case MirrorSourceType::GameFramebuffer:
     default:
         return "gameFramebuffer";

@@ -394,6 +394,31 @@ void TestMirrorSourceRoundTrip() {
     Require(RequireBool(savedImageSource, "useImageSize"), "Image mirror source useImageSize should serialize");
     Require(RequireInt(savedImageSource, "imageReloadPollMs") == 100,
             "Image mirror source poll speed should serialize");
+
+    toml::table calcOverlayMirrorTbl;
+    calcOverlayMirrorTbl.insert("name", "Calc Overlay");
+    calcOverlayMirrorTbl.insert("source", toml::table{
+        {"type", "calcOverlay"},
+        {"image", "calc-overlay/calc-overlay.png"},
+        {"useImageSize", true},
+        {"imageReloadPollMs", int64_t(250)}
+    });
+
+    const MirrorConfig calcOverlayMirror = MirrorConfigFromToml(calcOverlayMirrorTbl);
+    Require(calcOverlayMirror.source.type == MirrorSourceType::CalcOverlay,
+            "Calc overlay mirror source type should parse");
+    Require(calcOverlayMirror.source.image == "calc-overlay/calc-overlay.png",
+            "Calc overlay mirror source path should parse");
+    Require(calcOverlayMirror.source.useImageSize,
+            "Calc overlay mirror source image size flag should parse");
+
+    toml::table savedCalcOverlayMirror;
+    MirrorConfigToToml(calcOverlayMirror, savedCalcOverlayMirror);
+    const toml::table& savedCalcOverlaySource = RequireTable(savedCalcOverlayMirror, "source");
+    Require(RequireString(savedCalcOverlaySource, "type") == "calcOverlay",
+            "Calc overlay mirror source type should serialize");
+    Require(RequireString(savedCalcOverlaySource, "image") == "calc-overlay/calc-overlay.png",
+            "Calc overlay mirror source path should serialize");
 }
 
 void TestWindowCaptureHelpers() {
@@ -556,6 +581,15 @@ void TestImageSourceHelpers() {
 
     const MirrorSourceConfig defaultSource;
     Require(!platform::x11::IsImageSource(defaultSource), "Default source should remain the game framebuffer");
+
+    MirrorSourceConfig calcOverlaySource;
+    calcOverlaySource.type = MirrorSourceType::CalcOverlay;
+    Require(platform::x11::IsImageSource(calcOverlaySource),
+            "Calc overlay sources should reuse the image-backed mirror path");
+    Require(platform::x11::HasConfiguredImageSource(calcOverlaySource),
+            "Calc overlay sources should be treated as configured without manual paths");
+    Require(!platform::x11::IsWindowCaptureSource(calcOverlaySource),
+            "Calc overlay sources should not be treated as window capture sources");
 }
 
 } // namespace

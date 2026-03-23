@@ -55,6 +55,7 @@ enum class MirrorSourceType {
     GameFramebuffer,
     Window,
     Image,
+    CalcOverlay,
 };
 
 enum class MirrorSourceTitleMatchMode {
@@ -115,8 +116,6 @@ inline int GetMirrorDynamicBorderPadding(const MirrorBorderConfig& border) {
         ? border.dynamicThickness
         : 0;
 }
-
-#endif
 
 struct MirrorConfig {
     std::string name;
@@ -508,3 +507,5 @@ struct LinuxscreenConfig {
 };
 
 } // namespace platform::config
+
+#endif

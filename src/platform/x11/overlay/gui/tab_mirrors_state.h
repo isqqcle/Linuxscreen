@@ -19,9 +19,11 @@ struct MirrorEditorState {
         std::string message;
     };
 
+    int mirrorListSelectionIndex = 0;
     int selectedMirrorIndex = -1;
     char nameBuffer[256] = {};
     std::string mirrorNameError;
+    int groupListSelectionIndex = 0;
     int selectedGroupIndex = -1;
     char groupNameBuffer[256] = {};
     std::string groupNameError;

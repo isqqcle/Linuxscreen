@@ -1,7 +1,9 @@
 #include "../overlay_internal.h"
+#include "../../../common/config_io.h"
 #include "../../calc_overlay_runtime.h"
 #include "imgui_overlay_helpers.h"
 #include "tab_calc_overlay.h"
+#include "tab_mirrors_state.h"
 
 #include "../../../common/font_scanner.h"
 
@@ -120,6 +122,93 @@ void PathCopyButton(const char* label, const char* path, const char* fallback = 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", available ? path : fallback);
     }
+}
+
+std::string MakeUniqueCalcOverlayMirrorName(const platform::config::LinuxscreenConfig& config) {
+    const std::string stem = "Calc Overlay";
+    auto exists = [&](const std::string& name) {
+        for (const auto& mirror : config.mirrors) {
+            if (mirror.name == name) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (!exists(stem)) {
+        return stem;
+    }
+
+    std::string candidate = stem + " (Copy)";
+    int suffix = 2;
+    while (exists(candidate)) {
+        candidate = stem + " (Copy " + std::to_string(suffix) + ")";
+        ++suffix;
+    }
+    return candidate;
+}
+
+std::string NormalizePathForComparison(const std::string& path) {
+    if (path.empty()) {
+        return {};
+    }
+
+    const std::filesystem::path input(path);
+    std::error_code ec;
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(input, ec);
+    return ec ? input.lexically_normal().string() : canonical.lexically_normal().string();
+}
+
+std::string ResolveMirrorImagePathForCalcOverlayWarning(const platform::config::MirrorSourceConfig& source) {
+    if (source.type == platform::config::MirrorSourceType::CalcOverlay) {
+        return GetCalcOverlayImagePath();
+    }
+    if (source.type == platform::config::MirrorSourceType::Image && !source.image.empty()) {
+        return platform::config::ResolvePathFromConfigDir(source.image);
+    }
+    return {};
+}
+
+bool HasExistingCalcOverlayMirror(const platform::config::LinuxscreenConfig& config,
+                                  const CalcOverlayRuntimeStatus& runtimeStatus) {
+    const std::string calcOverlayImagePath = NormalizePathForComparison(runtimeStatus.imagePath);
+    if (calcOverlayImagePath.empty()) {
+        return false;
+    }
+
+    return std::any_of(config.mirrors.begin(), config.mirrors.end(), [&](const auto& mirror) {
+        return NormalizePathForComparison(ResolveMirrorImagePathForCalcOverlayWarning(mirror.source)) ==
+               calcOverlayImagePath;
+    });
+}
+
+platform::config::MirrorConfig BuildCalcOverlayMirror(const platform::config::LinuxscreenConfig& config,
+                                                      const CalcOverlayRuntimeStatus& runtimeStatus) {
+    platform::config::MirrorConfig mirror;
+    mirror.name = MakeUniqueCalcOverlayMirrorName(config);
+    mirror.output.relativeTo = "topLeftScreen";
+    mirror.colorSensitivity = 1.0f;
+    mirror.rawOutput = true;
+    mirror.border.dynamicThickness = 0;
+    mirror.source.type = platform::config::MirrorSourceType::CalcOverlay;
+    mirror.source.image = runtimeStatus.imagePath;
+    mirror.source.useImageSize = true;
+    mirror.source.imageReloadPollMs = 1;
+
+    platform::config::MirrorCaptureConfig zone;
+    zone.relativeTo = "centerViewport";
+    mirror.input.push_back(zone);
+    return mirror;
+}
+
+void CreateCalcOverlayMirror(platform::config::LinuxscreenConfig& config,
+                             const CalcOverlayRuntimeStatus& runtimeStatus) {
+    config.mirrors.push_back(BuildCalcOverlayMirror(config, runtimeStatus));
+    g_mirrorEditorState.mirrorListSelectionIndex = static_cast<int>(config.mirrors.size()) - 1;
+    g_mirrorEditorState.selectedMirrorIndex = -1;
+    g_mirrorEditorState.nameBuffer[0] = '\0';
+    g_mirrorEditorState.mirrorNameError.clear();
+    AutoSaveConfig(config);
 }
 
 // ── Transposed column table ──
@@ -434,6 +523,30 @@ void RenderCalcOverlayTab(platform::config::LinuxscreenConfig& config) {
     }
     ImGui::SameLine();
     HelpMarker("Starts or stops the headless Java helper that renders calc-overlay.png from Ninjabrain Bot data.");
+
+    if (AnimatedButton("Create Mirror")) {
+        if (HasExistingCalcOverlayMirror(config, runtimeStatus)) {
+            ImGui::OpenPopup("##calc_overlay_existing_mirror_confirm");
+        } else {
+            CreateCalcOverlayMirror(config, runtimeStatus);
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Creates a mirror backed by the Calc Overlay image path.");
+    }
+    if (ImGui::BeginPopupModal("##calc_overlay_existing_mirror_confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("A mirror polling calc-overlay.png already exists");
+        ImGui::Separator();
+        if (AnimatedButton("Create Anyway")) {
+            CreateCalcOverlayMirror(config, runtimeStatus);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (AnimatedButton("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     if (runtimeStatus.running) {
         ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.55f, 1.0f), "Status: running");

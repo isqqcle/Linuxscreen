@@ -600,8 +600,8 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
     int mirrorToDuplicate = -1;
     int groupToRemove = -1;
     int groupToDuplicate = -1;
-    static int s_selectedMirrorIndex = 0;
-    static int s_selectedGroupIndex = 0;
+    int& s_selectedMirrorIndex = g_mirrorEditorState.mirrorListSelectionIndex;
+    int& s_selectedGroupIndex = g_mirrorEditorState.groupListSelectionIndex;
 
     auto addNewMirror = [&]() {
         platform::config::MirrorConfig newMirror;
@@ -783,7 +783,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                             mirror.source.type == platform::config::MirrorSourceType::Window &&
                             mirror.source.useWindowSize;
                         const bool useSelectedImageSize =
-                            mirror.source.type == platform::config::MirrorSourceType::Image &&
+                            IsImageSource(mirror.source) &&
                             mirror.source.useImageSize &&
                             mirror.source.lastKnownWidth > 0 &&
                             mirror.source.lastKnownHeight > 0;
@@ -812,11 +812,16 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
                         ImGui::Separator();
 
-                        const char* sourceTypes[] = { "Game Framebuffer", "Window", "Image" };
+                        const char* sourceTypes[] = { "Game Framebuffer", "Window", "Image", "Calc Overlay" };
                         int currentSourceType = static_cast<int>(mirror.source.type);
                         if (ImGui::Combo("Source", &currentSourceType, sourceTypes, IM_ARRAYSIZE(sourceTypes))) {
                             const platform::config::MirrorSourceConfig previousSource = mirror.source;
                             mirror.source.type = static_cast<platform::config::MirrorSourceType>(currentSourceType);
+                            if (IsCalcOverlaySource(mirror.source)) {
+                                mirror.source.image = GetCalcOverlayImagePath();
+                                mirror.source.lastKnownWidth = 0;
+                                mirror.source.lastKnownHeight = 0;
+                            }
                             if (HasConfiguredWindowCaptureSource(previousSource) &&
                                 previousSource.type != mirror.source.type) {
                                 ForgetWindowCaptureSource(previousSource);
@@ -831,7 +836,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
                         if (mirror.source.type == platform::config::MirrorSourceType::Window) {
 #include "tab_mirrors_window_source.cpp"
-                        } else if (mirror.source.type == platform::config::MirrorSourceType::Image) {
+                        } else if (IsImageSource(mirror.source)) {
 #include "tab_mirrors_image_source.cpp"
                         }
                         ImGui::Unindent();

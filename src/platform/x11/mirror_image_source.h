@@ -18,12 +18,18 @@ struct MirrorImageSourceStatus {
     std::string message;
 };
 
+inline bool IsCalcOverlaySource(const platform::config::MirrorSourceConfig& source) {
+    return source.type == platform::config::MirrorSourceType::CalcOverlay;
+}
+
 inline bool IsImageSource(const platform::config::MirrorSourceConfig& source) {
-    return source.type == platform::config::MirrorSourceType::Image;
+    return source.type == platform::config::MirrorSourceType::Image ||
+           IsCalcOverlaySource(source);
 }
 
 inline bool HasConfiguredImageSource(const platform::config::MirrorSourceConfig& source) {
-    return IsImageSource(source) && !source.image.empty();
+    return IsCalcOverlaySource(source) ||
+           (source.type == platform::config::MirrorSourceType::Image && !source.image.empty());
 }
 
 MirrorImageSourceStatus GetMirrorImageSourceStatus(const std::string& mirrorName,

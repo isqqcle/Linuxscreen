@@ -1,5 +1,11 @@
 namespace {
 
+#ifndef __APPLE__
+#ifndef PFNGLBINDBUFFERPROC
+typedef void (*PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
+#endif
+#endif
+
 struct DecodedImageFramesCommon {
     bool success = false;
     bool isAnimated = false;
@@ -26,6 +32,20 @@ void ClearAnimatedImageGpuTextures(TState& state) {
     state.currentFrameIndex = 0;
     state.hasNextFrameTime = false;
 }
+
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+void BindPixelUnpackBuffer(GLuint buffer) {
+#ifdef __APPLE__
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
+#else
+    static PFNGLBINDBUFFERPROC pfnBindBuffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(
+        glXGetProcAddress(reinterpret_cast<const GLubyte*>("glBindBuffer")));
+    if (pfnBindBuffer) {
+        pfnBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
+    }
+#endif
+}
+#endif
 
 GLuint CreateRgbaTexture(int width, int height, const unsigned char* pixels) {
     if (width <= 0 || height <= 0 || !pixels) {
@@ -55,14 +75,14 @@ GLuint CreateRgbaTexture(int width, int height, const unsigned char* pixels) {
 #ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
     GLint prevUnpackBuffer = 0;
     glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &prevUnpackBuffer);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    BindPixelUnpackBuffer(0);
 #endif
 
     GLuint texture = 0;
     glGenTextures(1, &texture);
     if (texture == 0) {
 #ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpackBuffer));
+        BindPixelUnpackBuffer(static_cast<GLuint>(prevUnpackBuffer));
 #endif
 #ifdef GL_UNPACK_SKIP_PIXELS
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, prevUnpackSkipPixels);
@@ -85,7 +105,7 @@ GLuint CreateRgbaTexture(int width, int height, const unsigned char* pixels) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 #ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpackBuffer));
+    BindPixelUnpackBuffer(static_cast<GLuint>(prevUnpackBuffer));
 #endif
 #ifdef GL_UNPACK_SKIP_PIXELS
     glPixelStorei(GL_UNPACK_SKIP_PIXELS, prevUnpackSkipPixels);

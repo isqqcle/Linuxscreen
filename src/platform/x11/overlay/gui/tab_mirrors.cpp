@@ -1,4 +1,5 @@
 #include "../overlay_internal.h"
+#include "../../calc_overlay_runtime.h"
 #include "imgui_overlay_helpers.h"
 #include "tab_eyezoom.h"
 #include "tab_mirrors.h"
