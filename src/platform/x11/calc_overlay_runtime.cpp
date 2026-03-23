@@ -9,6 +9,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <climits>
+#endif
+
 #include <atomic>
 #include <algorithm>
 #include <chrono>
@@ -180,12 +185,24 @@ const char* AaRowTypeToJsonString(platform::config::CalcOverlayAaRowType value) 
 
 std::string GetProcessExePath() {
     char pathBuffer[4096];
+#ifdef __APPLE__
+    uint32_t bufSize = sizeof(pathBuffer);
+    if (_NSGetExecutablePath(pathBuffer, &bufSize) != 0) {
+        return {};
+    }
+    char realPath[PATH_MAX];
+    if (realpath(pathBuffer, realPath)) {
+        return realPath;
+    }
+    return pathBuffer;
+#else
     const ssize_t n = readlink("/proc/self/exe", pathBuffer, sizeof(pathBuffer) - 1);
     if (n <= 0) {
         return {};
     }
     pathBuffer[n] = '\0';
     return pathBuffer;
+#endif
 }
 
 bool FileMatchesEmbeddedJar(const std::string& path) {
@@ -416,6 +433,13 @@ bool StartProcessLocked() {
         posix_spawn_file_actions_addclose(&actions, logFd);
     }
 
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+#ifdef __APPLE__
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr, 0);
+#endif
+
     const std::string calcOverlayHomeEnv = "CALC_OVERLAY_HOME=" + g_calcOverlayStatus.configDir;
     std::vector<char*> childEnv;
     for (char** env = environ; env && *env; ++env) {
@@ -429,6 +453,9 @@ bool StartProcessLocked() {
 
     std::vector<std::string> argStrings = {
         g_calcOverlayStatus.javaPath,
+#ifdef __APPLE__
+        "-Djava.awt.headless=true",
+#endif
         "-jar",
         g_calcOverlayStatus.jarPath,
         "--headless",
@@ -444,10 +471,11 @@ bool StartProcessLocked() {
     const int spawnResult = posix_spawn(&childPid,
                                         g_calcOverlayStatus.javaPath.c_str(),
                                         &actions,
-                                        nullptr,
+                                        &attr,
                                         argv.data(),
                                         childEnv.data());
     posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
     if (logFd >= 0) {
         close(logFd);
     }
