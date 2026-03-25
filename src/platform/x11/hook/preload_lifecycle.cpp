@@ -1,5 +1,22 @@
+namespace {
+std::atomic<bool> g_calcOverlayExitCleanupRan{ false };
+
+void CleanupCalcOverlayAtExit() {
+    if (g_calcOverlayExitCleanupRan.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    platform::x11::ShutdownCalcOverlayRuntimeForProcessExit();
+}
+}
+
 __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
     LogProcessIdentityOnce();
+
+    static bool registeredCalcOverlayExitCleanup = false;
+    if (!registeredCalcOverlayExitCleanup) {
+        std::atexit(CleanupCalcOverlayAtExit);
+        registeredCalcOverlayExitCleanup = true;
+    }
 
     if (IsDebugEnabled()) {
         LogOnce(g_loggedDebugEnabled, "debug logging enabled via LINUXSCREEN_X11_DEBUG=1");
@@ -96,6 +113,7 @@ __attribute__((destructor)) static void LinuxscreenX11PreloadShutdown() {
     LogAlways("preload shutdown starting (destructor context)");
 
 #ifdef __APPLE__
+    CleanupCalcOverlayAtExit();
     // Orderly cleanup seems to be unsafe on macOS? JVM's exit leaves global
     // mutexes in a destroyed state, and locking them crashes the process.
     // Need to look into this more :)

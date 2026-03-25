@@ -6,6 +6,7 @@
 #include "mirror/glx_shared_contexts.h"
 #include "overlay/imgui_input_bridge.h"
 #include "overlay/imgui_overlay.h"
+#include "calc_overlay_runtime.h"
 #include "x11_runtime.h"
 
 #include "../common/anchor_coords.h"

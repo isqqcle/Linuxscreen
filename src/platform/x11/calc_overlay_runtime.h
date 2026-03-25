@@ -25,6 +25,7 @@ struct CalcOverlayRuntimeStatus {
 
 void UpdateCalcOverlayRuntime(const platform::config::LinuxscreenConfig& config);
 void ShutdownCalcOverlayRuntime();
+void ShutdownCalcOverlayRuntimeForProcessExit();
 CalcOverlayRuntimeStatus GetCalcOverlayRuntimeStatus();
 
 std::string GetCalcOverlayConfigDirectoryPath();

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +26,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern char** environ;
@@ -38,6 +40,7 @@ constexpr const char* kHelperVersion = "2.4.0";
 
 std::mutex g_calcOverlayMutex;
 CalcOverlayRuntimeStatus g_calcOverlayStatus;
+std::atomic<int> g_calcOverlayPidAtomic{ -1 };
 std::string g_lastWrittenSettingsJson;
 std::chrono::steady_clock::time_point g_lastStartAttempt;
 std::chrono::steady_clock::time_point g_lastStaticPathRefresh;
@@ -45,6 +48,15 @@ bool g_stopRequested = false;
 bool g_helperJarPrepared = false;
 
 constexpr auto kStaticPathRefreshInterval = std::chrono::seconds(3);
+
+void SetTrackedHelperPidLocked(int pid) {
+    g_calcOverlayStatus.pid = pid;
+    g_calcOverlayPidAtomic.store(pid, std::memory_order_release);
+}
+
+void ClearTrackedHelperPidLocked() {
+    SetTrackedHelperPidLocked(-1);
+}
 
 std::string JsonEscape(const std::string& value) {
     std::string out;
@@ -396,6 +408,15 @@ void PollProcessStateLocked() {
         return;
     }
 
+    if (waitResult < 0) {
+        if (errno == ECHILD) {
+            g_calcOverlayStatus.running = false;
+            ClearTrackedHelperPidLocked();
+            g_stopRequested = false;
+        }
+        return;
+    }
+
     if (waitResult == g_calcOverlayStatus.pid) {
         g_calcOverlayStatus.running = false;
         g_calcOverlayStatus.hadUnexpectedExit = !g_stopRequested;
@@ -406,7 +427,7 @@ void PollProcessStateLocked() {
             g_calcOverlayStatus.lastExitCode = 128 + WTERMSIG(status);
             g_calcOverlayStatus.message = "Calc Overlay helper was terminated by signal " + std::to_string(WTERMSIG(status)) + ".";
         }
-        g_calcOverlayStatus.pid = -1;
+        ClearTrackedHelperPidLocked();
         g_stopRequested = false;
     }
 }
@@ -417,7 +438,41 @@ void RequestStopLocked() {
         return;
     }
     g_stopRequested = true;
-    kill(g_calcOverlayStatus.pid, SIGTERM);
+    if (kill(g_calcOverlayStatus.pid, SIGTERM) != 0 && errno == ESRCH) {
+        ClearTrackedHelperPidLocked();
+        g_calcOverlayStatus.running = false;
+        g_stopRequested = false;
+    }
+}
+
+void StopProcessAndWaitLocked(std::chrono::milliseconds timeout) {
+    RequestStopLocked();
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (g_calcOverlayStatus.pid > 0 && std::chrono::steady_clock::now() < deadline) {
+        PollProcessStateLocked();
+        if (g_calcOverlayStatus.pid <= 0) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    if (g_calcOverlayStatus.pid > 0) {
+        kill(g_calcOverlayStatus.pid, SIGKILL);
+        const auto killDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        while (g_calcOverlayStatus.pid > 0 && std::chrono::steady_clock::now() < killDeadline) {
+            PollProcessStateLocked();
+            if (g_calcOverlayStatus.pid <= 0) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+
+        ClearTrackedHelperPidLocked();
+        g_calcOverlayStatus.running = false;
+        g_calcOverlayStatus.hadUnexpectedExit = false;
+        g_calcOverlayStatus.message = "Calc Overlay helper was forcefully terminated.";
+        g_stopRequested = false;
+    }
 }
 
 bool StartProcessLocked() {
@@ -486,7 +541,7 @@ bool StartProcessLocked() {
         return false;
     }
 
-    g_calcOverlayStatus.pid = static_cast<int>(childPid);
+    SetTrackedHelperPidLocked(static_cast<int>(childPid));
     g_calcOverlayStatus.running = true;
     g_calcOverlayStatus.hadUnexpectedExit = false;
     g_calcOverlayStatus.message = "Calc Overlay helper is running.";
@@ -576,8 +631,48 @@ void UpdateCalcOverlayRuntime(const platform::config::LinuxscreenConfig& config)
 
 void ShutdownCalcOverlayRuntime() {
     std::lock_guard<std::mutex> lock(g_calcOverlayMutex);
-    RequestStopLocked();
-    PollProcessStateLocked();
+    StopProcessAndWaitLocked(std::chrono::milliseconds(1500));
+}
+
+void ShutdownCalcOverlayRuntimeForProcessExit() {
+    const int pid = g_calcOverlayPidAtomic.exchange(-1, std::memory_order_acq_rel);
+    if (pid <= 0) {
+        return;
+    }
+
+    if (kill(pid, SIGTERM) != 0 && errno == ESRCH) {
+        return;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    while (std::chrono::steady_clock::now() < deadline) {
+        int status = 0;
+        const pid_t waitResult = waitpid(pid, &status, WNOHANG);
+        if (waitResult == pid) {
+            return;
+        }
+        if (waitResult < 0 && errno == ECHILD) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    if (kill(pid, SIGKILL) != 0 && errno == ESRCH) {
+        return;
+    }
+
+    const auto killDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    while (std::chrono::steady_clock::now() < killDeadline) {
+        int status = 0;
+        const pid_t waitResult = waitpid(pid, &status, WNOHANG);
+        if (waitResult == pid) {
+            return;
+        }
+        if (waitResult < 0 && errno == ECHILD) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
 }
 
 } // namespace platform::x11
