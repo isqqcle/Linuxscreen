@@ -134,7 +134,7 @@ void DeleteMode(platform::config::LinuxscreenConfig& config, size_t modeIndex) {
 // Add a new hotkey
 void AddNewHotkey(platform::config::LinuxscreenConfig& config, const std::string& targetMode) {
     platform::config::HotkeyConfig newHotkey;
-    newHotkey.keys = { 0x70 }; // Default to F1
+    newHotkey.keys = { platform::input::MakeKeyboardBindingKey(67) };
     newHotkey.mainMode = targetMode;
     newHotkey.altSecondaryModes.clear();
     newHotkey.debounce = 0;
@@ -208,6 +208,7 @@ void RenderHotkeyCaptureModal() {
         g_hotkeyCaptureModalState.lastSequence = platform::config::GetLatestBindingInputSequence();
         g_hotkeyCaptureModalState.hadKeysPressed = false;
         g_hotkeyCaptureModalState.bindingKeys.clear();
+        g_hotkeyCaptureModalState.bindingDetails.clear();
         g_hotkeyCaptureModalState.currentlyPressed.clear();
     }
 
@@ -263,8 +264,53 @@ void RenderHotkeyCaptureModal() {
     ImGui::Separator();
 
     platform::config::BindingInputEvent capturedEvent;
+    auto bindingIdentity = [](const platform::config::BindingInputEvent& event) -> std::int64_t {
+        if (platform::input::IsMouseBindingKey(event.binding)) {
+            return -static_cast<std::int64_t>(event.binding.code) - 1;
+        }
+        if (platform::input::IsKeyboardBindingKey(event.binding)) {
+            return static_cast<std::int64_t>(event.binding.code);
+        }
+        return 0;
+    };
+    auto insertCapturedKey = [&](const platform::config::BindingInputEvent& event) {
+        const platform::config::CapturedBindingKey detail{
+            event.binding,
+            event.vk,
+            event.nativeKey,
+            event.nativeScanCode,
+            event.isMouseButton,
+            event.isModifier,
+        };
+        const bool isModifier = event.isModifier;
+        auto keyIt = g_hotkeyCaptureModalState.bindingKeys.begin();
+        auto detailIt = g_hotkeyCaptureModalState.bindingDetails.begin();
+        if (isModifier && platform::input::IsKeyboardBindingKey(event.binding)) {
+            while (keyIt != g_hotkeyCaptureModalState.bindingKeys.end() && detailIt != g_hotkeyCaptureModalState.bindingDetails.end() &&
+                   detailIt->isModifier) {
+                ++keyIt;
+                ++detailIt;
+            }
+        } else {
+            keyIt = g_hotkeyCaptureModalState.bindingKeys.end();
+            detailIt = g_hotkeyCaptureModalState.bindingDetails.end();
+        }
+        g_hotkeyCaptureModalState.bindingKeys.insert(keyIt, event.binding);
+        g_hotkeyCaptureModalState.bindingDetails.insert(detailIt, detail);
+    };
+    auto resolveSingleCapturedKey = [&]() -> platform::config::CapturedBindingKey {
+        if (g_hotkeyCaptureModalState.bindingDetails.empty()) {
+            return {};
+        }
+        for (auto it = g_hotkeyCaptureModalState.bindingDetails.rbegin(); it != g_hotkeyCaptureModalState.bindingDetails.rend(); ++it) {
+            if (!it->isModifier) {
+                return *it;
+            }
+        }
+        return g_hotkeyCaptureModalState.bindingDetails.back();
+    };
     while (platform::config::ConsumeBindingInputEventSince(g_hotkeyCaptureModalState.lastSequence, capturedEvent)) {
-        if (capturedEvent.vk == platform::input::VK_NONE) {
+        if (!platform::input::IsValidBindingKey(capturedEvent.binding)) {
             continue;
         }
 
@@ -274,10 +320,11 @@ void RenderHotkeyCaptureModal() {
             continue;
         }
 
-        const uint32_t vk = capturedEvent.vk;
+        const bool isKeyboardBinding = platform::input::IsKeyboardBindingKey(capturedEvent.binding);
+        const int nativeKey = capturedEvent.nativeKey;
 
         if (isPress) {
-            if (vk == platform::input::VK_ESCAPE) {
+            if (isKeyboardBinding && nativeKey == 256) {
                 platform::config::CompleteCaptureCanceled();
                 ResetHotkeyCaptureModalState();
                 ImGui::CloseCurrentPopup();
@@ -285,7 +332,7 @@ void RenderHotkeyCaptureModal() {
                 return;
             }
 
-            if (canClear && (vk == platform::input::VK_BACK || vk == platform::input::VK_DELETE)) {
+            if (canClear && isKeyboardBinding && (nativeKey == 259 || nativeKey == 261)) {
                 platform::config::CompleteCaptureCleared();
                 ResetHotkeyCaptureModalState();
                 ImGui::CloseCurrentPopup();
@@ -293,17 +340,25 @@ void RenderHotkeyCaptureModal() {
                 return;
             }
 
-            if (!IsWindowsKeyVk(vk)) {
-                g_hotkeyCaptureModalState.currentlyPressed.insert(vk);
-                if (std::find(g_hotkeyCaptureModalState.bindingKeys.begin(),
-                              g_hotkeyCaptureModalState.bindingKeys.end(),
-                              vk) == g_hotkeyCaptureModalState.bindingKeys.end()) {
-                    InsertCaptureKeyOrdered(g_hotkeyCaptureModalState.bindingKeys, vk);
+            if (!(isKeyboardBinding && (nativeKey == 343 || nativeKey == 347))) {
+                const std::int64_t identity = bindingIdentity(capturedEvent);
+                const auto [_, inserted] = g_hotkeyCaptureModalState.currentlyPressed.insert(identity);
+                if (inserted) {
+                    bool alreadyCaptured = false;
+                    for (const auto& detail : g_hotkeyCaptureModalState.bindingDetails) {
+                        if (detail.binding == capturedEvent.binding) {
+                            alreadyCaptured = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyCaptured) {
+                        insertCapturedKey(capturedEvent);
+                    }
                 }
                 g_hotkeyCaptureModalState.hadKeysPressed = true;
             }
         } else {
-            g_hotkeyCaptureModalState.currentlyPressed.erase(vk);
+            g_hotkeyCaptureModalState.currentlyPressed.erase(bindingIdentity(capturedEvent));
         }
     }
 
@@ -331,14 +386,14 @@ void RenderHotkeyCaptureModal() {
 
     if (g_hotkeyCaptureModalState.hadKeysPressed && g_hotkeyCaptureModalState.currentlyPressed.empty()) {
         if (singleKeyDisplay) {
-            const uint32_t capturedVk = ResolveSingleCaptureVk(g_hotkeyCaptureModalState.bindingKeys);
-            if (capturedVk != 0) {
-                platform::config::CompleteCaptureConfirmed({ capturedVk });
+            const auto capturedKey = resolveSingleCapturedKey();
+            if (platform::input::IsValidBindingKey(capturedKey.binding)) {
+                platform::config::CompleteCaptureConfirmedDetailed({ capturedKey });
             } else {
                 platform::config::CompleteCaptureCanceled();
             }
         } else {
-            platform::config::CompleteCaptureConfirmed(g_hotkeyCaptureModalState.bindingKeys);
+            platform::config::CompleteCaptureConfirmedDetailed(g_hotkeyCaptureModalState.bindingDetails);
         }
         ResetHotkeyCaptureModalState();
         ImGui::CloseCurrentPopup();
@@ -350,9 +405,9 @@ void RenderHotkeyCaptureModal() {
         ImGui::Text("Current: [None]");
     } else {
         if (singleKeyDisplay) {
-            ImGui::Text("Current: %s", FormatSingleVk(ResolveSingleCaptureVk(g_hotkeyCaptureModalState.bindingKeys)).c_str());
+            ImGui::Text("Current: %s", FormatSingleBinding(ResolveSingleCaptureBinding(g_hotkeyCaptureModalState.bindingKeys)).c_str());
         } else {
-            ImGui::Text("Current: %s", FormatHotkey(g_hotkeyCaptureModalState.bindingKeys).c_str());
+            ImGui::Text("Current: %s", FormatBindingChord(g_hotkeyCaptureModalState.bindingKeys).c_str());
         }
     }
 

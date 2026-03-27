@@ -1,6 +1,286 @@
+namespace {
+
+std::string NormalizeResolvedKeyLabel(const char* keyName) {
+    if (!keyName || keyName[0] == '\0') {
+        return {};
+    }
+
+    std::string label(keyName);
+    bool hasVisibleChar = false;
+    for (unsigned char ch : label) {
+        if (std::iscntrl(ch) != 0) {
+            return {};
+        }
+        if (std::isspace(ch) == 0) {
+            hasVisibleChar = true;
+        }
+    }
+    if (!hasVisibleChar) {
+        return {};
+    }
+
+    if (label.size() == 1) {
+        const unsigned char ch = static_cast<unsigned char>(label[0]);
+        if (std::islower(ch) != 0) {
+            label[0] = static_cast<char>(std::toupper(ch));
+        }
+    }
+    return label;
+}
+
+uint32_t ResolveKeyboardVkFromScanCode(int scanCode) {
+    if (scanCode <= 0) {
+        return 0;
+    }
+
+    using GlfwGetKeyScancodeFnLocal = int (*)(int key);
+    static std::once_flag keyScancodeOnce;
+    static GlfwGetKeyScancodeFnLocal getKeyScancode = nullptr;
+    std::call_once(keyScancodeOnce, []() {
+        getKeyScancode = reinterpret_cast<GlfwGetKeyScancodeFnLocal>(dlsym(RTLD_DEFAULT, "glfwGetKeyScancode"));
+    });
+    if (!getKeyScancode) {
+        return 0;
+    }
+
+    for (uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
+        if (!platform::input::IsKeyboardVk(vk)) {
+            continue;
+        }
+
+        const int glfwKey = platform::input::VkToGlfwKey(vk);
+        if (glfwKey < 0) {
+            continue;
+        }
+
+        if (getKeyScancode(glfwKey) == scanCode) {
+            return vk;
+        }
+    }
+
+    return 0;
+}
+
+#ifndef __APPLE__
+std::string TryResolveX11PrintableScanCodeLabel(int scanCode) {
+    if (scanCode <= 0) {
+        return {};
+    }
+
+    Display* dpy = glXGetCurrentDisplay();
+    if (dpy == nullptr) {
+        const RuntimeHandles handles = GetRuntimeHandles();
+        dpy = reinterpret_cast<Display*>(handles.nativeDisplay);
+    }
+    if (dpy == nullptr) {
+        return {};
+    }
+
+    const KeySym keysym = XkbKeycodeToKeysym(dpy, static_cast<KeyCode>(scanCode), 0, 0);
+    if (keysym == NoSymbol) {
+        return {};
+    }
+
+    if (keysym >= 0x20 && keysym <= 0x7Eu) {
+        const char text[2] = { static_cast<char>(keysym), '\0' };
+        return NormalizeResolvedKeyLabel(text);
+    }
+
+    return {};
+}
+#else
+std::string TryResolveX11PrintableScanCodeLabel(int /*scanCode*/) {
+    return {};
+}
+#endif
+
+const char* GetSpecialBindingScanCodeLabel(int scanCode) {
+    switch (scanCode) {
+    case 9:
+        return "ESC";
+    case 22:
+        return "BACKSPACE";
+    case 23:
+        return "TAB";
+    case 36:
+        return "ENTER";
+    case 37:
+        return "LCTRL";
+    case 50:
+        return "LSHIFT";
+    case 62:
+        return "RSHIFT";
+    case 64:
+        return "LALT";
+    case 65:
+        return "SPACE";
+    case 66:
+        return "CAPS LOCK";
+    case 67:
+        return "F1";
+    case 68:
+        return "F2";
+    case 69:
+        return "F3";
+    case 70:
+        return "F4";
+    case 71:
+        return "F5";
+    case 72:
+        return "F6";
+    case 73:
+        return "F7";
+    case 74:
+        return "F8";
+    case 75:
+        return "F9";
+    case 76:
+        return "F10";
+    case 95:
+        return "F11";
+    case 96:
+        return "F12";
+    case 105:
+        return "RCTRL";
+    case 108:
+        return "RALT";
+    case 110:
+        return "HOME";
+    case 111:
+        return "UP";
+    case 112:
+        return "PAGE UP";
+    case 113:
+        return "LEFT";
+    case 114:
+        return "RIGHT";
+    case 115:
+        return "END";
+    case 116:
+        return "DOWN";
+    case 117:
+        return "PAGE DOWN";
+    case 118:
+        return "INSERT";
+    case 119:
+        return "DELETE";
+    case 133:
+        return "LWIN";
+    case 134:
+        return "RWIN";
+    default:
+        break;
+    }
+    return nullptr;
+}
+
+bool IsLikelyModifierBinding(const platform::input::BindingKey& key) {
+    if (!platform::input::IsKeyboardBindingKey(key)) {
+        return false;
+    }
+
+    switch (key.code) {
+    case 37:
+    case 50:
+    case 62:
+    case 64:
+    case 105:
+    case 108:
+    case 133:
+    case 134:
+        return true;
+    default:
+        break;
+    }
+    return false;
+}
+
+std::string FormatKeyboardScanCode(int scanCode) {
+    if (scanCode <= 0) {
+        return std::string("<unset>");
+    }
+
+    const uint32_t resolvedVk = ResolveKeyboardVkFromScanCode(scanCode);
+    if (resolvedVk != 0 &&
+        (platform::input::IsNonTextVk(resolvedVk) || platform::input::IsModifierGlfwKey(static_cast<int>(resolvedVk)))) {
+        return FormatSingleVk(resolvedVk);
+    }
+
+    using GlfwGetKeyNameFnLocal = const char* (*)(int key, int scancode);
+    static std::once_flag keyNameOnce;
+    static GlfwGetKeyNameFnLocal getKeyName = nullptr;
+    std::call_once(keyNameOnce, []() {
+        getKeyName = reinterpret_cast<GlfwGetKeyNameFnLocal>(dlsym(RTLD_DEFAULT, "glfwGetKeyName"));
+    });
+    if (getKeyName) {
+        if (resolvedVk != 0) {
+            const int glfwKey = platform::input::VkToGlfwKey(resolvedVk);
+            if (glfwKey >= 0) {
+                const std::string resolved = NormalizeResolvedKeyLabel(getKeyName(glfwKey, scanCode));
+                if (!resolved.empty() && resolved != "?") {
+                    return resolved;
+                }
+            }
+        }
+
+        const std::string resolved = NormalizeResolvedKeyLabel(getKeyName(-1, scanCode));
+        if (!resolved.empty() && resolved != "?") {
+            return resolved;
+        }
+    }
+
+    if (const std::string x11Resolved = TryResolveX11PrintableScanCodeLabel(scanCode); !x11Resolved.empty()) {
+        return x11Resolved;
+    }
+
+    if (resolvedVk != 0) {
+        return FormatSingleVk(resolvedVk);
+    }
+
+    if (const char* special = GetSpecialBindingScanCodeLabel(scanCode)) {
+        return std::string(special);
+    }
+
+    return "SCAN " + std::to_string(scanCode);
+}
+
+} // namespace
+
+std::string FormatSingleBinding(const platform::input::BindingKey& key) {
+    if (!platform::input::IsValidBindingKey(key)) {
+        return std::string("<unset>");
+    }
+    if (platform::input::IsMouseBindingKey(key)) {
+        return "MOUSE" + std::to_string(key.code + 1);
+    }
+    return FormatKeyboardScanCode(key.code);
+}
+
+std::string FormatBindingChord(const std::vector<platform::input::BindingKey>& keys) {
+    if (keys.empty()) {
+        return "<none>";
+    }
+
+    std::ostringstream oss;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        if (i > 0) {
+            oss << "+";
+        }
+        oss << FormatSingleBinding(keys[i]);
+    }
+    return oss.str();
+}
+
+std::string FormatHotkey(const std::vector<platform::input::BindingKey>& keys) {
+    return FormatBindingChord(keys);
+}
+
 std::string FormatSingleVk(uint32_t vk) {
     if (vk == 0) {
         return std::string("<unset>");
+    }
+    if (vk >= 0xE000u && vk < 0xF000u) {
+        return "SCAN " + std::to_string(vk - 0xE000u);
     }
 
     if (vk >= platform::input::VK_A && vk <= platform::input::VK_Z) {
@@ -125,6 +405,8 @@ std::string FormatSingleVk(uint32_t vk) {
         return "]";
     case platform::input::VK_OEM_7:
         return "'";
+    case platform::input::VK_OEM_102:
+        return "NON-US \\";
     default:
         break;
     }
@@ -147,7 +429,7 @@ std::string FormatHotkey(const std::vector<uint32_t>& keys) {
 }
 
 bool IsModifierForCapture(uint32_t vk) {
-    return platform::input::IsModifierVk(static_cast<platform::input::VkCode>(vk));
+    return platform::input::IsModifierGlfwKey(static_cast<int>(vk));
 }
 
 bool IsWindowsKeyVk(uint32_t vk) {
@@ -166,6 +448,21 @@ void InsertCaptureKeyOrdered(std::vector<uint32_t>& keys, uint32_t vk) {
         ++insertPos;
     }
     keys.insert(insertPos, vk);
+}
+
+void InsertCaptureBindingOrdered(std::vector<platform::input::BindingKey>& keys,
+                                 const platform::input::BindingKey& key,
+                                 bool isModifier) {
+    if (!isModifier) {
+        keys.push_back(key);
+        return;
+    }
+
+    auto insertPos = keys.begin();
+    while (insertPos != keys.end() && IsLikelyModifierBinding(*insertPos)) {
+        ++insertPos;
+    }
+    keys.insert(insertPos, key);
 }
 
 bool CaptureTargetUsesSharedModal(platform::config::CaptureTarget target) {
@@ -216,6 +513,22 @@ uint32_t ResolveSingleCaptureVk(const std::vector<uint32_t>& keys) {
 
     return keys.back();
 }
+
+platform::input::BindingKey ResolveSingleCaptureBinding(const std::vector<platform::input::BindingKey>& keys) {
+    if (keys.empty()) {
+        return {};
+    }
+
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
+        if (!IsLikelyModifierBinding(*it)) {
+            return *it;
+        }
+    }
+
+    return keys.back();
+}
+
+int GetDerivedX11ScanCodeForVk(uint32_t vk);
 
 bool IsValidUnicodeScalar(std::uint32_t codepoint) {
     if (codepoint == 0 || codepoint > 0x10FFFFu) {
@@ -407,14 +720,41 @@ bool TryParseUnicodeInputString(const std::string& input, std::uint32_t& outCode
     return parseHexCodepoint(trimmed);
 }
 
-bool IsIdentityRebindForKey(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
-    if (rebind.fromKey != originalVk) {
+platform::input::BindingKey BindingFromLegacyUiVk(uint32_t vk) {
+    const int mouseButton = platform::input::VkToGlfwMouseButton(vk);
+    if (mouseButton >= 0) {
+        return platform::input::MakeMouseButtonBindingKey(mouseButton);
+    }
+
+    const int scanCode = GetDerivedX11ScanCodeForVk(vk);
+    if (scanCode > 0) {
+        return platform::input::MakeKeyboardBindingKey(scanCode);
+    }
+    return {};
+}
+
+uint32_t LegacyUiVkFromBinding(const platform::input::BindingKey& binding) {
+    if (platform::input::IsMouseBindingKey(binding)) {
+        return platform::input::GlfwMouseButtonToVk(binding.code);
+    }
+    if (!platform::input::IsKeyboardBindingKey(binding)) {
+        return 0;
+    }
+    return ResolveKeyboardVkFromScanCode(binding.code);
+}
+
+bool IsPrimaryMouseBinding(const platform::input::BindingKey& binding) {
+    return platform::input::IsMouseBindingKey(binding) && (binding.code == 0 || binding.code == 1);
+}
+
+bool IsIdentityRebindForKey(const platform::config::KeyRebind& rebind, const platform::input::BindingKey& originalBinding) {
+    if (rebind.fromInput != originalBinding) {
         return false;
     }
-    if (rebind.toKey != originalVk) {
+    if (rebind.toInput != originalBinding) {
         return false;
     }
-    if (rebind.customOutputVK != 0 && rebind.customOutputVK != rebind.toKey) {
+    if (platform::input::IsValidBindingKey(rebind.customOutputKey) && rebind.customOutputKey != rebind.toInput) {
         return false;
     }
     if (rebind.customOutputUnicode != 0) {
@@ -423,14 +763,11 @@ bool IsIdentityRebindForKey(const platform::config::KeyRebind& rebind, uint32_t 
     if (rebind.customOutputShiftUnicode != 0) {
         return false;
     }
-    if (rebind.customOutputScanCode != 0) {
-        return false;
-    }
     return true;
 }
 
-bool IsNoOpRebindForKey(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
-    const bool repeatBlacklistedMouseSource = originalVk == platform::input::VK_LBUTTON || originalVk == platform::input::VK_RBUTTON;
+bool IsNoOpRebindForKey(const platform::config::KeyRebind& rebind, const platform::input::BindingKey& originalBinding) {
+    const bool repeatBlacklistedMouseSource = IsPrimaryMouseBinding(originalBinding);
     if (rebind.consumeSourceInput) {
         return false;
     }
@@ -440,7 +777,11 @@ bool IsNoOpRebindForKey(const platform::config::KeyRebind& rebind, uint32_t orig
     if (!repeatBlacklistedMouseSource && (rebind.keyRepeatStartDelay > 0 || rebind.keyRepeatDelay > 0)) {
         return false;
     }
-    return IsIdentityRebindForKey(rebind, originalVk);
+    return IsIdentityRebindForKey(rebind, originalBinding);
+}
+
+bool IsNoOpRebindForKey(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
+    return IsNoOpRebindForKey(rebind, BindingFromLegacyUiVk(originalVk));
 }
 
 std::string RebindDisplayName(const platform::config::KeyRebind& rebind) {
@@ -448,12 +789,13 @@ std::string RebindDisplayName(const platform::config::KeyRebind& rebind) {
     if (!trimmedName.empty()) {
         return trimmedName;
     }
-    return FormatSingleVk(rebind.fromKey);
+    return FormatSingleBinding(rebind.fromInput);
 }
 
 int FindAnyRebindIndexForKey(const platform::config::LinuxscreenConfig& config, uint32_t fromVk) {
+    const platform::input::BindingKey fromBinding = BindingFromLegacyUiVk(fromVk);
     for (int i = 0; i < static_cast<int>(config.keyRebinds.rebinds.size()); ++i) {
-        if (config.keyRebinds.rebinds[static_cast<std::size_t>(i)].fromKey == fromVk) {
+        if (config.keyRebinds.rebinds[static_cast<std::size_t>(i)].fromInput == fromBinding) {
             return i;
         }
     }
@@ -461,6 +803,7 @@ int FindAnyRebindIndexForKey(const platform::config::LinuxscreenConfig& config, 
 }
 
 int FindBestRebindIndexForKey(const platform::config::LinuxscreenConfig& config, uint32_t fromVk) {
+    const platform::input::BindingKey fromBinding = BindingFromLegacyUiVk(fromVk);
     int first = -1;
     int enabledAny = -1;
     int enabledConfigured = -1;
@@ -468,14 +811,15 @@ int FindBestRebindIndexForKey(const platform::config::LinuxscreenConfig& config,
 
     for (int i = 0; i < static_cast<int>(config.keyRebinds.rebinds.size()); ++i) {
         const auto& rebind = config.keyRebinds.rebinds[static_cast<std::size_t>(i)];
-        if (rebind.fromKey != fromVk) {
+        if (rebind.fromInput != fromBinding) {
             continue;
         }
         if (first == -1) {
             first = i;
         }
 
-        const bool configured = (rebind.fromKey != 0 && (rebind.consumeSourceInput || rebind.toKey != 0));
+        const bool configured = (platform::input::IsValidBindingKey(rebind.fromInput) &&
+                                 (rebind.consumeSourceInput || platform::input::IsValidBindingKey(rebind.toInput)));
         if (configured && configuredAny == -1) {
             configuredAny = i;
         }
@@ -507,8 +851,8 @@ int EnsureRebindForKey(platform::config::LinuxscreenConfig& config, uint32_t fro
     }
 
     platform::config::KeyRebind rebind;
-    rebind.fromKey = fromVk;
-    rebind.toKey = fromVk;
+    rebind.fromInput = BindingFromLegacyUiVk(fromVk);
+    rebind.toInput = rebind.fromInput;
     rebind.enabled = true;
     config.keyRebinds.rebinds.push_back(rebind);
     return static_cast<int>(config.keyRebinds.rebinds.size()) - 1;
@@ -555,6 +899,7 @@ std::string FormatScanDisplay(int scanCode, uint32_t fallbackVk) {
 }
 
 using GlfwGetKeyScancodeFn = int (*)(int key);
+using GlfwGetKeyNameFn = const char* (*)(int key, int scancode);
 
 GlfwGetKeyScancodeFn GetGlfwGetKeyScancodeFn() {
     static std::once_flag once;
@@ -565,169 +910,13 @@ GlfwGetKeyScancodeFn GetGlfwGetKeyScancodeFn() {
     return fn;
 }
 
-int GetFallbackX11ScanCodeForVk(uint32_t vk) {
-    static const uint32_t kDigitRow[] = {
-        static_cast<uint32_t>('1'), static_cast<uint32_t>('2'), static_cast<uint32_t>('3'), static_cast<uint32_t>('4'),
-        static_cast<uint32_t>('5'), static_cast<uint32_t>('6'), static_cast<uint32_t>('7'), static_cast<uint32_t>('8'),
-        static_cast<uint32_t>('9'), static_cast<uint32_t>('0'),
-    };
-    for (int i = 0; i < 10; ++i) {
-        if (vk == kDigitRow[i]) {
-            return 10 + i;
-        }
-    }
-
-    static const uint32_t kTopAlphaRow[] = {
-        static_cast<uint32_t>('Q'), static_cast<uint32_t>('W'), static_cast<uint32_t>('E'), static_cast<uint32_t>('R'),
-        static_cast<uint32_t>('T'), static_cast<uint32_t>('Y'), static_cast<uint32_t>('U'), static_cast<uint32_t>('I'),
-        static_cast<uint32_t>('O'), static_cast<uint32_t>('P'),
-    };
-    for (int i = 0; i < 10; ++i) {
-        if (vk == kTopAlphaRow[i]) {
-            return 24 + i;
-        }
-    }
-
-    static const uint32_t kHomeAlphaRow[] = {
-        static_cast<uint32_t>('A'), static_cast<uint32_t>('S'), static_cast<uint32_t>('D'), static_cast<uint32_t>('F'),
-        static_cast<uint32_t>('G'), static_cast<uint32_t>('H'), static_cast<uint32_t>('J'), static_cast<uint32_t>('K'),
-        static_cast<uint32_t>('L'),
-    };
-    for (int i = 0; i < 9; ++i) {
-        if (vk == kHomeAlphaRow[i]) {
-            return 38 + i;
-        }
-    }
-
-    static const uint32_t kBottomAlphaRow[] = {
-        static_cast<uint32_t>('Z'), static_cast<uint32_t>('X'), static_cast<uint32_t>('C'), static_cast<uint32_t>('V'),
-        static_cast<uint32_t>('B'), static_cast<uint32_t>('N'), static_cast<uint32_t>('M'),
-    };
-    for (int i = 0; i < 7; ++i) {
-        if (vk == kBottomAlphaRow[i]) {
-            return 52 + i;
-        }
-    }
-
-    if (vk >= platform::input::VK_F1 && vk <= (platform::input::VK_F1 + 9)) {
-        return 67 + static_cast<int>(vk - platform::input::VK_F1);
-    }
-
-    switch (vk) {
-    case platform::input::VK_SHIFT:
-        return 50;
-    case platform::input::VK_CONTROL:
-        return 37;
-    case platform::input::VK_MENU:
-        return 64;
-    case platform::input::VK_ESCAPE:
-        return 9;
-    case platform::input::VK_OEM_MINUS:
-        return 20;
-    case platform::input::VK_OEM_PLUS:
-        return 21;
-    case platform::input::VK_BACK:
-        return 22;
-    case platform::input::VK_TAB:
-        return 23;
-    case platform::input::VK_OEM_4:
-        return 34;
-    case platform::input::VK_OEM_6:
-        return 35;
-    case platform::input::VK_RETURN:
-        return 36;
-    case platform::input::VK_LCONTROL:
-        return 37;
-    case platform::input::VK_OEM_1:
-        return 47;
-    case platform::input::VK_OEM_7:
-        return 48;
-    case platform::input::VK_OEM_3:
-        return 49;
-    case platform::input::VK_LSHIFT:
-        return 50;
-    case platform::input::VK_OEM_5:
-        return 51;
-    case platform::input::VK_OEM_COMMA:
-        return 59;
-    case platform::input::VK_OEM_PERIOD:
-        return 60;
-    case platform::input::VK_OEM_2:
-        return 61;
-    case platform::input::VK_RSHIFT:
-        return 62;
-    case platform::input::VK_MULTIPLY:
-        return 63;
-    case platform::input::VK_LMENU:
-        return 64;
-    case platform::input::VK_SPACE:
-        return 65;
-    case platform::input::VK_CAPITAL:
-        return 66;
-    case platform::input::VK_NUMLOCK:
-        return 77;
-    case platform::input::VK_SCROLL:
-        return 78;
-    case platform::input::VK_SNAPSHOT:
-        return 107;
-    case platform::input::VK_PAUSE:
-        return 127;
-    case platform::input::VK_SUBTRACT:
-        return 82;
-    case platform::input::VK_ADD:
-        return 86;
-    case platform::input::VK_DECIMAL:
-        return 91;
-    case platform::input::VK_F1 + 10:
-        return 95;
-    case platform::input::VK_F1 + 11:
-        return 96;
-    case platform::input::VK_RCONTROL:
-        return 105;
-    case platform::input::VK_DIVIDE:
-        return 106;
-    case platform::input::VK_RMENU:
-        return 108;
-    case platform::input::VK_HOME:
-        return 110;
-    case platform::input::VK_UP:
-        return 111;
-    case platform::input::VK_PRIOR:
-        return 112;
-    case platform::input::VK_LEFT:
-        return 113;
-    case platform::input::VK_RIGHT:
-        return 114;
-    case platform::input::VK_END:
-        return 115;
-    case platform::input::VK_DOWN:
-        return 116;
-    case platform::input::VK_NEXT:
-        return 117;
-    case platform::input::VK_INSERT:
-        return 118;
-    case platform::input::VK_DELETE:
-        return 119;
-    case platform::input::VK_LWIN:
-        return 133;
-    case platform::input::VK_RWIN:
-        return 134;
-    case platform::input::VK_APPS:
-        return 135;
-    default:
-        break;
-    }
-
-    if (vk >= (platform::input::VK_F1 + 12) && vk <= platform::input::VK_F24) {
-        return 191 + static_cast<int>(vk - (platform::input::VK_F1 + 12));
-    }
-
-    if (vk >= platform::input::VK_NUMPAD0 && vk <= platform::input::VK_NUMPAD9) {
-        static const int kNumPadScans[] = { 90, 87, 88, 89, 83, 84, 85, 79, 80, 81 };
-        return kNumPadScans[vk - platform::input::VK_NUMPAD0];
-    }
-
-    return 0;
+GlfwGetKeyNameFn GetGlfwGetKeyNameFn() {
+    static std::once_flag once;
+    static GlfwGetKeyNameFn fn = nullptr;
+    std::call_once(once, []() {
+        fn = reinterpret_cast<GlfwGetKeyNameFn>(dlsym(RTLD_DEFAULT, "glfwGetKeyName"));
+    });
+    return fn;
 }
 
 int GetDerivedX11ScanCodeForVk(uint32_t vk) {
@@ -745,7 +934,7 @@ int GetDerivedX11ScanCodeForVk(uint32_t vk) {
         }
     }
 
-    return GetFallbackX11ScanCodeForVk(vk);
+    return 0;
 }
 
 void AddKnownScanOption(std::map<int, uint32_t>& scanToVk, uint32_t vk) {
@@ -775,7 +964,7 @@ std::map<int, uint32_t> BuildKnownScanOptions(uint32_t preferredVk) {
     auto addVk = [&](uint32_t vk) { AddKnownScanOption(scanToVk, vk); };
     addVk(preferredVk);
 
-    for (uint32_t vk = 1; vk <= 0xFF; ++vk) {
+    for (uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
         if (!platform::input::IsKeyboardVk(vk)) {
             continue;
         }
@@ -785,39 +974,48 @@ std::map<int, uint32_t> BuildKnownScanOptions(uint32_t preferredVk) {
     return scanToVk;
 }
 
+bool TryResolvePreviewCodepoint(uint32_t nativeKey, int scanCode, bool shiftDown, std::uint32_t& outCodepoint) {
+    outCodepoint = 0;
+    if (nativeKey == 0 || platform::input::IsNonTextVk(nativeKey)) {
+        return false;
+    }
+
+    if (GlfwGetKeyNameFn getKeyName = GetGlfwGetKeyNameFn()) {
+        if (TryDecodeFirstUtf8Codepoint(getKeyName(static_cast<int>(nativeKey), scanCode), outCodepoint)) {
+            if (shiftDown &&
+                outCodepoint >= static_cast<std::uint32_t>('a') &&
+                outCodepoint <= static_cast<std::uint32_t>('z')) {
+                outCodepoint = static_cast<std::uint32_t>('A' + (outCodepoint - static_cast<std::uint32_t>('a')));
+            }
+            return outCodepoint != 0;
+        }
+    }
+
+    return false;
+}
+
 bool HasExplicitTextOverride(const platform::config::KeyRebind& rebind) {
     return rebind.useCustomOutput &&
-           (rebind.customOutputVK != 0 || rebind.customOutputUnicode != 0 || rebind.customOutputShiftUnicode != 0);
+           (platform::input::IsValidBindingKey(rebind.customOutputKey) || rebind.customOutputUnicode != 0 ||
+            rebind.customOutputShiftUnicode != 0);
 }
 
 bool HasCustomUnicodeTextOutput(const platform::config::KeyRebind& rebind) {
     return rebind.useCustomOutput && (rebind.customOutputUnicode != 0 || rebind.customOutputShiftUnicode != 0);
 }
 
-platform::input::VkCode ResolvePreviewTriggerVk(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
-    platform::input::VkCode triggerVk = static_cast<platform::input::VkCode>(rebind.toKey);
-    if (triggerVk == platform::input::VK_NONE) {
-        triggerVk = static_cast<platform::input::VkCode>(originalVk);
+platform::input::BindingKey ResolvePreviewTriggerBinding(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
+    if (platform::input::IsValidBindingKey(rebind.toInput)) {
+        return rebind.toInput;
     }
-
-    const int preferredScan = (rebind.useCustomOutput && rebind.customOutputScanCode != 0)
-                                  ? static_cast<int>(rebind.customOutputScanCode)
-                                  : 0;
-    return platform::input::NormalizeModifierVkFromConfig(triggerVk, preferredScan);
+    return BindingFromLegacyUiVk(originalVk);
 }
 
-platform::input::VkCode ResolvePreviewTextVk(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
-    const platform::input::VkCode triggerVk = ResolvePreviewTriggerVk(rebind, originalVk);
-    if (platform::input::IsModifierVk(triggerVk)) {
-        return triggerVk;
+platform::input::BindingKey ResolvePreviewTextBinding(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
+    if (rebind.useCustomOutput && platform::input::IsValidBindingKey(rebind.customOutputKey)) {
+        return rebind.customOutputKey;
     }
-
-    const platform::input::VkCode textBase =
-        (rebind.useCustomOutput && rebind.customOutputVK != 0) ? static_cast<platform::input::VkCode>(rebind.customOutputVK) : triggerVk;
-    const int outputScanCode = (rebind.useCustomOutput && rebind.customOutputScanCode != 0)
-                                   ? static_cast<int>(rebind.customOutputScanCode)
-                                   : GetDerivedX11ScanCodeForVk(triggerVk);
-    return platform::input::NormalizeModifierVkFromConfig(textBase, outputScanCode);
+    return ResolvePreviewTriggerBinding(rebind, originalVk);
 }
 
 std::string CodepointToPreviewDisplay(std::uint32_t codepoint) {
@@ -830,13 +1028,17 @@ std::string CodepointToPreviewDisplay(std::uint32_t codepoint) {
     return CodepointToDisplay(codepoint);
 }
 
-std::string FormatCannotTypePreview(platform::input::VkCode textVk, uint32_t originalVk) {
-    const uint32_t displayVk = (textVk != platform::input::VK_NONE) ? static_cast<uint32_t>(textVk) : originalVk;
-    return "Cannot type (" + FormatSingleVk(displayVk) + ")";
+std::string FormatCannotTypePreview(const platform::input::BindingKey& textBinding, uint32_t originalVk) {
+    if (platform::input::IsValidBindingKey(textBinding)) {
+        return "Cannot type (" + FormatSingleBinding(textBinding) + ")";
+    }
+    return "Cannot type (" + FormatSingleVk(originalVk) + ")";
 }
 
 std::string ResolveRebindTextPreview(const platform::config::KeyRebind& rebind, uint32_t originalVk, bool shiftDown) {
-    const platform::input::VkCode textVk = ResolvePreviewTextVk(rebind, originalVk);
+    const platform::input::BindingKey textBinding = ResolvePreviewTextBinding(rebind, originalVk);
+    const uint32_t textVk = LegacyUiVkFromBinding(textBinding);
+    const int textScanCode = platform::input::IsKeyboardBindingKey(textBinding) ? textBinding.code : 0;
 
     if (shiftDown &&
         IsValidUnicodeScalar(rebind.customOutputShiftUnicode) &&
@@ -850,18 +1052,18 @@ std::string ResolveRebindTextPreview(const platform::config::KeyRebind& rebind, 
 
     std::uint32_t translated = 0;
     if (!platform::input::IsNonTextVk(textVk) &&
-        platform::input::TryMapVkToCodepoint(textVk, shiftDown, translated) &&
+        TryResolvePreviewCodepoint(textVk, textScanCode, shiftDown, translated) &&
         translated != 0) {
         return CodepointToPreviewDisplay(translated);
     }
 
     if (platform::input::IsNonTextVk(textVk)) {
-        return FormatCannotTypePreview(textVk, originalVk);
+        return FormatCannotTypePreview(textBinding, originalVk);
     }
-    if (textVk != platform::input::VK_NONE) {
-        return FormatSingleVk(textVk);
+    if (platform::input::IsValidBindingKey(textBinding)) {
+        return FormatSingleBinding(textBinding);
     }
-    return FormatCannotTypePreview(textVk, originalVk);
+    return FormatCannotTypePreview(textBinding, originalVk);
 }
 
 std::string TypesValueForRebind(const platform::config::KeyRebind* rebind, uint32_t originalVk) {
@@ -877,23 +1079,24 @@ std::string TypesValueForRebind(const platform::config::KeyRebind* rebind, uint3
         return baseDisplay + " / " + shiftDisplay;
     }
 
-    const platform::input::VkCode textVk = ResolvePreviewTextVk(*rebind, originalVk);
+    const platform::input::BindingKey textBinding = ResolvePreviewTextBinding(*rebind, originalVk);
+    const uint32_t textVk = LegacyUiVkFromBinding(textBinding);
     if (platform::input::IsNonTextVk(textVk)) {
-        return FormatCannotTypePreview(textVk, originalVk);
+        return FormatCannotTypePreview(textBinding, originalVk);
     }
-    const uint32_t displayVk = (textVk != platform::input::VK_NONE) ? static_cast<uint32_t>(textVk) : originalVk;
-    return FormatSingleVk(displayVk);
+    if (platform::input::IsValidBindingKey(textBinding)) {
+        return FormatSingleBinding(textBinding);
+    }
+    return FormatSingleVk(originalVk);
 }
 
 std::string TriggersValueForRebind(const platform::config::KeyRebind* rebind, uint32_t originalVk) {
-    uint32_t triggerVk = rebind ? rebind->toKey : originalVk;
-    if (triggerVk == 0) {
-        triggerVk = originalVk;
+    const platform::input::BindingKey triggerBinding =
+        rebind ? ResolvePreviewTriggerBinding(*rebind, originalVk) : BindingFromLegacyUiVk(originalVk);
+    if (platform::input::IsValidBindingKey(triggerBinding)) {
+        return FormatSingleBinding(triggerBinding);
     }
-    const int scanCode = (rebind && rebind->useCustomOutput && rebind->customOutputScanCode != 0)
-                             ? static_cast<int>(rebind->customOutputScanCode)
-                             : GetDerivedX11ScanCodeForVk(triggerVk);
-    return FormatScanDisplay(scanCode, triggerVk);
+    return FormatSingleVk(originalVk);
 }
 
 struct RebindButtonPalette {
@@ -1091,12 +1294,12 @@ bool ShouldWarnAboutHotkeySlotRepeatRate(int effectiveRepeatDelayMs) {
 }
 
 std::string BuildCompactRebindLine(const platform::config::KeyRebind* rebind, uint32_t originalVk, float buttonWidth) {
-    if (!rebind || rebind->fromKey == 0) {
+    if (!rebind || !platform::input::IsValidBindingKey(rebind->fromInput)) {
         return std::string();
     }
 
     const RebindInputState state = GetRebindInputState(*rebind);
-    if (rebind->toKey == 0) {
+    if (!platform::input::IsValidBindingKey(rebind->toInput)) {
         return std::string();
     }
 

@@ -23,11 +23,10 @@ int VkToGlfwKey(uint32_t vk);
 int VkToGlfwMouseButton(uint32_t vk);
 InputAction GlfwActionToInputAction(int action);
 
-bool IsMouseVk(VkCode vk);
 bool IsKeyboardVk(VkCode vk);
 bool IsNonTextVk(VkCode vk);
-VkCode NormalizeModifierVkFromConfig(VkCode vk, int nativeScanCode = 0);
-bool MatchesRebindSourceVk(VkCode incomingVk, VkCode fromKey);
-bool TryMapVkToCodepoint(VkCode vk, bool shiftDown, std::uint32_t& outCodepoint);
+bool IsModifierScanCode(int nativeScanCode);
+bool IsModifierGlfwKey(int key);
+bool IsShiftGlfwKey(int key);
 
 } // namespace platform::input

@@ -4,7 +4,7 @@ fpsLimit = 0
 guiFontPath = ''
 guiFontSize = 20
 guiHeight = 818
-guiHotkey = [ 162, 73 ]
+guiHotkey = []
 guiOpacity = 1.0
 guiScale = 1.25
 guiTheme = 'Monokai'
@@ -64,40 +64,40 @@ enabled = false
 [[hotkey]]
 altSecondaryModes = []
 debounce = 100
-keys = [ 90 ]
+keys = [ { kind = 'keyboard', code = 52 } ]
 mainMode = 'Fullscreen'
 secondaryMode = 'Thin'
 triggerOnHold = false
 triggerOnRelease = false
 
     [hotkey.conditions]
-    exclusions = [ 114 ]
+    exclusions = [ { kind = 'keyboard', code = 69 } ]
     gameState = []
 
 [[hotkey]]
 altSecondaryModes = []
 debounce = 100
-keys = [ 74 ]
+keys = [ { kind = 'keyboard', code = 44 } ]
 mainMode = 'Fullscreen'
 secondaryMode = 'EyeZoom'
 triggerOnHold = false
 triggerOnRelease = false
 
     [hotkey.conditions]
-    exclusions = [ 114 ]
+    exclusions = [ { kind = 'keyboard', code = 69 } ]
     gameState = []
 
 [[hotkey]]
 altSecondaryModes = []
 debounce = 100
-keys = [ 164 ]
+keys = [ { kind = 'keyboard', code = 64 } ]
 mainMode = 'Fullscreen'
 secondaryMode = 'Wide'
 triggerOnHold = false
 triggerOnRelease = false
 
     [hotkey.conditions]
-    exclusions = [ 114 ]
+    exclusions = [ { kind = 'keyboard', code = 69 } ]
     gameState = []
 
 [[mirror]]

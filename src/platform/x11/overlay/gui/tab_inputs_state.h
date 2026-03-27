@@ -2,6 +2,8 @@
 
 #include "../overlay_internal.h"
 
+#include <cstdint>
+
 namespace platform::x11 {
 
 struct HotkeyEditorState {
@@ -14,8 +16,9 @@ struct HotkeyCaptureModalState {
     bool initialized = false;
     std::uint64_t lastSequence = 0;
     bool hadKeysPressed = false;
-    std::vector<uint32_t> bindingKeys;
-    std::set<uint32_t> currentlyPressed;
+    std::vector<platform::input::BindingKey> bindingKeys;
+    std::vector<platform::config::CapturedBindingKey> bindingDetails;
+    std::set<std::int64_t> currentlyPressed;
 };
 extern HotkeyCaptureModalState g_hotkeyCaptureModalState;
 
@@ -30,6 +33,7 @@ struct RebindLayoutState {
     bool keyboardLayoutCloseRequested = false;
     std::uint64_t keyboardLayoutOpenSequence = 0;
     float keyboardLayoutScale = 1.40f;
+    platform::input::BindingKey contextBinding;
     uint32_t contextVk = 0;
     int contextPreferredIndex = -1;
     RebindLayoutBindTarget bindTarget = RebindLayoutBindTarget::Unset;
@@ -38,6 +42,7 @@ struct RebindLayoutState {
     int unicodeEditIndex = -1;
     std::string unicodeEditText;
     std::string unicodeShiftEditText;
+    platform::input::BindingKey customDraftInputBinding;
     uint32_t customDraftInputVk = 0;
     std::string customDraftName;
     bool reopenContextPopupAfterCapture = false;

@@ -39,18 +39,30 @@ struct CaptureResult {
     CaptureCompletion completion = CaptureCompletion::None;
 };
 
+struct CapturedBindingKey {
+    input::BindingKey binding;
+    input::VkCode vk = input::VK_NONE;
+    int nativeKey = 0;
+    int nativeScanCode = 0;
+    bool isMouseButton = false;
+    bool isModifier = false;
+};
+
 struct BindingInputEvent {
     std::uint64_t sequence = 0;
+    input::BindingKey binding;
     input::VkCode vk = input::VK_NONE;
+    int nativeKey = 0;
     int nativeScanCode = 0;
     int nativeMods = 0;
     bool isMouseButton = false;
+    bool isModifier = false;
     input::InputAction action = input::InputAction::Unknown;
 };
 
 extern std::atomic<bool> g_hotkeyCapturing;
 extern std::mutex g_capturedKeysMutex;
-extern std::vector<uint32_t> g_capturedKeys;
+extern std::vector<CapturedBindingKey> g_capturedBindingKeys;
 extern std::atomic<bool> g_hotkeyCaptureDone;
 extern std::atomic<CaptureTarget> g_captureTarget;
 extern std::atomic<int> g_captureTargetIndex;
@@ -72,12 +84,12 @@ CaptureTarget GetCaptureTarget();
 int GetCaptureTargetIndex();
 int GetCaptureTargetSubIndex();
 
-std::vector<uint32_t> GetCapturedKeys();
+std::vector<CapturedBindingKey> GetCapturedBindingKeys();
 
 bool IsHotkeyCaptureDone(int& outHotkeyIndex);
 bool IsCaptureDone(CaptureResult& outResult);
 
-void CompleteCaptureConfirmed(const std::vector<uint32_t>& capturedKeys);
+void CompleteCaptureConfirmedDetailed(const std::vector<CapturedBindingKey>& capturedKeys);
 void CompleteCaptureCleared();
 void CompleteCaptureCanceled();
 
@@ -89,10 +101,11 @@ std::string FormatCapturedKeys();
 
 // Register the latest key/button input event for binding UIs.
 // This is independent from hotkey capture and allows popup-based bind workflows.
-void RegisterBindingInputEvent(input::VkCode vk,
-                               int nativeScanCode,
+void RegisterBindingInputEvent(input::BindingKey binding,
+                               input::VkCode displayVk,
+                               int nativeKey,
                                int nativeMods,
-                               bool isMouseButton,
+                               bool isModifier,
                                input::InputAction action);
 
 // Read/consume the latest binding event sequence. Caller stores last seen sequence.

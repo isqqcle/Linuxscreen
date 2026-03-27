@@ -33,7 +33,7 @@ public:
                                     const std::string& gameState,
                                     const std::string& currentMode,
                                     const std::string& defaultMode,
-                                    VkCode rebindTargetVk = VK_NONE);
+                                    BindingKey rebindTargetKey = {});
 
     // Reset trigger-on-release pending state and per-hotkey secondary mode state.
     // Called after config reload/transitions.

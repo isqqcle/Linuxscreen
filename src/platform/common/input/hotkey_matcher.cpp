@@ -4,18 +4,8 @@ namespace platform::input {
 
 namespace {
 
-bool MainKeyMatches(VkCode expectedMain, VkCode actualVk) {
-    if (expectedMain == actualVk) { return true; }
-
-    if (expectedMain == VK_CONTROL && (actualVk == VK_LCONTROL || actualVk == VK_RCONTROL)) { return true; }
-    if (expectedMain == VK_SHIFT && (actualVk == VK_LSHIFT || actualVk == VK_RSHIFT)) { return true; }
-    if (expectedMain == VK_MENU && (actualVk == VK_LMENU || actualVk == VK_RMENU)) { return true; }
-
-    if (actualVk == VK_CONTROL && (expectedMain == VK_LCONTROL || expectedMain == VK_RCONTROL)) { return true; }
-    if (actualVk == VK_SHIFT && (expectedMain == VK_LSHIFT || expectedMain == VK_RSHIFT)) { return true; }
-    if (actualVk == VK_MENU && (expectedMain == VK_LMENU || expectedMain == VK_RMENU)) { return true; }
-
-    return false;
+bool MainKeyMatches(const BindingKey& expectedMain, const InputEvent& triggerEvent) {
+    return expectedMain == BindingKeyFromInputEvent(triggerEvent);
 }
 
 bool IsKeyEvent(const InputEvent& e) {
@@ -30,26 +20,26 @@ bool IsTriggerAction(const InputEvent& event, bool triggerOnRelease) {
     return event.action == InputAction::Press;
 }
 
-bool RequiredKeyDown(const KeyStateTracker& tracker, VkCode requiredKey) {
-    if (requiredKey == VK_CONTROL) { return tracker.IsAnyCtrlDown(); }
-    if (requiredKey == VK_SHIFT) { return tracker.IsAnyShiftDown(); }
-    if (requiredKey == VK_MENU) { return tracker.IsAnyAltDown(); }
-    return tracker.IsDown(requiredKey);
+bool RequiredKeyDown(const KeyStateTracker& tracker, const BindingKey& requiredKey) {
+    return tracker.IsBindingDown(requiredKey);
 }
 
 } // namespace
 
-bool MatchesHotkey(const KeyStateTracker& tracker, const std::vector<VkCode>& keys, const InputEvent& triggerEvent,
-                  const std::vector<VkCode>& exclusionKeys, bool triggerOnRelease) {
+bool MatchesHotkey(const KeyStateTracker& tracker,
+                   const std::vector<BindingKey>& keys,
+                   const InputEvent& triggerEvent,
+                   const std::vector<BindingKey>& exclusionKeys,
+                   bool triggerOnRelease) {
     if (keys.empty()) { return false; }
     if (!IsTriggerAction(triggerEvent, triggerOnRelease)) { return false; }
 
-    const VkCode mainKey = keys.back();
-    if (!MainKeyMatches(mainKey, triggerEvent.vk)) { return false; }
+    const BindingKey& mainKey = keys.back();
+    if (!MainKeyMatches(mainKey, triggerEvent)) { return false; }
 
     if (!triggerOnRelease) {
-        for (VkCode excluded : exclusionKeys) {
-            if (excluded == VK_NONE) { continue; }
+        for (const BindingKey& excluded : exclusionKeys) {
+            if (!IsValidBindingKey(excluded)) { continue; }
             if (RequiredKeyDown(tracker, excluded)) { return false; }
         }
     }
@@ -57,8 +47,8 @@ bool MatchesHotkey(const KeyStateTracker& tracker, const std::vector<VkCode>& ke
     if (triggerOnRelease) { return true; }
 
     for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
-        const VkCode requiredKey = keys[i];
-        if (requiredKey == VK_NONE) { continue; }
+        const BindingKey& requiredKey = keys[i];
+        if (!IsValidBindingKey(requiredKey)) { continue; }
         if (!RequiredKeyDown(tracker, requiredKey)) { return false; }
     }
 

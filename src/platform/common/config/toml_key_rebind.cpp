@@ -23,16 +23,21 @@ void ParseKeyRebindUnicodeField(const toml::table& tbl, const char* fieldName, s
 } // namespace
 
 void KeyRebindToToml(const KeyRebind& cfg, toml::table& out) {
-    out.insert("fromKey", static_cast<int64_t>(cfg.fromKey));
-    out.insert("toKey", static_cast<int64_t>(cfg.toKey));
+    if (input::IsValidBindingKey(cfg.fromInput)) {
+        out.insert("fromInput", BindingKeyToToml(cfg.fromInput));
+    }
+    if (input::IsValidBindingKey(cfg.toInput)) {
+        out.insert("toInput", BindingKeyToToml(cfg.toInput));
+    }
     out.insert("enabled", cfg.enabled);
     out.insert("consumeSourceInput", cfg.consumeSourceInput);
     out.insert("name", cfg.name);
     out.insert("useCustomOutput", cfg.useCustomOutput);
-    out.insert("customOutputVK", static_cast<int64_t>(cfg.customOutputVK));
+    if (input::IsValidBindingKey(cfg.customOutputKey)) {
+        out.insert("customOutputKey", BindingKeyToToml(cfg.customOutputKey));
+    }
     out.insert("customOutputUnicode", static_cast<int64_t>(cfg.customOutputUnicode));
     out.insert("customOutputShiftUnicode", static_cast<int64_t>(cfg.customOutputShiftUnicode));
-    out.insert("customOutputScanCode", static_cast<int64_t>(cfg.customOutputScanCode));
     out.insert("keyRepeatDisabled", cfg.keyRepeatDisabled);
     out.insert("keyRepeatStartDelay", cfg.keyRepeatStartDelay);
     out.insert("keyRepeatDelay", cfg.keyRepeatDelay);
@@ -40,14 +45,19 @@ void KeyRebindToToml(const KeyRebind& cfg, toml::table& out) {
 
 KeyRebind KeyRebindFromToml(const toml::table& tbl) {
     KeyRebind cfg;
-    cfg.fromKey = static_cast<uint32_t>(GetOr<int64_t>(tbl, "fromKey", 0));
-    cfg.toKey = static_cast<uint32_t>(GetOr<int64_t>(tbl, "toKey", 0));
+    if (const toml::node* fromInputNode = tbl.get("fromInput")) {
+        cfg.fromInput = BindingKeyFromTomlNode(*fromInputNode);
+    }
+    if (const toml::node* toInputNode = tbl.get("toInput")) {
+        cfg.toInput = BindingKeyFromTomlNode(*toInputNode);
+    }
     cfg.enabled = GetOr(tbl, "enabled", true);
     cfg.consumeSourceInput = GetOr(tbl, "consumeSourceInput", false);
     cfg.name = GetStringOr(tbl, "name", "");
     cfg.useCustomOutput = GetOr(tbl, "useCustomOutput", false);
-    cfg.customOutputVK = static_cast<uint32_t>(GetOr<int64_t>(tbl, "customOutputVK", 0));
-    cfg.customOutputScanCode = static_cast<uint32_t>(GetOr<int64_t>(tbl, "customOutputScanCode", 0));
+    if (const toml::node* customOutputNode = tbl.get("customOutputKey")) {
+        cfg.customOutputKey = BindingKeyFromTomlNode(*customOutputNode);
+    }
     cfg.keyRepeatDisabled = GetOr(tbl, "keyRepeatDisabled", false);
     cfg.keyRepeatStartDelay = std::clamp(GetOr(tbl, "keyRepeatStartDelay", 0), 0, 500);
     cfg.keyRepeatDelay = std::clamp(GetOr(tbl, "keyRepeatDelay", 0), 0, 500);
@@ -61,11 +71,9 @@ void KeyRebindsConfigToToml(const KeyRebindsConfig& cfg, toml::table& out) {
     out.insert("enabled", cfg.enabled);
     out.insert("resolveRebindTargetsForHotkeys", cfg.resolveRebindTargetsForHotkeys);
 
-    toml::array toggleHotkeyArr;
-    for (const auto key : cfg.toggleHotkey) {
-        toggleHotkeyArr.push_back(static_cast<int64_t>(key));
+    if (!cfg.toggleHotkey.empty()) {
+        out.insert("toggleHotkey", BindingKeysToToml(cfg.toggleHotkey));
     }
-    out.insert("toggleHotkey", toggleHotkeyArr);
 
     toml::array rebindsArr;
     for (const auto& rebind : cfg.rebinds) {
@@ -82,13 +90,7 @@ KeyRebindsConfig KeyRebindsConfigFromToml(const toml::table& tbl) {
     cfg.enabled = GetOr(tbl, "enabled", false);
     cfg.resolveRebindTargetsForHotkeys = GetOr(tbl, "resolveRebindTargetsForHotkeys", true);
 
-    if (auto toggleHotkeyArr = GetArray(tbl, "toggleHotkey")) {
-        for (const auto& elem : *toggleHotkeyArr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.toggleHotkey.push_back(static_cast<uint32_t>(*val));
-            }
-        }
-    }
+    cfg.toggleHotkey = BindingKeysFromToml(tbl, "toggleHotkey");
 
     if (auto rebindsArr = GetArray(tbl, "rebinds")) {
         for (const auto& elem : *rebindsArr) {

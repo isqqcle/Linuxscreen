@@ -190,7 +190,7 @@ void RenderSensitivityHotkeysSection(platform::config::LinuxscreenConfig& config
                 if (!sensitivityHotkey.conditions.exclusions.empty()) {
                     if (ImGui::BeginTable("##sensexcltable", 2, ImGuiTableFlags_SizingStretchSame)) {
                         for (size_t exclusionIndex = 0; exclusionIndex < sensitivityHotkey.conditions.exclusions.size(); ++exclusionIndex) {
-                            const uint32_t exclusionVk = sensitivityHotkey.conditions.exclusions[exclusionIndex];
+                            const auto exclusionBinding = sensitivityHotkey.conditions.exclusions[exclusionIndex];
                             ImGui::PushID(static_cast<int>(exclusionIndex));
                             ImGui::TableNextRow();
 
@@ -200,7 +200,8 @@ void RenderSensitivityHotkeysSection(platform::config::LinuxscreenConfig& config
                                                             captureTargetIndex == static_cast<int>(i) &&
                                                             captureSubIndex == static_cast<int>(exclusionIndex);
                             const std::string exclusionLabel =
-                                (exclusionCapturing ? std::string("Capturing...") : FormatSingleVk(exclusionVk)) + "##sensexclbind";
+                                (exclusionCapturing ? std::string("Capturing...") : FormatSingleBinding(exclusionBinding)) +
+                                "##sensexclbind";
                             if (AnimatedButton(exclusionLabel.c_str(), ImVec2(-1.0f, 0.0f))) {
                                 platform::config::StartSensitivityExclusionCapture(static_cast<int>(i), static_cast<int>(exclusionIndex));
                             }
@@ -258,7 +259,7 @@ void RenderSensitivityHotkeysSection(platform::config::LinuxscreenConfig& config
 
     if (AnimatedButton("Add Sensitivity Hotkey")) {
         platform::config::SensitivityHotkeyConfig hotkey;
-        hotkey.keys.push_back(static_cast<uint32_t>(platform::input::VK_F1));
+        hotkey.keys.push_back(platform::input::MakeKeyboardBindingKey(67));
         config.sensitivityHotkeys.push_back(std::move(hotkey));
         AutoSaveConfig(config);
     }

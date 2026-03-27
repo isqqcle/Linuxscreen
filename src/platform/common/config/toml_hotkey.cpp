@@ -5,11 +5,9 @@ void HotkeyConditionsToToml(const HotkeyConditions& cfg, toml::table& out) {
     }
     out.insert("gameState", gameStateArr);
 
-    toml::array exclusionsArr;
-    for (const auto exclusion : cfg.exclusions) {
-        exclusionsArr.push_back(static_cast<int64_t>(exclusion));
+    if (!cfg.exclusions.empty()) {
+        out.insert("exclusions", BindingKeysToToml(cfg.exclusions));
     }
-    out.insert("exclusions", exclusionsArr);
 }
 
 HotkeyConditions HotkeyConditionsFromToml(const toml::table& tbl) {
@@ -23,47 +21,31 @@ HotkeyConditions HotkeyConditionsFromToml(const toml::table& tbl) {
         }
     }
 
-    if (auto exclusionsArr = GetArray(tbl, "exclusions")) {
-        for (const auto& elem : *exclusionsArr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.exclusions.push_back(static_cast<uint32_t>(*val));
-            }
-        }
-    }
+    cfg.exclusions = BindingKeysFromToml(tbl, "exclusions");
 
     return cfg;
 }
 
 void AltSecondaryModeToToml(const AltSecondaryModeConfig& cfg, toml::table& out) {
-    toml::array keysArr;
-    for (const auto key : cfg.keys) {
-        keysArr.push_back(static_cast<int64_t>(key));
+    if (!cfg.keys.empty()) {
+        out.insert("keys", BindingKeysToToml(cfg.keys));
     }
-    out.insert("keys", keysArr);
     out.insert("mode", cfg.mode);
 }
 
 AltSecondaryModeConfig AltSecondaryModeFromToml(const toml::table& tbl) {
     AltSecondaryModeConfig cfg;
 
-    if (auto keysArr = GetArray(tbl, "keys")) {
-        for (const auto& elem : *keysArr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.keys.push_back(static_cast<uint32_t>(*val));
-            }
-        }
-    }
+    cfg.keys = BindingKeysFromToml(tbl, "keys");
 
     cfg.mode = GetStringOr(tbl, "mode", "");
     return cfg;
 }
 
 void HotkeyConfigToToml(const HotkeyConfig& cfg, toml::table& out) {
-    toml::array keysArr;
-    for (auto key : cfg.keys) {
-        keysArr.push_back(static_cast<int64_t>(key));
+    if (!cfg.keys.empty()) {
+        out.insert("keys", BindingKeysToToml(cfg.keys));
     }
-    out.insert("keys", keysArr);
     out.insert("mainMode", cfg.mainMode);
     out.insert("secondaryMode", cfg.secondaryMode);
     out.insert("returnMode", cfg.returnMode);
@@ -91,13 +73,7 @@ void HotkeyConfigToToml(const HotkeyConfig& cfg, toml::table& out) {
 HotkeyConfig HotkeyConfigFromToml(const toml::table& tbl) {
     HotkeyConfig cfg;
     
-    if (auto arr = GetArray(tbl, "keys")) {
-        for (const auto& elem : *arr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.keys.push_back(static_cast<uint32_t>(*val));
-            }
-        }
-    }
+    cfg.keys = BindingKeysFromToml(tbl, "keys");
     
     cfg.mainMode = GetStringOr(tbl, "mainMode", "");
     cfg.secondaryMode = GetStringOr(tbl, "secondaryMode", "");
@@ -126,11 +102,9 @@ HotkeyConfig HotkeyConfigFromToml(const toml::table& tbl) {
 }
 
 void SensitivityHotkeyConfigToToml(const SensitivityHotkeyConfig& cfg, toml::table& out) {
-    toml::array keysArr;
-    for (auto key : cfg.keys) {
-        keysArr.push_back(static_cast<int64_t>(key));
+    if (!cfg.keys.empty()) {
+        out.insert("keys", BindingKeysToToml(cfg.keys));
     }
-    out.insert("keys", keysArr);
     out.insert("sensitivity", static_cast<double>(cfg.sensitivity));
     out.insert("separateXY", cfg.separateXY);
     out.insert("sensitivityX", static_cast<double>(cfg.sensitivityX));
@@ -147,13 +121,7 @@ void SensitivityHotkeyConfigToToml(const SensitivityHotkeyConfig& cfg, toml::tab
 SensitivityHotkeyConfig SensitivityHotkeyConfigFromToml(const toml::table& tbl) {
     SensitivityHotkeyConfig cfg;
 
-    if (auto arr = GetArray(tbl, "keys")) {
-        for (const auto& elem : *arr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.keys.push_back(static_cast<uint32_t>(*val));
-            }
-        }
-    }
+    cfg.keys = BindingKeysFromToml(tbl, "keys");
 
     cfg.sensitivity = static_cast<float>(GetOr(tbl, "sensitivity", 1.0));
     cfg.separateXY = GetOr(tbl, "separateXY", false);

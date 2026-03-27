@@ -119,15 +119,25 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
     // Check for completed input capture
     platform::config::CaptureResult captureResult;
     if (platform::config::IsCaptureDone(captureResult)) {
-        std::vector<uint32_t> capturedKeys = platform::config::GetCapturedKeys();
+        const std::vector<platform::config::CapturedBindingKey> capturedBindingKeys =
+            platform::config::GetCapturedBindingKeys();
+        std::vector<platform::input::BindingKey> capturedBindings;
+        capturedBindings.reserve(capturedBindingKeys.size());
+        for (const auto& key : capturedBindingKeys) {
+            if (platform::input::IsValidBindingKey(key.binding)) {
+                capturedBindings.push_back(key.binding);
+            }
+        }
         if (captureResult.completion != platform::config::CaptureCompletion::Canceled) {
             const bool confirmed = captureResult.completion == platform::config::CaptureCompletion::Confirmed;
             const bool cleared = captureResult.completion == platform::config::CaptureCompletion::Cleared;
 
             if (captureResult.target == platform::config::CaptureTarget::RebindDraftInput) {
-                if (confirmed && !capturedKeys.empty()) {
-                    g_rebindLayoutState.customDraftInputVk = capturedKeys.back();
+                if (confirmed && !capturedBindings.empty()) {
+                    g_rebindLayoutState.customDraftInputBinding = capturedBindings.back();
+                    g_rebindLayoutState.customDraftInputVk = 0;
                 } else if (cleared) {
+                    g_rebindLayoutState.customDraftInputBinding = {};
                     g_rebindLayoutState.customDraftInputVk = 0;
                 }
             } else {
@@ -138,7 +148,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
 
                     if (captureResult.target == platform::config::CaptureTarget::GuiHotkey) {
                         if (confirmed) {
-                            mutableConfig.guiHotkey = capturedKeys;
+                            mutableConfig.guiHotkey = capturedBindings;
                             changed = true;
                         } else if (cleared) {
                             mutableConfig.guiHotkey.clear();
@@ -146,7 +156,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                         }
                     } else if (captureResult.target == platform::config::CaptureTarget::RebindToggleHotkey) {
                         if (confirmed) {
-                            mutableConfig.rebindToggleHotkey = capturedKeys;
+                            mutableConfig.rebindToggleHotkey = capturedBindings;
                             changed = true;
                         } else if (cleared) {
                             mutableConfig.rebindToggleHotkey.clear();
@@ -155,7 +165,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                     } else if (captureResult.target == platform::config::CaptureTarget::Hotkey) {
                         if (captureResult.targetIndex >= 0 && captureResult.targetIndex < static_cast<int>(mutableConfig.hotkeys.size())) {
                             if (confirmed) {
-                                mutableConfig.hotkeys[captureResult.targetIndex].keys = capturedKeys;
+                                mutableConfig.hotkeys[captureResult.targetIndex].keys = capturedBindings;
                                 changed = true;
                             } else if (cleared) {
                                 mutableConfig.hotkeys[captureResult.targetIndex].keys.clear();
@@ -166,7 +176,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                         if (captureResult.targetIndex >= 0 &&
                             captureResult.targetIndex < static_cast<int>(mutableConfig.sensitivityHotkeys.size())) {
                             if (confirmed) {
-                                mutableConfig.sensitivityHotkeys[captureResult.targetIndex].keys = capturedKeys;
+                                mutableConfig.sensitivityHotkeys[captureResult.targetIndex].keys = capturedBindings;
                                 changed = true;
                             } else if (cleared) {
                                 mutableConfig.sensitivityHotkeys[captureResult.targetIndex].keys.clear();
@@ -179,7 +189,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                             if (captureResult.targetSubIndex >= 0 &&
                                 captureResult.targetSubIndex < static_cast<int>(alts.size())) {
                                 if (confirmed) {
-                                    alts[captureResult.targetSubIndex].keys = capturedKeys;
+                                    alts[captureResult.targetSubIndex].keys = capturedBindings;
                                     changed = true;
                                 } else if (cleared) {
                                     alts[captureResult.targetSubIndex].keys.clear();
@@ -188,32 +198,32 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                             }
                         }
                     } else if (captureResult.target == platform::config::CaptureTarget::Exclusion) {
-                        if (confirmed && !capturedKeys.empty() &&
+                        if (confirmed && !capturedBindings.empty() &&
                             captureResult.targetIndex >= 0 &&
                             captureResult.targetIndex < static_cast<int>(mutableConfig.hotkeys.size())) {
                             auto& exclusions = mutableConfig.hotkeys[captureResult.targetIndex].conditions.exclusions;
-                            const uint32_t capturedVk = capturedKeys.back();
+                            const platform::input::BindingKey capturedBinding = capturedBindings.back();
                             if (captureResult.targetSubIndex >= 0 &&
                                 captureResult.targetSubIndex < static_cast<int>(exclusions.size())) {
-                                exclusions[captureResult.targetSubIndex] = capturedVk;
+                                exclusions[captureResult.targetSubIndex] = capturedBinding;
                                 changed = true;
                             } else if (captureResult.targetSubIndex == static_cast<int>(exclusions.size())) {
-                                exclusions.push_back(capturedVk);
+                                exclusions.push_back(capturedBinding);
                                 changed = true;
                             }
                         }
                     } else if (captureResult.target == platform::config::CaptureTarget::SensitivityExclusion) {
-                        if (confirmed && !capturedKeys.empty() &&
+                        if (confirmed && !capturedBindings.empty() &&
                             captureResult.targetIndex >= 0 &&
                             captureResult.targetIndex < static_cast<int>(mutableConfig.sensitivityHotkeys.size())) {
                             auto& exclusions = mutableConfig.sensitivityHotkeys[captureResult.targetIndex].conditions.exclusions;
-                            const uint32_t capturedVk = capturedKeys.back();
+                            const platform::input::BindingKey capturedBinding = capturedBindings.back();
                             if (captureResult.targetSubIndex >= 0 &&
                                 captureResult.targetSubIndex < static_cast<int>(exclusions.size())) {
-                                exclusions[captureResult.targetSubIndex] = capturedVk;
+                                exclusions[captureResult.targetSubIndex] = capturedBinding;
                                 changed = true;
                             } else if (captureResult.targetSubIndex == static_cast<int>(exclusions.size())) {
-                                exclusions.push_back(capturedVk);
+                                exclusions.push_back(capturedBinding);
                                 changed = true;
                             }
                         }
@@ -223,47 +233,43 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                         if (captureResult.targetIndex >= 0 &&
                             captureResult.targetIndex < static_cast<int>(mutableConfig.keyRebinds.rebinds.size())) {
                             auto& rebind = mutableConfig.keyRebinds.rebinds[captureResult.targetIndex];
-                            if (confirmed && !capturedKeys.empty()) {
-                                const uint32_t capturedVk = capturedKeys.back();
+                            if (confirmed && !capturedBindings.empty()) {
+                                const platform::input::BindingKey capturedBinding = capturedBindings.back();
                                 if (captureResult.target == platform::config::CaptureTarget::RebindFrom) {
-                                    rebind.fromKey = capturedVk;
+                                    rebind.fromInput = capturedBinding;
                                 } else if (captureResult.target == platform::config::CaptureTarget::RebindTo) {
                                     const bool hadExplicitTextOverride = HasExplicitTextOverride(rebind);
-                                    const uint32_t previousTriggerVk = rebind.toKey;
-                                    rebind.toKey = capturedVk;
+                                    const platform::input::BindingKey previousTrigger = rebind.toInput;
+                                    rebind.toInput = capturedBinding;
                                     if (!hadExplicitTextOverride &&
-                                        previousTriggerVk != 0 &&
-                                        previousTriggerVk != capturedVk) {
+                                        platform::input::IsValidBindingKey(previousTrigger) &&
+                                        previousTrigger != capturedBinding) {
                                         rebind.useCustomOutput = true;
-                                        rebind.customOutputVK = previousTriggerVk;
+                                        rebind.customOutputKey = previousTrigger;
                                         rebind.customOutputUnicode = 0;
                                         rebind.customOutputShiftUnicode = 0;
                                     }
                                 } else {
                                     rebind.useCustomOutput = true;
-                                    rebind.customOutputVK = capturedVk;
+                                    rebind.customOutputKey = capturedBinding;
                                     rebind.customOutputUnicode = 0;
                                     rebind.customOutputShiftUnicode = 0;
-                                    if (rebind.customOutputVK == rebind.toKey) {
-                                        rebind.customOutputVK = 0;
-                                        if (rebind.customOutputScanCode == 0) {
-                                            rebind.useCustomOutput = false;
-                                        }
+                                    if (rebind.customOutputKey == rebind.toInput) {
+                                        rebind.customOutputKey = {};
+                                        rebind.useCustomOutput = false;
                                     }
                                 }
                                 changed = true;
                             } else if (cleared) {
                                 if (captureResult.target == platform::config::CaptureTarget::RebindFrom) {
-                                    rebind.fromKey = 0;
+                                    rebind.fromInput = {};
                                 } else if (captureResult.target == platform::config::CaptureTarget::RebindTo) {
-                                    rebind.toKey = 0;
+                                    rebind.toInput = {};
                                 } else {
-                                    rebind.customOutputVK = 0;
+                                    rebind.customOutputKey = {};
                                     rebind.customOutputUnicode = 0;
                                     rebind.customOutputShiftUnicode = 0;
-                                    if (rebind.customOutputScanCode == 0) {
-                                        rebind.useCustomOutput = false;
-                                    }
+                                    rebind.useCustomOutput = false;
                                 }
                                 changed = true;
                             }
@@ -272,8 +278,8 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                                 captureResult.targetIndex >= 0 &&
                                 captureResult.targetIndex < static_cast<int>(mutableConfig.keyRebinds.rebinds.size())) {
                                 const auto& updatedRebind = mutableConfig.keyRebinds.rebinds[captureResult.targetIndex];
-                                if (updatedRebind.fromKey == 0 ||
-                                    IsNoOpRebindForKey(updatedRebind, updatedRebind.fromKey)) {
+                                if (!platform::input::IsValidBindingKey(updatedRebind.fromInput) ||
+                                    IsNoOpRebindForKey(updatedRebind, updatedRebind.fromInput)) {
                                     EraseRebindAdjustingLayoutState(mutableConfig, captureResult.targetIndex);
                                 }
                             }

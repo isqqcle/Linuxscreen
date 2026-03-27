@@ -129,6 +129,7 @@ using GlfwDestroyWindowFn = void (*)(GLFWwindow*);
 #endif
 using GlfwGetKeyFn = int (*)(GLFWwindow*, int);
 using GlfwGetKeyScancodeFn = int (*)(int);
+using GlfwGetKeyNameFn = const char* (*)(int, int);
 using GlfwGetCursorPosProc = void (*)(GLFWwindow*, double*, double*);
 using GlfwSetCursorPosProc = void (*)(GLFWwindow*, double, double);
 using GlfwSetInputModeFn = void (*)(GLFWwindow*, int, int);
@@ -181,6 +182,7 @@ std::atomic<GlfwDestroyWindowFn> g_realGlfwDestroyWindow{ nullptr };
 #endif
 std::atomic<GlfwGetKeyFn> g_realGlfwGetKey{ nullptr };
 std::atomic<GlfwGetKeyScancodeFn> g_realGlfwGetKeyScancode{ nullptr };
+std::atomic<GlfwGetKeyNameFn> g_realGlfwGetKeyName{ nullptr };
 std::atomic<GlfwGetCursorPosProc> g_realGlfwGetCursorPos{ nullptr };
 std::atomic<GlfwSetCursorPosProc> g_realGlfwSetCursorPos{ nullptr };
 std::atomic<GlfwSetInputModeFn> g_realGlfwSetInputMode{ nullptr };
@@ -640,7 +642,7 @@ GlfwGetKeyFn GetRealGlfwGetKey();
 GlfwSetWindowSizeCallbackFn GetRealGlfwSetWindowSizeCallback();
 GlfwSetFramebufferSizeCallbackFn GetRealGlfwSetFramebufferSizeCallback();
 GlfwSetCharModsCallbackFn GetRealGlfwSetCharModsCallback();
-GlfwGetKeyScancodeFn GetRealGlfwGetKeyScancode();
+GlfwGetKeyNameFn GetRealGlfwGetKeyName();
 GlfwGetCursorPosProc GetRealGlfwGetCursorPos();
 GlfwSetCursorPosProc GetRealGlfwSetCursorPos();
 GlfwSetInputModeFn GetRealGlfwSetInputMode();
@@ -1377,21 +1379,11 @@ int64_t NowMs();
 bool IsGlxSharedContextEnabled() { return true; }
 
 void ApplyGuiHotkeyFromConfig(const platform::config::LinuxscreenConfig& config) {
-    std::vector<platform::input::VkCode> guiHotkey;
-    guiHotkey.reserve(config.guiHotkey.size());
-    for (const auto key : config.guiHotkey) {
-        guiHotkey.push_back(static_cast<platform::input::VkCode>(key));
-    }
-    platform::x11::SetGuiHotkey(guiHotkey);
+    platform::x11::SetGuiHotkey(config.guiHotkey);
 }
 
 void ApplyRebindToggleHotkeyFromConfig(const platform::config::LinuxscreenConfig& config) {
-    std::vector<platform::input::VkCode> toggleHotkey;
-    toggleHotkey.reserve(config.rebindToggleHotkey.size());
-    for (const auto key : config.rebindToggleHotkey) {
-        toggleHotkey.push_back(static_cast<platform::input::VkCode>(key));
-    }
-    platform::x11::SetRebindToggleHotkey(toggleHotkey);
+    platform::x11::SetRebindToggleHotkey(config.rebindToggleHotkey);
 }
 
 void MaybeInitSharedGlxContexts(void* dpy, std::uint64_t drawable, void* context, const char* sourceLabel) {
@@ -1649,8 +1641,9 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
                                 const platform::input::KeyStateTracker& tracker,
                                 const platform::input::InputEvent& event,
                                 const std::string& gameState,
-                                platform::input::VkCode rebindTargetVk) {
-    if (event.vk == platform::input::VK_NONE) {
+                                platform::input::BindingKey rebindTargetKey) {
+    if (event.type != platform::input::InputEventType::MouseButton &&
+        !(event.type == platform::input::InputEventType::Key && event.nativeScanCode > 0)) {
         return false;
     }
 
@@ -1667,12 +1660,20 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
                                                           event,
                                                           sensitivityHotkey.conditions.exclusions,
                                                           triggerOnRelease);
-            if (matched || rebindTargetVk == platform::input::VK_NONE) {
+            if (matched || !platform::input::IsValidBindingKey(rebindTargetKey)) {
                 return matched;
             }
 
             platform::input::InputEvent fallbackEvent = event;
-            fallbackEvent.vk = rebindTargetVk;
+            if (platform::input::IsKeyboardBindingKey(rebindTargetKey)) {
+                fallbackEvent.type = platform::input::InputEventType::Key;
+                fallbackEvent.nativeScanCode = rebindTargetKey.code;
+                fallbackEvent.nativeKey = 0;
+            } else if (platform::input::IsMouseBindingKey(rebindTargetKey)) {
+                fallbackEvent.type = platform::input::InputEventType::MouseButton;
+                fallbackEvent.nativeKey = rebindTargetKey.code;
+                fallbackEvent.nativeScanCode = 0;
+            }
             matched = platform::input::MatchesHotkey(tracker,
                                                      sensitivityHotkey.keys,
                                                      fallbackEvent,

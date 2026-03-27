@@ -37,8 +37,8 @@ std::mutex g_errorMutex;
 std::string g_lastErrorMessage;
 
 std::mutex g_guiStateMutex;
-std::vector<platform::input::VkCode> g_guiHotkey = { platform::input::VK_CONTROL, static_cast<platform::input::VkCode>('I') };
-std::vector<platform::input::VkCode> g_rebindToggleHotkey;
+std::vector<platform::input::BindingKey> g_guiHotkey;
+std::vector<platform::input::BindingKey> g_rebindToggleHotkey;
 std::atomic<bool> g_guiVisible{ false };
 std::atomic<std::uint64_t> g_guiToggleCount{ 0 };
 std::atomic<bool> g_rebindToggleIndicatorEnabled{ false };
@@ -300,22 +300,22 @@ bool GetGlfwWindowMetrics(int& outWindowWidth, int& outWindowHeight, int& outFra
     return hasWindow || hasFramebuffer;
 }
 
-void SetGuiHotkey(const std::vector<platform::input::VkCode>& keys) {
+void SetGuiHotkey(const std::vector<platform::input::BindingKey>& keys) {
     std::lock_guard<std::mutex> lock(g_guiStateMutex);
     g_guiHotkey = keys;
 }
 
-std::vector<platform::input::VkCode> GetGuiHotkey() {
+std::vector<platform::input::BindingKey> GetGuiHotkey() {
     std::lock_guard<std::mutex> lock(g_guiStateMutex);
     return g_guiHotkey;
 }
 
-void SetRebindToggleHotkey(const std::vector<platform::input::VkCode>& keys) {
+void SetRebindToggleHotkey(const std::vector<platform::input::BindingKey>& keys) {
     std::lock_guard<std::mutex> lock(g_guiStateMutex);
     g_rebindToggleHotkey = keys;
 }
 
-std::vector<platform::input::VkCode> GetRebindToggleHotkey() {
+std::vector<platform::input::BindingKey> GetRebindToggleHotkey() {
     std::lock_guard<std::mutex> lock(g_guiStateMutex);
     return g_rebindToggleHotkey;
 }

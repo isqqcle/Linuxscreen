@@ -3,6 +3,8 @@
 #ifndef LINUXSCREEN_PLATFORM_COMMON_LINUXSCREEN_CONFIG_H
 #define LINUXSCREEN_PLATFORM_COMMON_LINUXSCREEN_CONFIG_H
 
+#include "input/binding_key.h"
+
 #include <array>
 #include <cstdint>
 #include <map>
@@ -231,16 +233,16 @@ struct ModeConfig {
 
 struct HotkeyConditions {
     std::vector<std::string> gameState;
-    std::vector<uint32_t> exclusions;
+    std::vector<input::BindingKey> exclusions;
 };
 
 struct AltSecondaryModeConfig {
-    std::vector<uint32_t> keys;
+    std::vector<input::BindingKey> keys;
     std::string mode;
 };
 
 struct HotkeyConfig {
-    std::vector<uint32_t> keys;
+    std::vector<input::BindingKey> keys;
     std::string mainMode;
     std::string secondaryMode;
     std::string returnMode;
@@ -255,7 +257,7 @@ struct HotkeyConfig {
 };
 
 struct SensitivityHotkeyConfig {
-    std::vector<uint32_t> keys;
+    std::vector<input::BindingKey> keys;
     float sensitivity = 1.0f;
     bool separateXY = false;
     float sensitivityX = 1.0f;
@@ -267,17 +269,16 @@ struct SensitivityHotkeyConfig {
 };
 
 struct KeyRebind {
-    uint32_t fromKey = 0;
-    uint32_t toKey = 0;
+    input::BindingKey fromInput;
+    input::BindingKey toInput;
     bool enabled = true;
     bool consumeSourceInput = false;
     std::string name;
 
     bool useCustomOutput = false;
-    uint32_t customOutputVK = 0;
+    input::BindingKey customOutputKey;
     uint32_t customOutputUnicode = 0;
     uint32_t customOutputShiftUnicode = 0;
-    uint32_t customOutputScanCode = 0;
     bool keyRepeatDisabled = false;
     int keyRepeatStartDelay = 0;
     int keyRepeatDelay = 0;
@@ -286,7 +287,7 @@ struct KeyRebind {
 struct KeyRebindsConfig {
     bool enabled = false;
     bool resolveRebindTargetsForHotkeys = true;
-    std::vector<uint32_t> toggleHotkey;
+    std::vector<input::BindingKey> toggleHotkey;
     std::vector<KeyRebind> rebinds;
 };
 
@@ -479,8 +480,8 @@ struct CalcOverlayConfig {
 struct LinuxscreenConfig {
     std::string defaultMode;
     int fpsLimit = 0;
-    std::vector<uint32_t> guiHotkey;
-    std::vector<uint32_t> rebindToggleHotkey;
+    std::vector<input::BindingKey> guiHotkey;
+    std::vector<input::BindingKey> rebindToggleHotkey;
     std::vector<MirrorConfig> mirrors;
     std::vector<MirrorGroupConfig> mirrorGroups;
     std::vector<ModeConfig> modes;

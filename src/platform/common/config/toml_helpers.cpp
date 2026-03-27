@@ -34,6 +34,75 @@ const toml::table* GetTable(const toml::table& tbl, const std::string& key) {
     return nullptr;
 }
 
+const char* BindingKeyKindToTomlString(input::BindingKeyKind kind) {
+    switch (kind) {
+    case input::BindingKeyKind::Keyboard:
+        return "keyboard";
+    case input::BindingKeyKind::MouseButton:
+        return "mouseButton";
+    case input::BindingKeyKind::None:
+    default:
+        return "none";
+    }
+}
+
+input::BindingKeyKind BindingKeyKindFromTomlString(const std::string& value) {
+    if (value == "keyboard") {
+        return input::BindingKeyKind::Keyboard;
+    }
+    if (value == "mouseButton") {
+        return input::BindingKeyKind::MouseButton;
+    }
+    return input::BindingKeyKind::None;
+}
+
+toml::table BindingKeyToToml(const input::BindingKey& key) {
+    toml::table out;
+    out.insert("kind", BindingKeyKindToTomlString(key.kind));
+    out.insert("code", static_cast<int64_t>(key.code));
+    return out;
+}
+
+input::BindingKey BindingKeyFromTomlNode(const toml::node& node) {
+    const toml::table* tbl = node.as_table();
+    if (!tbl) {
+        return {};
+    }
+
+    input::BindingKey key;
+    key.kind = BindingKeyKindFromTomlString(GetStringOr(*tbl, "kind", "none"));
+    key.code = static_cast<int>(GetOr<int64_t>(*tbl, "code", 0));
+    if (!input::IsValidBindingKey(key)) {
+        return {};
+    }
+    return key;
+}
+
+toml::array BindingKeysToToml(const std::vector<input::BindingKey>& keys) {
+    toml::array arr;
+    for (const auto& key : keys) {
+        if (!input::IsValidBindingKey(key)) {
+            continue;
+        }
+        arr.push_back(BindingKeyToToml(key));
+    }
+    return arr;
+}
+
+std::vector<input::BindingKey> BindingKeysFromToml(const toml::table& tbl, const char* key) {
+    std::vector<input::BindingKey> values;
+    if (auto arr = GetArray(tbl, key)) {
+        values.reserve(arr->size());
+        for (const auto& elem : *arr) {
+            input::BindingKey parsed = BindingKeyFromTomlNode(elem);
+            if (input::IsValidBindingKey(parsed)) {
+                values.push_back(parsed);
+            }
+        }
+    }
+    return values;
+}
+
 void EraseKey(toml::table& tbl, const char* key) {
     if (key) {
         tbl.erase(key);

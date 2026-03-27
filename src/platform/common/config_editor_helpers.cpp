@@ -144,7 +144,7 @@ ModeConfig CreateNewMode(const std::string& name) {
 
 HotkeyConfig CreateNewHotkey(const std::string& targetMode) {
     HotkeyConfig hk;
-    hk.keys = { 0x11 };  // Default to Ctrl key (VK_CONTROL)
+    hk.keys = { platform::input::MakeKeyboardBindingKey(37) };
     hk.mainMode = targetMode;
     hk.secondaryMode = "";
     hk.returnMode = "";

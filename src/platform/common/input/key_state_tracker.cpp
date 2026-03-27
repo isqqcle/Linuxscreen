@@ -18,59 +18,85 @@ void KeyStateTracker::ApplyEvent(const InputEvent& event) {
     const bool isRelease = (event.action == InputAction::Release);
     if (!isPress && !isRelease) { return; }
 
-    const std::size_t idx = ClampIndex(event.vk);
-    if (idx > 0) { m_down[idx] = isPress; }
+    if (event.type == InputEventType::Key && event.nativeScanCode > 0) {
+        if (isPress) {
+            m_downScanCodes.insert(event.nativeScanCode);
+            m_downKeyboardKeysByScanCode[event.nativeScanCode] = event.nativeKey;
+        } else {
+            m_downScanCodes.erase(event.nativeScanCode);
+            m_downKeyboardKeysByScanCode.erase(event.nativeScanCode);
+        }
+    }
+    if (event.type == InputEventType::MouseButton && event.nativeKey >= 0) {
+        if (isPress) {
+            m_downMouseButtons.insert(event.nativeKey);
+        } else {
+            m_downMouseButtons.erase(event.nativeKey);
+        }
+    }
 
-    RefreshAggregateModifiers();
 }
 
 void KeyStateTracker::Clear() {
-    m_down.fill(false);
-    RefreshAggregateModifiers();
+    m_downKeyboardKeysByScanCode.clear();
+    m_downScanCodes.clear();
+    m_downMouseButtons.clear();
 }
 
-bool KeyStateTracker::IsDown(VkCode vk) const {
-    const std::size_t idx = ClampIndex(vk);
-    if (idx == 0) { return false; }
-    return m_down[idx];
+bool KeyStateTracker::IsScanCodeDown(int nativeScanCode) const {
+    if (nativeScanCode <= 0) {
+        return false;
+    }
+    return m_downScanCodes.find(nativeScanCode) != m_downScanCodes.end();
 }
 
-bool KeyStateTracker::IsAnyCtrlDown() const { return IsDown(VK_CONTROL); }
+bool KeyStateTracker::IsAnyScanCodeDown(const std::initializer_list<int>& nativeScanCodes) const {
+    for (int nativeScanCode : nativeScanCodes) {
+        if (IsScanCodeDown(nativeScanCode)) {
+            return true;
+        }
+    }
+    return false;
+}
 
-bool KeyStateTracker::IsAnyShiftDown() const { return IsDown(VK_SHIFT); }
+bool KeyStateTracker::IsMouseButtonDown(int button) const {
+    if (button < 0) {
+        return false;
+    }
+    return m_downMouseButtons.find(button) != m_downMouseButtons.end();
+}
 
-bool KeyStateTracker::IsAnyAltDown() const { return IsDown(VK_MENU); }
+bool KeyStateTracker::IsBindingDown(const BindingKey& key) const {
+    if (IsKeyboardBindingKey(key)) {
+        return IsScanCodeDown(key.code);
+    }
+    if (IsMouseBindingKey(key)) {
+        return IsMouseButtonDown(key.code);
+    }
+    return false;
+}
 
 bool KeyStateTracker::IsFocused() const { return m_focused; }
 
-std::vector<VkCode> KeyStateTracker::GetDownKeys() const {
-    std::vector<VkCode> downKeys;
-    downKeys.reserve(32);
+std::vector<BindingKey> KeyStateTracker::GetDownBindings() const {
+    std::vector<BindingKey> downBindings;
+    downBindings.reserve(m_downScanCodes.size() + m_downMouseButtons.size());
 
-    for (std::size_t i = 1; i < kMaxTrackedVk; ++i) {
-        if (!m_down[i]) {
+    for (const auto& [scanCode, nativeKey] : m_downKeyboardKeysByScanCode) {
+        (void)nativeKey;
+        if (scanCode <= 0) {
             continue;
         }
-
-        const VkCode vk = static_cast<VkCode>(i);
-        if (vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU) {
+        downBindings.push_back(MakeKeyboardBindingKey(scanCode));
+    }
+    for (int button : m_downMouseButtons) {
+        if (button < 0) {
             continue;
         }
-        downKeys.push_back(vk);
+        downBindings.push_back(MakeMouseButtonBindingKey(button));
     }
 
-    return downKeys;
-}
-
-void KeyStateTracker::RefreshAggregateModifiers() {
-    m_down[ClampIndex(VK_CONTROL)] = m_down[ClampIndex(VK_LCONTROL)] || m_down[ClampIndex(VK_RCONTROL)];
-    m_down[ClampIndex(VK_SHIFT)] = m_down[ClampIndex(VK_LSHIFT)] || m_down[ClampIndex(VK_RSHIFT)];
-    m_down[ClampIndex(VK_MENU)] = m_down[ClampIndex(VK_LMENU)] || m_down[ClampIndex(VK_RMENU)];
-}
-
-std::size_t KeyStateTracker::ClampIndex(VkCode vk) {
-    if (vk == VK_NONE || vk >= kMaxTrackedVk) { return 0; }
-    return static_cast<std::size_t>(vk);
+    return downBindings;
 }
 
 } // namespace platform::input

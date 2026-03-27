@@ -307,7 +307,7 @@ void RenderHotkeysTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     if (!hk.conditions.exclusions.empty()) {
                         if (ImGui::BeginTable("##excl_table", 2, ImGuiTableFlags_SizingStretchSame)) {
                             for (size_t exclusionIndex = 0; exclusionIndex < hk.conditions.exclusions.size(); ++exclusionIndex) {
-                                const uint32_t exclusionVk = hk.conditions.exclusions[exclusionIndex];
+                                const auto exclusionBinding = hk.conditions.exclusions[exclusionIndex];
                                 ImGui::PushID(static_cast<int>(exclusionIndex));
                                 ImGui::TableNextRow();
 
@@ -316,7 +316,9 @@ void RenderHotkeysTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                                                                 captureTarget == platform::config::CaptureTarget::Exclusion &&
                                                                 captureTargetIndex == static_cast<int>(i) &&
                                                                 captureSubIndex == static_cast<int>(exclusionIndex);
-                                const std::string exclBtnLabel = (exclusionCapturing ? std::string("Capturing...") : FormatSingleVk(exclusionVk)) + "##exclbind";
+                                const std::string exclBtnLabel =
+                                    (exclusionCapturing ? std::string("Capturing...") : FormatSingleBinding(exclusionBinding)) +
+                                    "##exclbind";
                                 if (AnimatedButton(exclBtnLabel.c_str(), ImVec2(-1.0f, 0.0f))) {
                                     platform::config::StartExclusionCapture(static_cast<int>(i), static_cast<int>(exclusionIndex));
                                 }

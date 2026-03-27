@@ -161,14 +161,15 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     capturedEvent.vk != platform::input::VK_ESCAPE && rebindIndex >= 0 &&
                     rebindIndex < static_cast<int>(config.keyRebinds.rebinds.size())) {
                     auto& editedRebind = config.keyRebinds.rebinds[static_cast<std::size_t>(rebindIndex)];
-                    editedRebind.fromKey = capturedEvent.vk;
-                    if (editedRebind.toKey == 0) {
-                        editedRebind.toKey = capturedEvent.vk;
+                    editedRebind.fromInput = capturedEvent.binding;
+                    if (!platform::input::IsValidBindingKey(editedRebind.toInput)) {
+                        editedRebind.toInput = capturedEvent.binding;
                     }
                     if (TrimAsciiWhitespace(editedRebind.name).empty() && !isPresetLayoutVk(capturedEvent.vk)) {
-                        editedRebind.name = FormatSingleVk(capturedEvent.vk);
+                        editedRebind.name = FormatSingleBinding(capturedEvent.binding);
                     }
-                    g_rebindLayoutState.contextVk = editedRebind.fromKey;
+                    g_rebindLayoutState.contextVk = LegacyUiVkFromBinding(editedRebind.fromInput);
+                    g_rebindLayoutState.contextBinding = editedRebind.fromInput;
                     g_rebindLayoutState.contextPreferredIndex = rebindIndex;
                     AutoSaveConfig(config);
                 }
@@ -190,19 +191,21 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
         bool openRebindContextPopup = false;
         bool openRebindContextPopupAtStoredPos = false;
         auto toggleRebindEnabled = [&](uint32_t sourceVk, int preferredIndex) {
+            const auto sourceBinding = BindingFromLegacyUiVk(sourceVk);
             int idx = preferredIndex;
             if (idx < 0 || idx >= static_cast<int>(config.keyRebinds.rebinds.size()) ||
-                config.keyRebinds.rebinds[static_cast<std::size_t>(idx)].fromKey != sourceVk) {
+                config.keyRebinds.rebinds[static_cast<std::size_t>(idx)].fromInput != sourceBinding) {
                 idx = FindBestRebindIndexForKey(config, sourceVk);
             }
             if (idx < 0 || idx >= static_cast<int>(config.keyRebinds.rebinds.size())) {
                 platform::config::KeyRebind added;
-                added.fromKey = sourceVk;
-                added.toKey = sourceVk;
+                added.fromInput = sourceBinding;
+                added.toInput = sourceBinding;
                 SetRebindInputState(added, RebindInputState::BlockInput);
                 config.keyRebinds.rebinds.push_back(added);
                 idx = static_cast<int>(config.keyRebinds.rebinds.size()) - 1;
                 g_rebindLayoutState.contextVk = sourceVk;
+                g_rebindLayoutState.contextBinding = sourceBinding;
                 g_rebindLayoutState.contextPreferredIndex = idx;
                 AutoSaveConfig(config);
                 return;
@@ -220,6 +223,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 }
                 SetRebindInputState(edit, RebindInputState::BlockInput);
                 g_rebindLayoutState.contextVk = sourceVk;
+                g_rebindLayoutState.contextBinding = sourceBinding;
                 g_rebindLayoutState.contextPreferredIndex = idx;
                 AutoSaveConfig(config);
                 return;
@@ -228,6 +232,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
             const RebindInputState nextState = NextRebindInputState(currentState);
             SetRebindInputState(edit, nextState);
             g_rebindLayoutState.contextVk = sourceVk;
+            g_rebindLayoutState.contextBinding = sourceBinding;
             g_rebindLayoutState.contextPreferredIndex = idx;
             AutoSaveConfig(config);
         };
@@ -255,7 +260,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                         : nullptr;
                 const RebindInputState rebindState = rebind ? GetRebindInputState(*rebind) : RebindInputState::EnabledRemap;
                 const bool hasCustomRemap = rebind && !IsNoOpRebindForKey(*rebind, cell.vk);
-                const bool activeRebind = rebind && rebind->fromKey != 0 &&
+                const bool activeRebind = rebind && platform::input::IsValidBindingKey(rebind->fromInput) &&
                                           (rebindState == RebindInputState::BlockInput || hasCustomRemap);
                 const RebindButtonPalette palette = GetRebindButtonPalette(activeRebind, rebindState);
                 ImGui::PushStyleColor(ImGuiCol_Button, palette.normal);
@@ -322,7 +327,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     : nullptr;
             const RebindInputState rebindState = rebind ? GetRebindInputState(*rebind) : RebindInputState::EnabledRemap;
             const bool hasCustomRemap = rebind && !IsNoOpRebindForKey(*rebind, vk);
-            const bool activeRebind = rebind && rebind->fromKey != 0 &&
+            const bool activeRebind = rebind && platform::input::IsValidBindingKey(rebind->fromInput) &&
                                       (rebindState == RebindInputState::BlockInput || hasCustomRemap);
             const RebindButtonPalette palette = GetRebindButtonPalette(activeRebind, rebindState);
             ImGui::PushStyleColor(ImGuiCol_Button, palette.normal);
@@ -403,13 +408,17 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
         ImGui::BeginDisabled(g_rebindLayoutState.customDraftInputVk == 0);
         if (AnimatedButton("Add / Upsert##custom_rebind_add", ImVec2(130.0f * g_rebindLayoutState.keyboardLayoutScale, 0.0f))) {
             const uint32_t inputVk = g_rebindLayoutState.customDraftInputVk;
+            const auto inputBinding =
+                platform::input::IsValidBindingKey(g_rebindLayoutState.customDraftInputBinding)
+                    ? g_rebindLayoutState.customDraftInputBinding
+                    : BindingFromLegacyUiVk(inputVk);
             const std::string trimmedName = TrimAsciiWhitespace(g_rebindLayoutState.customDraftName);
 
             int rebindIndex = FindAnyRebindIndexForKey(config, inputVk);
             if (rebindIndex < 0) {
                 platform::config::KeyRebind added;
-                added.fromKey = inputVk;
-                added.toKey = inputVk;
+                added.fromInput = inputBinding;
+                added.toInput = inputBinding;
                 added.enabled = true;
                 added.consumeSourceInput = false;
                 added.name = trimmedName;
@@ -417,9 +426,9 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 rebindIndex = static_cast<int>(config.keyRebinds.rebinds.size()) - 1;
             } else {
                 auto& existing = config.keyRebinds.rebinds[static_cast<std::size_t>(rebindIndex)];
-                existing.fromKey = inputVk;
-                if (existing.toKey == 0) {
-                    existing.toKey = inputVk;
+                existing.fromInput = inputBinding;
+                if (!platform::input::IsValidBindingKey(existing.toInput)) {
+                    existing.toInput = inputBinding;
                 }
                 existing.enabled = true;
                 existing.consumeSourceInput = false;
@@ -427,7 +436,9 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
             }
 
             g_rebindLayoutState.contextVk = inputVk;
+            g_rebindLayoutState.contextBinding = inputBinding;
             g_rebindLayoutState.contextPreferredIndex = rebindIndex;
+            g_rebindLayoutState.customDraftInputBinding = {};
             g_rebindLayoutState.customDraftInputVk = 0;
             g_rebindLayoutState.customDraftName.clear();
             openRebindContextPopup = true;
@@ -438,6 +449,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
         if (g_rebindLayoutState.customDraftInputVk != 0) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear Input##custom_rebind_clear")) {
+                g_rebindLayoutState.customDraftInputBinding = {};
                 g_rebindLayoutState.customDraftInputVk = 0;
             }
         }
@@ -446,7 +458,8 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
         customRebindIndices.reserve(config.keyRebinds.rebinds.size());
         for (int i = 0; i < static_cast<int>(config.keyRebinds.rebinds.size()); ++i) {
             const auto& rebind = config.keyRebinds.rebinds[static_cast<std::size_t>(i)];
-            if (rebind.fromKey == 0 || isPresetLayoutVk(rebind.fromKey)) {
+            const uint32_t sourceVk = LegacyUiVkFromBinding(rebind.fromInput);
+            if (!platform::input::IsValidBindingKey(rebind.fromInput) || isPresetLayoutVk(sourceVk)) {
                 continue;
             }
             customRebindIndices.push_back(i);
@@ -467,9 +480,10 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 }
 
                 auto& rebind = config.keyRebinds.rebinds[static_cast<std::size_t>(rebindIndex)];
+                const uint32_t sourceVk = LegacyUiVkFromBinding(rebind.fromInput);
                 const RebindInputState rebindState = GetRebindInputState(rebind);
-                const bool hasCustomRemap = !IsNoOpRebindForKey(rebind, rebind.fromKey);
-                const bool activeRebind = rebind.fromKey != 0 &&
+                const bool hasCustomRemap = !IsNoOpRebindForKey(rebind, rebind.fromInput);
+                const bool activeRebind = platform::input::IsValidBindingKey(rebind.fromInput) &&
                                           (rebindState == RebindInputState::BlockInput || hasCustomRemap);
                 const RebindButtonPalette palette = GetRebindButtonPalette(activeRebind, rebindState);
 
@@ -484,11 +498,12 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
 
                 std::string displayName = RebindDisplayName(rebind);
                 if (displayName.empty()) {
-                    displayName = FormatSingleVk(rebind.fromKey);
+                    displayName = FormatSingleBinding(rebind.fromInput);
                 }
                 displayName = ShortenForButton(displayName, 12);
-                const std::string compactLine = BuildCompactRebindLine(&rebind, rebind.fromKey, customButtonWidth);
-                const std::string lowerLine = compactLine.empty() ? ShortenForButton(FormatSingleVk(rebind.fromKey), 10) : compactLine;
+                const std::string compactLine = BuildCompactRebindLine(&rebind, sourceVk, customButtonWidth);
+                const std::string lowerLine =
+                    compactLine.empty() ? ShortenForButton(FormatSingleBinding(rebind.fromInput), 10) : compactLine;
                 const std::string customLabel = displayName + "\n" + lowerLine;
 
                 ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
@@ -499,23 +514,24 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 const ImGuiID customItemId = ImGui::GetItemID();
                 DrawRebindKeyButtonEffects(customItemId);
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                    g_rebindLayoutState.contextVk = rebind.fromKey;
+                    g_rebindLayoutState.contextVk = sourceVk;
+                    g_rebindLayoutState.contextBinding = rebind.fromInput;
                     g_rebindLayoutState.contextPreferredIndex = rebindIndex;
                     openRebindContextPopup = true;
                 }
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                    toggleRebindEnabled(rebind.fromKey, rebindIndex);
+                    toggleRebindEnabled(sourceVk, rebindIndex);
                     TriggerRebindKeyCyclePulse(customItemId);
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
-                    ImGui::Text("%s (%u)", FormatSingleVk(rebind.fromKey).c_str(), static_cast<unsigned>(rebind.fromKey));
+                    ImGui::Text("%s", FormatSingleBinding(rebind.fromInput).c_str());
                     ImGui::Text("State: %s", RebindInputStateLabel(rebindState));
                     if (rebindState == RebindInputState::BlockInput) {
                         ImGui::TextDisabled("No output: source input is consumed.");
                     }
-                    ImGui::Text("Chat/Text: %s", TypesValueForRebind(&rebind, rebind.fromKey).c_str());
-                    ImGui::Text("Game: %s", TriggersValueForRebind(&rebind, rebind.fromKey).c_str());
+                    ImGui::Text("Chat/Text: %s", TypesValueForRebind(&rebind, sourceVk).c_str());
+                    ImGui::Text("Game: %s", TriggersValueForRebind(&rebind, sourceVk).c_str());
                     ImGui::TextUnformatted("Left-click: configure, Right-click: cycle state");
                     ImGui::EndTooltip();
                 }
@@ -582,19 +598,18 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     const bool shiftValid = unicodeShiftInput.empty() || TryParseUnicodeInputString(unicodeShiftInput, shiftCodepoint);
 
                     if (baseValid && shiftValid) {
-                        rebind.customOutputVK = 0;
+                        rebind.customOutputKey = {};
                         rebind.customOutputUnicode = codepoint;
                         rebind.customOutputShiftUnicode = shiftCodepoint;
                         rebind.useCustomOutput =
                             rebind.customOutputUnicode != 0 ||
-                            rebind.customOutputShiftUnicode != 0 ||
-                            rebind.customOutputScanCode != 0;
+                            rebind.customOutputShiftUnicode != 0;
                         changed = true;
                     }
 
                     if (changed) {
                         const int idx = g_rebindLayoutState.unicodeEditIndex;
-                        if (IsNoOpRebindForKey(rebind, rebind.fromKey)) {
+                        if (IsNoOpRebindForKey(rebind, rebind.fromInput)) {
                             EraseRebindAdjustingLayoutState(config, idx);
                         }
                         AutoSaveConfig(config);
@@ -649,7 +664,8 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
             g_rebindLayoutState.hasContextPopupPos = true;
             int idx = g_rebindLayoutState.contextPreferredIndex;
             if (idx < 0 || idx >= static_cast<int>(config.keyRebinds.rebinds.size()) ||
-                config.keyRebinds.rebinds[static_cast<std::size_t>(idx)].fromKey != g_rebindLayoutState.contextVk) {
+                config.keyRebinds.rebinds[static_cast<std::size_t>(idx)].fromInput !=
+                    BindingFromLegacyUiVk(g_rebindLayoutState.contextVk)) {
                 idx = FindBestRebindIndexForKey(config, g_rebindLayoutState.contextVk);
                 g_rebindLayoutState.contextPreferredIndex = idx;
             }
@@ -684,7 +700,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                                              captureTarget == platform::config::CaptureTarget::RebindFrom &&
                                              captureTargetIndex == idx;
                 const std::string sourceCaptureLabel = sourceCapturing ? std::string("[Press key...]")
-                                                                       : FormatSingleVk(rebind->fromKey);
+                                                                       : FormatSingleBinding(rebind->fromInput);
                 if (AnimatedButton((sourceCaptureLabel + "##custom_popup_source").c_str(), ImVec2(170, 0))) {
                     g_rebindLayoutState.reopenContextPopupAfterCapture = true;
                     g_rebindLayoutState.customSourceCaptureIndex = -1;
@@ -814,7 +830,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                                 if (repeatDelayChanged) {
                                     edit.keyRepeatDelay = perRepeatDelay;
                                 }
-                                if (IsNoOpRebindForKey(edit, edit.fromKey)) {
+                                if (IsNoOpRebindForKey(edit, edit.fromInput)) {
                                     EraseRebindAdjustingLayoutState(config, idx);
                                 }
                             }
@@ -913,13 +929,13 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 idx = (idx >= 0) ? idx : FindBestRebindIndexForKey(config, g_rebindLayoutState.contextVk);
                 platform::config::KeyRebind* selected = getRebindPtr(idx);
 
-                uint32_t triggerVk = selected ? selected->toKey : g_rebindLayoutState.contextVk;
+                uint32_t triggerVk = selected ? LegacyUiVkFromBinding(selected->toInput) : g_rebindLayoutState.contextVk;
                 if (triggerVk == 0) {
                     triggerVk = g_rebindLayoutState.contextVk;
                 }
 
-                const int selectedCustomScanCode = (selected && selected->useCustomOutput && selected->customOutputScanCode != 0)
-                                                       ? static_cast<int>(selected->customOutputScanCode)
+                const int selectedCustomScanCode = selected
+                                                       ? (platform::input::IsKeyboardBindingKey(selected->toInput) ? selected->toInput.code : 0)
                                                        : 0;
                 const int previewScanCode =
                     selectedCustomScanCode > 0 ? selectedCustomScanCode : GetDerivedX11ScanCodeForVk(triggerVk);
@@ -940,9 +956,9 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
 
                 addScanOption(selectedCustomScanCode, triggerVk);
                 for (const auto& rebindEntry : config.keyRebinds.rebinds) {
-                    if (rebindEntry.customOutputScanCode != 0) {
-                        const uint32_t hintVk = rebindEntry.toKey != 0 ? rebindEntry.toKey : triggerVk;
-                        addScanOption(static_cast<int>(rebindEntry.customOutputScanCode), hintVk);
+                    if (platform::input::IsKeyboardBindingKey(rebindEntry.toInput)) {
+                        const uint32_t hintVk = LegacyUiVkFromBinding(rebindEntry.toInput);
+                        addScanOption(rebindEntry.toInput.code, hintVk != 0 ? hintVk : triggerVk);
                     }
                 }
                 platform::config::BindingInputEvent latestBindingEvent;
@@ -970,13 +986,13 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                         }
                         if (idx >= 0) {
                             auto& edit = config.keyRebinds.rebinds[static_cast<std::size_t>(idx)];
-                            edit.customOutputScanCode = 0;
-                            if (edit.customOutputVK == 0 &&
+                            edit.toInput = BindingFromLegacyUiVk(g_rebindLayoutState.contextVk);
+                            if (!platform::input::IsValidBindingKey(edit.customOutputKey) &&
                                 edit.customOutputUnicode == 0 &&
                                 edit.customOutputShiftUnicode == 0) {
                                 edit.useCustomOutput = false;
                             }
-                            if (IsNoOpRebindForKey(edit, edit.fromKey)) {
+                            if (IsNoOpRebindForKey(edit, edit.fromInput)) {
                                 EraseRebindAdjustingLayoutState(config, idx);
                             }
                             AutoSaveConfig(config);
@@ -1003,11 +1019,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                             }
                             if (idx >= 0) {
                                 auto& edit = config.keyRebinds.rebinds[static_cast<std::size_t>(idx)];
-                                edit.useCustomOutput = true;
-                                edit.customOutputScanCode = static_cast<uint32_t>(scanCode);
-                                if (scanOption.second != 0 && platform::input::IsKeyboardVk(scanOption.second)) {
-                                    edit.toKey = platform::input::NormalizeModifierVkFromConfig(scanOption.second, scanCode);
-                                }
+                                edit.toInput = platform::input::MakeKeyboardBindingKey(scanCode);
                                 AutoSaveConfig(config);
                             }
                         }
@@ -1021,18 +1033,17 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
             if (AnimatedButton("Reset##layout_reset", ImVec2(170, 0))) {
                 if (idx >= 0 && idx < static_cast<int>(config.keyRebinds.rebinds.size())) {
                     auto& reset = config.keyRebinds.rebinds[static_cast<std::size_t>(idx)];
-                    reset.toKey = reset.fromKey;
-                    reset.customOutputVK = 0;
+                    reset.toInput = reset.fromInput;
+                    reset.customOutputKey = {};
                     reset.customOutputUnicode = 0;
                     reset.customOutputShiftUnicode = 0;
-                    reset.customOutputScanCode = 0;
                     reset.useCustomOutput = false;
                     reset.enabled = true;
                     reset.consumeSourceInput = false;
                     reset.keyRepeatDisabled = false;
                     reset.keyRepeatStartDelay = 0;
                     reset.keyRepeatDelay = 0;
-                    if (IsNoOpRebindForKey(reset, reset.fromKey)) {
+                    if (IsNoOpRebindForKey(reset, reset.fromInput)) {
                         EraseRebindAdjustingLayoutState(config, idx);
                     }
                     AutoSaveConfig(config);

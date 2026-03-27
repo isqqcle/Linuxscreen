@@ -7,7 +7,10 @@
 
 namespace platform::input {
 
-bool MatchesHotkey(const KeyStateTracker& tracker, const std::vector<VkCode>& keys, const InputEvent& triggerEvent,
-                  const std::vector<VkCode>& exclusionKeys = {}, bool triggerOnRelease = false);
+bool MatchesHotkey(const KeyStateTracker& tracker,
+                   const std::vector<BindingKey>& keys,
+                   const InputEvent& triggerEvent,
+                   const std::vector<BindingKey>& exclusionKeys = {},
+                   bool triggerOnRelease = false);
 
 } // namespace platform::input

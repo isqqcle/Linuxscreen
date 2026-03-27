@@ -1,5 +1,6 @@
 #pragma once
 
+#include "binding_key.h"
 #include "vk_codes.h"
 
 #include <cstdint>
@@ -39,5 +40,15 @@ struct InputEvent {
     double scrollY = 0.0;
     bool focused = true;
 };
+
+inline BindingKey BindingKeyFromInputEvent(const InputEvent& event) {
+    if (event.type == InputEventType::Key) {
+        return MakeKeyboardBindingKey(event.nativeScanCode);
+    }
+    if (event.type == InputEventType::MouseButton) {
+        return MakeMouseButtonBindingKey(event.nativeKey);
+    }
+    return {};
+}
 
 } // namespace platform::input

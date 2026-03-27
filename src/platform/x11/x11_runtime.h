@@ -38,10 +38,10 @@ void ClearTempSensitivityOverride();
 bool ReleaseHeldSensitivityOverrideForInputReset();
 void UpdateSensitivityStateForModeSwitch(const std::string& targetMode, const config::LinuxscreenConfig& config);
 
-void SetGuiHotkey(const std::vector<input::VkCode>& keys);
-std::vector<input::VkCode> GetGuiHotkey();
-void SetRebindToggleHotkey(const std::vector<input::VkCode>& keys);
-std::vector<input::VkCode> GetRebindToggleHotkey();
+void SetGuiHotkey(const std::vector<input::BindingKey>& keys);
+std::vector<input::BindingKey> GetGuiHotkey();
+void SetRebindToggleHotkey(const std::vector<input::BindingKey>& keys);
+std::vector<input::BindingKey> GetRebindToggleHotkey();
 bool ToggleGuiVisible();
 void SetGuiVisible(bool visible);
 bool IsGuiVisible();

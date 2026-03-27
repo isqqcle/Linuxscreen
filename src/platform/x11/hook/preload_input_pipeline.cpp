@@ -47,13 +47,14 @@ void ClearManagedRepeatStatesForWindow(GLFWwindow* window);
 void ArmPendingSyntheticCursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 void ClearPendingSyntheticCursorPosCallbackState();
 void DispatchCurrentFreeCursorPosition(GLFWwindow* window);
+bool HasKeyboardBindingIdentity(const platform::input::InputEvent& event);
 
 void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
-    std::vector<platform::input::VkCode> downKeys;
+    std::vector<platform::input::BindingKey> downBindings;
     std::optional<std::string> modeToRestore;
     {
         std::lock_guard<std::mutex> lock(g_inputStateMutex);
-        downKeys = g_keyStateTracker.GetDownKeys();
+        downBindings = g_keyStateTracker.GetDownBindings();
         g_keyStateTracker.Clear();
     }
 
@@ -81,15 +82,21 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
         }
     }
 
-    std::stable_sort(downKeys.begin(), downKeys.end(), [](platform::input::VkCode a, platform::input::VkCode b) {
-        const bool aModifier = platform::input::IsModifierVk(a);
-        const bool bModifier = platform::input::IsModifierVk(b);
+    std::stable_sort(
+        downBindings.begin(),
+        downBindings.end(),
+        [](const platform::input::BindingKey& a, const platform::input::BindingKey& b) {
+        const bool aModifier = platform::input::IsKeyboardBindingKey(a) && platform::input::IsModifierScanCode(a.code);
+        const bool bModifier = platform::input::IsKeyboardBindingKey(b) && platform::input::IsModifierScanCode(b.code);
         if (aModifier != bModifier) {
             return !aModifier;
         }
-        return static_cast<unsigned>(a) < static_cast<unsigned>(b);
+        if (a.kind != b.kind) {
+            return static_cast<int>(a.kind) < static_cast<int>(b.kind);
+        }
+        return a.code < b.code;
     });
-    downKeys.erase(std::unique(downKeys.begin(), downKeys.end()), downKeys.end());
+    downBindings.erase(std::unique(downBindings.begin(), downBindings.end()), downBindings.end());
 
     if (window) {
         GlfwKeyCallback userKeyCallback = nullptr;
@@ -104,24 +111,21 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
         }
 
         const int releaseAction = static_cast<int>(platform::input::GlfwAction::Release);
-        GlfwGetKeyScancodeFn getKeyScancode = GetRealGlfwGetKeyScancode();
-        for (const auto vk : downKeys) {
-            const int mouseButton = platform::input::VkToGlfwMouseButton(vk);
-            if (mouseButton >= 0) {
+        for (const auto& binding : downBindings) {
+            if (platform::input::IsMouseBindingKey(binding)) {
                 if (userMouseCallback) {
-                    userMouseCallback(window, mouseButton, releaseAction, 0);
+                    userMouseCallback(window, binding.code, releaseAction, 0);
                 }
                 continue;
             }
 
-            const int glfwKey = platform::input::VkToGlfwKey(vk);
-            if (glfwKey < 0) {
+            if (!platform::input::IsKeyboardBindingKey(binding)) {
                 continue;
             }
 
             if (userKeyCallback) {
-                const int scanCode = getKeyScancode ? getKeyScancode(glfwKey) : 0;
-                userKeyCallback(window, glfwKey, scanCode, releaseAction, 0);
+                const int scanCode = binding.code;
+                userKeyCallback(window, -1, scanCode, releaseAction, 0);
             }
         }
     }
@@ -135,6 +139,7 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
 }
 
 bool ProcessInputEventForGuiToggle(GLFWwindow* sourceWindow, const platform::input::InputEvent& event, const char* sourceLabel) {
+    const auto toggleConfigSnapshot = platform::config::GetConfigSnapshot();
     auto toggleKeyRebindsFromHotkey = [&](int64_t nowMs) {
         const int64_t lastMs = g_lastRebindToggleTimeMs.load(std::memory_order_relaxed);
         if (nowMs - lastMs < 200) {
@@ -171,9 +176,11 @@ bool ProcessInputEventForGuiToggle(GLFWwindow* sourceWindow, const platform::inp
     {
         std::lock_guard<std::mutex> lock(g_inputStateMutex);
         g_keyStateTracker.ApplyEvent(event);
-        const std::vector<platform::input::VkCode> guiHotkey = platform::x11::GetGuiHotkey();
+        const std::vector<platform::input::BindingKey> guiHotkey =
+            toggleConfigSnapshot ? toggleConfigSnapshot->guiHotkey : platform::x11::GetGuiHotkey();
         shouldToggleGui = platform::input::MatchesHotkey(g_keyStateTracker, guiHotkey, event);
-        const std::vector<platform::input::VkCode> rebindToggleHotkey = platform::x11::GetRebindToggleHotkey();
+        const std::vector<platform::input::BindingKey> rebindToggleHotkey =
+            toggleConfigSnapshot ? toggleConfigSnapshot->rebindToggleHotkey : platform::x11::GetRebindToggleHotkey();
         shouldToggleRebinds = platform::input::MatchesHotkey(g_keyStateTracker, rebindToggleHotkey, event);
     }
 
@@ -278,9 +285,7 @@ bool HasShortcutModifiersThatSuppressText(int nativeMods) {
 
 bool AreShortcutModifiersCurrentlyDown() {
     std::lock_guard<std::mutex> lock(g_inputStateMutex);
-    return g_keyStateTracker.IsDown(platform::input::VK_CONTROL) ||
-           g_keyStateTracker.IsDown(platform::input::VK_LWIN) ||
-           g_keyStateTracker.IsDown(platform::input::VK_RWIN);
+    return g_keyStateTracker.IsAnyScanCodeDown({ 37, 105, 133, 134 });
 }
 
 void ClearScissoredRect(int x, int y, int width, int height, float r, float g, float b, float a) {
@@ -378,7 +383,7 @@ void RenderRebindToggleIndicatorOverlay() {
 }
 
 bool ShouldSuppressPreHeldKeysForSyntheticTarget(int targetKey) {
-    static const int kGlfwF3Key = platform::input::VkToGlfwKey(platform::input::VK_F1 + 2);
+    static const int kGlfwF3Key = static_cast<int>(platform::input::VK_F1 + 2);
     return targetKey >= 0 && targetKey == kGlfwF3Key;
 }
 
@@ -404,8 +409,7 @@ int GetEffectiveNativeMods(GLFWwindow* window, int nativeMods) {
             continue;
         }
 
-        const platform::input::VkCode targetVk = platform::input::GlfwKeyToVk(targetEntry.first, 0, 0);
-        if (platform::input::IsShiftVariant(targetVk)) {
+        if (platform::input::IsShiftGlfwKey(targetEntry.first)) {
             nativeMods |= static_cast<int>(platform::input::GlfwMod::Shift);
         }
     }
@@ -457,8 +461,7 @@ void CaptureSyntheticSuppressedKeysForTarget(SyntheticRebindKeyState& state, int
             continue;
         }
 
-        const platform::input::VkCode heldVk = platform::input::GlfwKeyToVk(heldKey, 0, 0);
-        if (platform::input::IsModifierVk(heldVk)) {
+        if (platform::input::IsModifierGlfwKey(heldKey)) {
             continue;
         }
 
@@ -627,7 +630,17 @@ int GetSyntheticRebindMouseSourceKey(int button) {
 }
 
 bool IsRebindEntryConfigured(const platform::config::KeyRebind& rebind) {
-    return rebind.enabled && rebind.fromKey != 0 && (rebind.consumeSourceInput || rebind.toKey != 0);
+    return rebind.enabled &&
+           platform::input::IsValidBindingKey(rebind.fromInput) &&
+           (rebind.consumeSourceInput || platform::input::IsValidBindingKey(rebind.toInput));
+}
+
+bool MatchesRebindSourceBinding(const platform::input::InputEvent& event, const platform::config::KeyRebind& rebind) {
+    if ((!HasKeyboardBindingIdentity(event) && event.type != platform::input::InputEventType::MouseButton) ||
+        !platform::input::IsValidBindingKey(rebind.fromInput)) {
+        return false;
+    }
+    return platform::input::BindingKeyFromInputEvent(event) == rebind.fromInput;
 }
 
 bool IsValidUnicodeScalar(std::uint32_t codepoint) {
@@ -637,227 +650,78 @@ bool IsValidUnicodeScalar(std::uint32_t codepoint) {
     return !(codepoint >= 0xD800u && codepoint <= 0xDFFFu);
 }
 
-platform::input::VkCode ResolveRebindTriggerVk(const platform::config::KeyRebind& rebind) {
-    const int preferredScan = (rebind.useCustomOutput && rebind.customOutputScanCode != 0) ? static_cast<int>(rebind.customOutputScanCode) : 0;
-    return platform::input::NormalizeModifierVkFromConfig(rebind.toKey, preferredScan);
+bool TryDecodeFirstUtf8Codepoint(const char* input, std::uint32_t& outCodepoint) {
+    outCodepoint = 0;
+    if (!input || input[0] == '\0') {
+        return false;
+    }
+
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(input);
+    std::uint32_t cp = 0;
+    std::size_t length = 0;
+
+    const unsigned char b0 = bytes[0];
+    if (b0 < 0x80) {
+        cp = b0;
+        length = 1;
+    } else if ((b0 & 0xE0) == 0xC0) {
+        cp = static_cast<std::uint32_t>(b0 & 0x1F);
+        length = 2;
+    } else if ((b0 & 0xF0) == 0xE0) {
+        cp = static_cast<std::uint32_t>(b0 & 0x0F);
+        length = 3;
+    } else if ((b0 & 0xF8) == 0xF0) {
+        cp = static_cast<std::uint32_t>(b0 & 0x07);
+        length = 4;
+    } else {
+        return false;
+    }
+
+    for (std::size_t i = 1; i < length; ++i) {
+        const unsigned char continuation = bytes[i];
+        if ((continuation & 0xC0) != 0x80) {
+            return false;
+        }
+        cp = (cp << 6) | static_cast<std::uint32_t>(continuation & 0x3F);
+    }
+
+    if (!IsValidUnicodeScalar(cp)) {
+        return false;
+    }
+
+    outCodepoint = cp;
+    return true;
 }
 
-platform::input::VkCode ResolveRebindTextVk(const platform::config::KeyRebind& rebind,
-                                            platform::input::VkCode triggerVk,
-                                            int outputScanCode) {
-    if (platform::input::IsModifierVk(triggerVk)) {
-        return triggerVk;
+bool TryResolveGlfwLayoutCodepoint(int nativeKey, int nativeScanCode, bool shiftDown, std::uint32_t& outCodepoint) {
+    outCodepoint = 0;
+    GlfwGetKeyNameFn getKeyName = GetRealGlfwGetKeyName();
+    if (!getKeyName) {
+        return false;
     }
 
-    const platform::input::VkCode textBase =
-        (rebind.useCustomOutput && rebind.customOutputVK != 0) ? rebind.customOutputVK : triggerVk;
-    return platform::input::NormalizeModifierVkFromConfig(textBase, outputScanCode);
+    const char* keyName = getKeyName(nativeKey, nativeScanCode);
+    if (!TryDecodeFirstUtf8Codepoint(keyName, outCodepoint)) {
+        return false;
+    }
+
+    if (shiftDown && outCodepoint >= static_cast<std::uint32_t>('a') && outCodepoint <= static_cast<std::uint32_t>('z')) {
+        outCodepoint = static_cast<std::uint32_t>('A' + (outCodepoint - static_cast<std::uint32_t>('a')));
+    }
+    return true;
 }
 
-int GetFallbackX11ScanCodeForVk(platform::input::VkCode vk) {
-    static const platform::input::VkCode kDigitRow[] = {
-        static_cast<platform::input::VkCode>('1'), static_cast<platform::input::VkCode>('2'),
-        static_cast<platform::input::VkCode>('3'), static_cast<platform::input::VkCode>('4'),
-        static_cast<platform::input::VkCode>('5'), static_cast<platform::input::VkCode>('6'),
-        static_cast<platform::input::VkCode>('7'), static_cast<platform::input::VkCode>('8'),
-        static_cast<platform::input::VkCode>('9'), static_cast<platform::input::VkCode>('0'),
-    };
-    for (int i = 0; i < 10; ++i) {
-        if (vk == kDigitRow[i]) {
-            return 10 + i;
-        }
-    }
-
-    static const platform::input::VkCode kTopAlphaRow[] = {
-        static_cast<platform::input::VkCode>('Q'), static_cast<platform::input::VkCode>('W'),
-        static_cast<platform::input::VkCode>('E'), static_cast<platform::input::VkCode>('R'),
-        static_cast<platform::input::VkCode>('T'), static_cast<platform::input::VkCode>('Y'),
-        static_cast<platform::input::VkCode>('U'), static_cast<platform::input::VkCode>('I'),
-        static_cast<platform::input::VkCode>('O'), static_cast<platform::input::VkCode>('P'),
-    };
-    for (int i = 0; i < 10; ++i) {
-        if (vk == kTopAlphaRow[i]) {
-            return 24 + i;
-        }
-    }
-
-    static const platform::input::VkCode kHomeAlphaRow[] = {
-        static_cast<platform::input::VkCode>('A'), static_cast<platform::input::VkCode>('S'),
-        static_cast<platform::input::VkCode>('D'), static_cast<platform::input::VkCode>('F'),
-        static_cast<platform::input::VkCode>('G'), static_cast<platform::input::VkCode>('H'),
-        static_cast<platform::input::VkCode>('J'), static_cast<platform::input::VkCode>('K'),
-        static_cast<platform::input::VkCode>('L'),
-    };
-    for (int i = 0; i < 9; ++i) {
-        if (vk == kHomeAlphaRow[i]) {
-            return 38 + i;
-        }
-    }
-
-    static const platform::input::VkCode kBottomAlphaRow[] = {
-        static_cast<platform::input::VkCode>('Z'), static_cast<platform::input::VkCode>('X'),
-        static_cast<platform::input::VkCode>('C'), static_cast<platform::input::VkCode>('V'),
-        static_cast<platform::input::VkCode>('B'), static_cast<platform::input::VkCode>('N'),
-        static_cast<platform::input::VkCode>('M'),
-    };
-    for (int i = 0; i < 7; ++i) {
-        if (vk == kBottomAlphaRow[i]) {
-            return 52 + i;
-        }
-    }
-
-    if (vk >= platform::input::VK_F1 && vk <= (platform::input::VK_F1 + 9)) {
-        return 67 + static_cast<int>(vk - platform::input::VK_F1);
-    }
-
-    switch (vk) {
-    case platform::input::VK_SHIFT:
-        return 50;
-    case platform::input::VK_CONTROL:
-        return 37;
-    case platform::input::VK_MENU:
-        return 64;
-    case platform::input::VK_ESCAPE:
-        return 9;
-    case platform::input::VK_OEM_MINUS:
-        return 20;
-    case platform::input::VK_OEM_PLUS:
-        return 21;
-    case platform::input::VK_BACK:
-        return 22;
-    case platform::input::VK_TAB:
-        return 23;
-    case platform::input::VK_OEM_4:
-        return 34;
-    case platform::input::VK_OEM_6:
-        return 35;
-    case platform::input::VK_RETURN:
-        return 36;
-    case platform::input::VK_LCONTROL:
-        return 37;
-    case platform::input::VK_OEM_1:
-        return 47;
-    case platform::input::VK_OEM_7:
-        return 48;
-    case platform::input::VK_OEM_3:
-        return 49;
-    case platform::input::VK_LSHIFT:
-        return 50;
-    case platform::input::VK_OEM_5:
-        return 51;
-    case platform::input::VK_OEM_COMMA:
-        return 59;
-    case platform::input::VK_OEM_PERIOD:
-        return 60;
-    case platform::input::VK_OEM_2:
-        return 61;
-    case platform::input::VK_RSHIFT:
-        return 62;
-    case platform::input::VK_MULTIPLY:
-        return 63;
-    case platform::input::VK_LMENU:
-        return 64;
-    case platform::input::VK_SPACE:
-        return 65;
-    case platform::input::VK_CAPITAL:
-        return 66;
-    case platform::input::VK_NUMLOCK:
-        return 77;
-    case platform::input::VK_SCROLL:
-        return 78;
-    case platform::input::VK_SNAPSHOT:
-        return 107;
-    case platform::input::VK_PAUSE:
-        return 127;
-    case platform::input::VK_SUBTRACT:
-        return 82;
-    case platform::input::VK_ADD:
-        return 86;
-    case platform::input::VK_DECIMAL:
-        return 91;
-    case platform::input::VK_F1 + 10:
-        return 95;
-    case platform::input::VK_F1 + 11:
-        return 96;
-    case platform::input::VK_RCONTROL:
-        return 105;
-    case platform::input::VK_DIVIDE:
-        return 106;
-    case platform::input::VK_RMENU:
-        return 108;
-    case platform::input::VK_HOME:
-        return 110;
-    case platform::input::VK_UP:
-        return 111;
-    case platform::input::VK_PRIOR:
-        return 112;
-    case platform::input::VK_LEFT:
-        return 113;
-    case platform::input::VK_RIGHT:
-        return 114;
-    case platform::input::VK_END:
-        return 115;
-    case platform::input::VK_DOWN:
-        return 116;
-    case platform::input::VK_NEXT:
-        return 117;
-    case platform::input::VK_INSERT:
-        return 118;
-    case platform::input::VK_DELETE:
-        return 119;
-    case platform::input::VK_LWIN:
-        return 133;
-    case platform::input::VK_RWIN:
-        return 134;
-    case platform::input::VK_APPS:
-        return 135;
-    default:
-        break;
-    }
-
-    if (vk >= (platform::input::VK_F1 + 12) && vk <= platform::input::VK_F24) {
-        return 191 + static_cast<int>(vk - (platform::input::VK_F1 + 12));
-    }
-
-    if (vk >= platform::input::VK_NUMPAD0 && vk <= platform::input::VK_NUMPAD9) {
-        static const int kNumPadScans[] = { 90, 87, 88, 89, 83, 84, 85, 79, 80, 81 };
-        return kNumPadScans[vk - platform::input::VK_NUMPAD0];
-    }
-
-    return 0;
-}
-
-int GetDerivedOutputScanCodeForVk(platform::input::VkCode triggerVk) {
-    if (!platform::input::IsKeyboardVk(triggerVk)) {
-        return 0;
-    }
-
-    const int triggerGlfwKey = platform::input::VkToGlfwKey(triggerVk);
-    if (triggerGlfwKey >= 0) {
-        if (GlfwGetKeyScancodeFn getKeyScancode = GetRealGlfwGetKeyScancode()) {
-            const int derived = getKeyScancode(triggerGlfwKey);
-            if (derived > 0) {
-                return derived;
-            }
-        }
-    }
-
-    return GetFallbackX11ScanCodeForVk(triggerVk);
-}
-
-int ResolveOutputScanCode(platform::input::VkCode triggerVk, std::uint32_t configuredScanCode) {
-    if (configuredScanCode != 0) {
-        return static_cast<int>(configuredScanCode);
-    }
-    return GetDerivedOutputScanCodeForVk(triggerVk);
+bool HasKeyboardBindingIdentity(const platform::input::InputEvent& event) {
+    return event.type == platform::input::InputEventType::Key && event.nativeScanCode > 0;
 }
 
 struct ResolvedRebindOutput {
     bool matched = false;
     bool consumeSourceInput = false;
     platform::input::VkCode sourceVk = platform::input::VK_NONE;
-    platform::input::VkCode triggerVk = platform::input::VK_NONE;
-    platform::input::VkCode textVk = platform::input::VK_NONE;
+    platform::input::BindingKey triggerBinding;
+    platform::input::BindingKey textBinding;
+    int textScanCode = 0;
     int outputScanCode = 0;
     bool targetIsMouse = false;
     std::uint32_t customUnicode = 0;
@@ -867,7 +731,8 @@ struct ResolvedRebindOutput {
 std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::LinuxscreenConfig& config,
                                                         const platform::input::InputEvent& event,
                                                         bool guiVisible) {
-    if (!config.keyRebinds.enabled || event.vk == platform::input::VK_NONE) {
+    if (!config.keyRebinds.enabled ||
+        (!HasKeyboardBindingIdentity(event) && event.type != platform::input::InputEventType::MouseButton)) {
         return std::nullopt;
     }
 
@@ -879,7 +744,7 @@ std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::
         if (!IsRebindEntryConfigured(rebind)) {
             continue;
         }
-        if (!platform::input::MatchesRebindSourceVk(event.vk, rebind.fromKey)) {
+        if (!MatchesRebindSourceBinding(event, rebind)) {
             continue;
         }
 
@@ -887,15 +752,18 @@ std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::
         resolved.matched = true;
         resolved.sourceVk = event.vk;
         if (rebind.consumeSourceInput) {
-            resolved.consumeSourceInput = true;
-            return resolved;
+        resolved.consumeSourceInput = true;
+        return resolved;
         }
-        resolved.triggerVk = ResolveRebindTriggerVk(rebind);
-        resolved.outputScanCode = ResolveOutputScanCode(
-            resolved.triggerVk,
-            (rebind.useCustomOutput && rebind.customOutputScanCode != 0) ? rebind.customOutputScanCode : 0);
-        resolved.textVk = ResolveRebindTextVk(rebind, resolved.triggerVk, resolved.outputScanCode);
-        resolved.targetIsMouse = platform::input::IsMouseVk(resolved.triggerVk);
+        resolved.triggerBinding = rebind.toInput;
+        resolved.outputScanCode =
+            platform::input::IsKeyboardBindingKey(resolved.triggerBinding) ? resolved.triggerBinding.code : 0;
+        resolved.textBinding =
+            (rebind.useCustomOutput && platform::input::IsValidBindingKey(rebind.customOutputKey)) ? rebind.customOutputKey
+                                                                                                    : resolved.triggerBinding;
+        resolved.textScanCode =
+            platform::input::IsKeyboardBindingKey(resolved.textBinding) ? resolved.textBinding.code : 0;
+        resolved.targetIsMouse = platform::input::IsMouseBindingKey(resolved.triggerBinding);
         resolved.customUnicode = rebind.useCustomOutput ? rebind.customOutputUnicode : 0;
         resolved.customShiftUnicode = rebind.useCustomOutput ? rebind.customOutputShiftUnicode : 0;
         return resolved;
@@ -987,23 +855,23 @@ bool TryResolveRebindOutputCodepoint(GLFWwindow* window,
     outCodepoint = 0;
     const int effectiveNativeMods = GetEffectiveNativeMods(window, nativeMods);
     const bool shiftDown = (effectiveNativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
+    const bool textIsKeyboard = platform::input::IsKeyboardBindingKey(rebindOutput.textBinding);
 
     if (shiftDown &&
         IsValidUnicodeScalar(rebindOutput.customShiftUnicode) &&
-        !platform::input::IsNonTextVk(rebindOutput.textVk)) {
+        textIsKeyboard) {
         outCodepoint = rebindOutput.customShiftUnicode;
         return true;
     }
 
-    if (IsValidUnicodeScalar(rebindOutput.customUnicode) && !platform::input::IsNonTextVk(rebindOutput.textVk)) {
+    if (IsValidUnicodeScalar(rebindOutput.customUnicode) && textIsKeyboard) {
         outCodepoint = rebindOutput.customUnicode;
         return true;
     }
 
-    std::uint32_t translated = 0;
-    if (!platform::input::IsNonTextVk(rebindOutput.textVk) &&
-        platform::input::TryMapVkToCodepoint(rebindOutput.textVk, shiftDown, translated) && translated != 0) {
-        outCodepoint = translated;
+    if (textIsKeyboard &&
+        TryResolveGlfwLayoutCodepoint(-1, rebindOutput.textScanCode, shiftDown, outCodepoint) &&
+        outCodepoint != 0) {
         return true;
     }
 
@@ -1058,25 +926,29 @@ bool IsRepeatBlacklistedSourceVk(platform::input::VkCode vk) {
     return vk == platform::input::VK_LBUTTON || vk == platform::input::VK_RBUTTON;
 }
 
+bool IsRepeatBlacklistedSourceBinding(const platform::input::BindingKey& binding) {
+    return platform::input::IsMouseBindingKey(binding) && (binding.code == 0 || binding.code == 1);
+}
+
 bool IsConfiguredRebind(const platform::config::KeyRebind& rebind) {
-    if (rebind.fromKey == 0) {
+    if (!platform::input::IsValidBindingKey(rebind.fromInput)) {
         return false;
     }
-    if (rebind.consumeSourceInput || rebind.toKey != 0) {
+    if (rebind.consumeSourceInput || platform::input::IsValidBindingKey(rebind.toInput)) {
         return true;
     }
-    if (!IsRepeatBlacklistedSourceVk(rebind.fromKey) && rebind.keyRepeatDisabled) {
+    if (!IsRepeatBlacklistedSourceBinding(rebind.fromInput) && rebind.keyRepeatDisabled) {
         return true;
     }
-    if (!IsRepeatBlacklistedSourceVk(rebind.fromKey) &&
+    if (!IsRepeatBlacklistedSourceBinding(rebind.fromInput) &&
         (rebind.keyRepeatStartDelay > 0 || rebind.keyRepeatDelay > 0)) {
         return true;
     }
     return false;
 }
 
-int FindBestRebindIndexForSource(const platform::config::LinuxscreenConfig& config, platform::input::VkCode sourceVk) {
-    if (sourceVk == platform::input::VK_NONE) {
+int FindBestRebindIndexForSource(const platform::config::LinuxscreenConfig& config, const platform::input::InputEvent& sourceEvent) {
+    if (!platform::input::IsValidBindingKey(platform::input::BindingKeyFromInputEvent(sourceEvent))) {
         return -1;
     }
 
@@ -1086,7 +958,7 @@ int FindBestRebindIndexForSource(const platform::config::LinuxscreenConfig& conf
     int configuredAny = -1;
     for (int i = 0; i < static_cast<int>(config.keyRebinds.rebinds.size()); ++i) {
         const auto& rebind = config.keyRebinds.rebinds[static_cast<std::size_t>(i)];
-        if (rebind.fromKey != sourceVk) {
+        if (!MatchesRebindSourceBinding(sourceEvent, rebind)) {
             continue;
         }
 
@@ -1122,12 +994,12 @@ int FindBestRebindIndexForSource(const platform::config::LinuxscreenConfig& conf
 ManagedRepeatSettings ResolveManagedRepeatSettings(const platform::config::LinuxscreenConfig& config,
                                                    const platform::input::InputEvent& event) {
     ManagedRepeatSettings resolved;
-    if (event.vk == platform::input::VK_NONE ||
+    if ((!HasKeyboardBindingIdentity(event) && event.type != platform::input::InputEventType::MouseButton) ||
         (event.type != platform::input::InputEventType::Key && event.type != platform::input::InputEventType::MouseButton)) {
         return resolved;
     }
     if (event.type == platform::input::InputEventType::Key &&
-        platform::input::IsModifierVk(event.vk)) {
+        (platform::input::IsModifierGlfwKey(event.nativeKey) || platform::input::IsModifierScanCode(event.nativeScanCode))) {
         return resolved;
     }
     if (IsRepeatBlacklistedSourceVk(event.vk)) {
@@ -1147,7 +1019,7 @@ ManagedRepeatSettings ResolveManagedRepeatSettings(const platform::config::Linux
     int perKeyRepeatDelayMs = 0;
     bool perKeyDisableRepeat = false;
     if (config.keyRebinds.enabled) {
-        const int bestRebindIndex = FindBestRebindIndexForSource(config, event.vk);
+        const int bestRebindIndex = FindBestRebindIndexForSource(config, event);
         if (bestRebindIndex >= 0 && bestRebindIndex < static_cast<int>(config.keyRebinds.rebinds.size())) {
             const auto& rebind = config.keyRebinds.rebinds[static_cast<std::size_t>(bestRebindIndex)];
             perKeyDisableRepeat = rebind.keyRepeatDisabled;
@@ -1212,8 +1084,8 @@ void InvalidateManagedRepeatKeyboardStatesForAdditionalPress(GLFWwindow* window,
     if (!window ||
         event.type != platform::input::InputEventType::Key ||
         event.action != platform::input::InputAction::Press ||
-        event.vk == platform::input::VK_NONE ||
-        platform::input::IsModifierVk(event.vk)) {
+        (!HasKeyboardBindingIdentity(event)) ||
+        platform::input::IsModifierScanCode(event.nativeScanCode)) {
         return;
     }
 
@@ -1267,7 +1139,10 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
                                                    std::uint32_t& outCodepoint) {
     outCodepoint = 0;
 
-    if (state.sourceVk == platform::input::VK_NONE || state.key.sourceIsMouseButton) {
+    if (state.key.sourceIsMouseButton) {
+        return ManagedRepeatCharMode::NoCharacter;
+    }
+    if (state.key.sourceCode < 0 && state.nativeScanCode <= 0) {
         return ManagedRepeatCharMode::NoCharacter;
     }
 
@@ -1304,7 +1179,8 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
 
     const int effectiveNativeMods = GetEffectiveNativeMods(state.key.window, state.nativeMods);
     const bool shiftDown = (effectiveNativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
-    if (platform::input::TryMapVkToCodepoint(state.sourceVk, shiftDown, outCodepoint) && outCodepoint != 0) {
+    if (TryResolveGlfwLayoutCodepoint(state.key.sourceCode, state.nativeScanCode, shiftDown, outCodepoint) &&
+        outCodepoint != 0) {
         return ManagedRepeatCharMode::InjectSynthetic;
     }
     return ManagedRepeatCharMode::NoCharacter;
@@ -1357,7 +1233,7 @@ bool HandleManagedNativeRepeatEvent(GLFWwindow* window,
     if (g_dispatchingManagedSyntheticRepeat) {
         return false;
     }
-    if (!window || event.vk == platform::input::VK_NONE || event.nativeKey < 0) {
+    if (!window || (!HasKeyboardBindingIdentity(event) && event.type != platform::input::InputEventType::MouseButton) || event.nativeKey < 0) {
         return false;
     }
 
@@ -1645,10 +1521,16 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
     UpdateSyntheticPhysicalKeyState(window, key, action);
 
     if (!syntheticManagedRepeatEvent &&
-        event.vk != platform::input::VK_NONE &&
+        (event.vk != platform::input::VK_NONE || event.nativeScanCode > 0) &&
         (event.action == platform::input::InputAction::Press || event.action == platform::input::InputAction::Release ||
          event.action == platform::input::InputAction::Repeat)) {
-        platform::config::RegisterBindingInputEvent(event.vk, event.nativeScanCode, event.nativeMods, false, event.action);
+        platform::config::RegisterBindingInputEvent(platform::input::BindingKeyFromInputEvent(event),
+                                                    event.vk,
+                                                    event.nativeKey,
+                                                    event.nativeMods,
+                                                    platform::input::IsModifierGlfwKey(event.nativeKey) ||
+                                                        platform::input::IsModifierScanCode(event.nativeScanCode),
+                                                    event.action);
     }
 
     InitializeHotkeyDispatcherFromConfig();
@@ -1676,7 +1558,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
     }
 
     bool toggledGui = false;
-    if (!syntheticManagedRepeatEvent && event.vk != platform::input::VK_NONE) {
+    if (!syntheticManagedRepeatEvent && (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event))) {
         toggledGui = ProcessInputEventForGuiToggle(window, event, "glfwKeyCallback");
     }
 
@@ -1687,16 +1569,16 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
     const bool guiVisibleNow = platform::x11::IsGuiVisible();
 
     std::string gameState;
-    if (event.vk != platform::input::VK_NONE && !toggledGui && !guiVisibleNow) {
+    if ((event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) && !toggledGui && !guiVisibleNow) {
         gameState = platform::config::GetCurrentGameState();
     }
 
     std::optional<ResolvedRebindOutput> rebindOutput;
-    platform::input::VkCode rebindTargetVk = platform::input::VK_NONE;
-    if (configSnapshot && event.vk != platform::input::VK_NONE && !toggledGui && !guiVisibleNow) {
+    platform::input::BindingKey rebindTargetKey;
+    if (configSnapshot && (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) && !toggledGui && !guiVisibleNow) {
         rebindOutput = ResolveRebindOutput(*configSnapshot, event, false);
         if (rebindOutput && !rebindOutput->consumeSourceInput) {
-            rebindTargetVk = rebindOutput->triggerVk;
+            rebindTargetKey = rebindOutput->triggerBinding;
         }
     }
 
@@ -1710,20 +1592,21 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
 
         if (!syntheticManagedRepeatEvent &&
             configSnapshot &&
-            event.vk != platform::input::VK_NONE &&
+            (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) &&
             !toggledGui &&
             !guiVisibleNow) {
             hotkeyResult = g_hotkeyDispatcher().Evaluate(g_keyStateTracker,
                                                         event,
                                                         gameState,
                                                         platform::x11::GetMirrorModeState().GetActiveModeName(),
-                                                        configSnapshot->defaultMode);
+                                                        configSnapshot->defaultMode,
+                                                        rebindTargetKey);
             if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
                                                                          event,
                                                                          gameState,
-                                                                         rebindTargetVk);
+                                                                         rebindTargetKey);
             }
         }
     }
@@ -1766,7 +1649,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
         InvalidateManagedRepeatKeyboardStatesForAdditionalPress(window, event);
     }
 
-    if (configSnapshot && event.vk != platform::input::VK_NONE) {
+    if (configSnapshot && (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event))) {
         const bool suppressNativeRepeat = HandleManagedNativeRepeatEvent(window, *configSnapshot, event);
         if (suppressNativeRepeat) {
             return;
@@ -1814,7 +1697,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
             if (event.action == platform::input::InputAction::Release) {
                 ClearSyntheticRebindSourceKey(window, key);
             }
-            const int mappedButton = platform::input::VkToGlfwMouseButton(rebindOutput->triggerVk);
+            const int mappedButton = rebindOutput->triggerBinding.code;
             if (mappedButton < 0) {
                 LogDebugOnce(g_loggedUnsupportedMouseRebindMapping,
                              "key rebind matched but mouse target VK has no GLFW button mapping; forwarding original key event");
@@ -1830,13 +1713,12 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
                              "key->mouse rebind matched but mouse callback is missing; forwarding original key event");
             }
         } else {
-            const int mappedKey = platform::input::VkToGlfwKey(rebindOutput->triggerVk);
-            if (mappedKey < 0) {
+            const int mappedKey = -1;
+            if (rebindOutput->outputScanCode <= 0) {
                 LogDebugOnce(g_loggedUnsupportedKeyRebindMapping,
-                             "key rebind matched but keyboard target VK has no GLFW key mapping; forwarding original key event");
+                             "key rebind matched but keyboard target binding has no scan code; forwarding original key event");
             } else if (userCallback) {
                 const int mappedScanCode = rebindOutput->outputScanCode;
-                UpdateSyntheticRebindKeyState(window, key, mappedKey, action);
                 const int effectiveMods = GetEffectiveNativeMods(window, mods);
                 userCallback(window, mappedKey, mappedScanCode, action, effectiveMods);
                 if (sourceIsNonText &&
@@ -1990,7 +1872,12 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
         event.vk != platform::input::VK_NONE &&
         (event.action == platform::input::InputAction::Press || event.action == platform::input::InputAction::Release ||
          event.action == platform::input::InputAction::Repeat)) {
-        platform::config::RegisterBindingInputEvent(event.vk, 0, event.nativeMods, true, event.action);
+        platform::config::RegisterBindingInputEvent(platform::input::BindingKeyFromInputEvent(event),
+                                                    event.vk,
+                                                    event.nativeKey,
+                                                    event.nativeMods,
+                                                    false,
+                                                    event.action);
     }
 
     InitializeHotkeyDispatcherFromConfig();
@@ -2029,16 +1916,16 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
     const bool guiVisibleNow = platform::x11::IsGuiVisible();
 
     std::string gameState;
-    if (event.vk != platform::input::VK_NONE && !toggledGui && !guiVisibleNow) {
+    if ((event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) && !toggledGui && !guiVisibleNow) {
         gameState = platform::config::GetCurrentGameState();
     }
 
     std::optional<ResolvedRebindOutput> rebindOutput;
-    platform::input::VkCode rebindTargetVk = platform::input::VK_NONE;
-    if (configSnapshot && event.vk != platform::input::VK_NONE && !toggledGui && !guiVisibleNow) {
+    platform::input::BindingKey rebindTargetKey;
+    if (configSnapshot && (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) && !toggledGui && !guiVisibleNow) {
         rebindOutput = ResolveRebindOutput(*configSnapshot, event, false);
         if (rebindOutput && !rebindOutput->consumeSourceInput) {
-            rebindTargetVk = rebindOutput->triggerVk;
+            rebindTargetKey = rebindOutput->triggerBinding;
         }
     }
 
@@ -2052,20 +1939,21 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
 
         if (!syntheticManagedRepeatEvent &&
             configSnapshot &&
-            event.vk != platform::input::VK_NONE &&
+            (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) &&
             !toggledGui &&
             !guiVisibleNow) {
             hotkeyResult = g_hotkeyDispatcher().Evaluate(g_keyStateTracker,
                                                         event,
                                                         gameState,
                                                         platform::x11::GetMirrorModeState().GetActiveModeName(),
-                                                        configSnapshot->defaultMode);
+                                                        configSnapshot->defaultMode,
+                                                        rebindTargetKey);
             if (!hotkeyResult.matched) {
                 sensitivityMatchedViaRebind = EvaluateSensitivityHotkeys(*configSnapshot,
                                                                          g_keyStateTracker,
                                                                          event,
                                                                          gameState,
-                                                                         rebindTargetVk);
+                                                                         rebindTargetKey);
             }
         }
     }
@@ -2103,7 +1991,7 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
         return;
     }
 
-    if (configSnapshot && event.vk != platform::input::VK_NONE) {
+    if (configSnapshot && (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event))) {
         const bool suppressNativeRepeat = HandleManagedNativeRepeatEvent(window, *configSnapshot, event);
         if (suppressNativeRepeat) {
             return;
@@ -2138,7 +2026,7 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
             if (event.action == platform::input::InputAction::Release) {
                 ClearSyntheticRebindSourceKey(window, syntheticMouseSourceKey);
             }
-            const int mappedButton = platform::input::VkToGlfwMouseButton(rebindOutput->triggerVk);
+            const int mappedButton = rebindOutput->triggerBinding.code;
             if (mappedButton >= 0 && userCallback) {
                 int forwardedAction = action;
                 if (forwardedAction == static_cast<int>(platform::input::GlfwAction::Repeat)) {
@@ -2156,9 +2044,8 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                              "mouse rebind matched but mouse callback is missing; forwarding original mouse event");
             }
         } else {
-            const int mappedKey = platform::input::VkToGlfwKey(rebindOutput->triggerVk);
-            if (mappedKey >= 0 && userKeyCallback) {
-                UpdateSyntheticRebindKeyState(window, syntheticMouseSourceKey, mappedKey, action);
+            const int mappedKey = -1;
+            if (rebindOutput->outputScanCode > 0 && userKeyCallback) {
                 const int effectiveMods = GetEffectiveNativeMods(window, mods);
                 int mappedAction = action;
                 if (mappedAction == static_cast<int>(platform::input::GlfwAction::Repeat)) {
@@ -2180,9 +2067,9 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                 }
                 return;
             }
-            if (mappedKey < 0) {
+            if (rebindOutput->outputScanCode <= 0) {
                 LogDebugOnce(g_loggedUnsupportedKeyRebindMapping,
-                             "mouse rebind matched but keyboard target VK has no GLFW key mapping; forwarding original mouse event");
+                             "mouse rebind matched but keyboard target binding has no scan code; forwarding original mouse event");
             } else {
                 LogDebugOnce(g_loggedMissingRebindKeyDispatchCallback,
                              "mouse->key rebind matched but key callback is missing; forwarding original mouse event");

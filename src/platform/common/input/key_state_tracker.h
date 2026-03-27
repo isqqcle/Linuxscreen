@@ -2,8 +2,8 @@
 
 #include "input_event.h"
 
-#include <array>
-#include <cstddef>
+#include <map>
+#include <unordered_set>
 #include <vector>
 
 namespace platform::input {
@@ -13,21 +13,18 @@ class KeyStateTracker {
     void ApplyEvent(const InputEvent& event);
     void Clear();
 
-    bool IsDown(VkCode vk) const;
-    bool IsAnyCtrlDown() const;
-    bool IsAnyShiftDown() const;
-    bool IsAnyAltDown() const;
+    bool IsScanCodeDown(int nativeScanCode) const;
+    bool IsAnyScanCodeDown(const std::initializer_list<int>& nativeScanCodes) const;
+    bool IsMouseButtonDown(int button) const;
+    bool IsBindingDown(const BindingKey& key) const;
     bool IsFocused() const;
-    std::vector<VkCode> GetDownKeys() const;
+    std::vector<BindingKey> GetDownBindings() const;
 
   private:
-    static constexpr std::size_t kMaxTrackedVk = 512;
-
-    std::array<bool, kMaxTrackedVk> m_down{};
+    std::map<int, int> m_downKeyboardKeysByScanCode;
+    std::unordered_set<int> m_downScanCodes;
+    std::unordered_set<int> m_downMouseButtons;
     bool m_focused = true;
-
-    void RefreshAggregateModifiers();
-    static std::size_t ClampIndex(VkCode vk);
 };
 
 } // namespace platform::input

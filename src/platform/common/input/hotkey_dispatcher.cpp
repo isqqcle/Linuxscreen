@@ -23,23 +23,31 @@ struct BindingEvaluation {
 };
 
 bool MatchesHotkeyWithFallback(const KeyStateTracker& tracker,
-                               const std::vector<VkCode>& keys,
+                               const std::vector<BindingKey>& keys,
                                const InputEvent& event,
-                               const std::vector<VkCode>& exclusions,
+                               const std::vector<BindingKey>& exclusions,
                                bool triggerOnRelease,
-                               VkCode fallbackVk,
+                               BindingKey fallbackKey,
                                bool& matchedViaFallback) {
     matchedViaFallback = false;
     if (MatchesHotkey(tracker, keys, event, exclusions, triggerOnRelease)) {
         return true;
     }
 
-    if (fallbackVk == VK_NONE) {
+    if (!IsValidBindingKey(fallbackKey)) {
         return false;
     }
 
     InputEvent fallbackEvent = event;
-    fallbackEvent.vk = fallbackVk;
+    if (IsKeyboardBindingKey(fallbackKey)) {
+        fallbackEvent.type = InputEventType::Key;
+        fallbackEvent.nativeScanCode = fallbackKey.code;
+        fallbackEvent.nativeKey = 0;
+    } else if (IsMouseBindingKey(fallbackKey)) {
+        fallbackEvent.type = InputEventType::MouseButton;
+        fallbackEvent.nativeKey = fallbackKey.code;
+        fallbackEvent.nativeScanCode = 0;
+    }
     if (MatchesHotkey(tracker, keys, fallbackEvent, exclusions, triggerOnRelease)) {
         matchedViaFallback = true;
         return true;
@@ -151,7 +159,7 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
                                                   const std::string& gameState,
                                                   const std::string& currentMode,
                                                   const std::string& defaultMode,
-                                                  VkCode rebindTargetVk) {
+                                                  BindingKey rebindTargetKey) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (hotkeys_.empty()) {
@@ -168,7 +176,7 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
             selectedSecondaryMode = currentSecondaryModes_[hotkeyIndex];
         }
 
-        auto tryBinding = [&](const std::vector<VkCode>& keys,
+        auto tryBinding = [&](const std::vector<BindingKey>& keys,
                               int variantIndex,
                               const std::string& targetMode,
                               bool isExitTransition,
@@ -184,7 +192,7 @@ HotkeyEvaluationResult HotkeyDispatcher::Evaluate(const KeyStateTracker& tracker
                                            event,
                                            hotkey.conditions.exclusions,
                                            triggerOnRelease,
-                                           rebindTargetVk,
+                                           rebindTargetKey,
                                            matchedViaFallback)) {
                 return false;
             }

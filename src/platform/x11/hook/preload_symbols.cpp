@@ -481,15 +481,15 @@ void ResolveRealGlfwGetKey() {
     }
 }
 
-void ResolveRealGlfwGetKeyScancode() {
+void ResolveRealGlfwGetKeyName() {
     const char* fallbackLabel = nullptr;
     void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
-    void* symbol = ResolveSymbol("glfwGetKeyScancode", fallbackHandle, fallbackLabel);
-    g_realGlfwGetKeyScancode.store(reinterpret_cast<GlfwGetKeyScancodeFn>(symbol), std::memory_order_release);
+    void* symbol = ResolveSymbol("glfwGetKeyName", fallbackHandle, fallbackLabel);
+    g_realGlfwGetKeyName.store(reinterpret_cast<GlfwGetKeyNameFn>(symbol), std::memory_order_release);
     if (symbol) {
-        LogDebug("resolved real glfwGetKeyScancode symbol at %p", symbol);
+        LogDebug("resolved real glfwGetKeyName symbol at %p", symbol);
     } else {
-        LogDebug("glfwGetKeyScancode symbol unavailable in current process");
+        LogDebug("glfwGetKeyName symbol unavailable in current process");
     }
 }
 
@@ -698,9 +698,9 @@ GlfwGetKeyFn GetRealGlfwGetKey() {
     return g_realGlfwGetKey.load(std::memory_order_acquire);
 }
 
-GlfwGetKeyScancodeFn GetRealGlfwGetKeyScancode() {
-    if (!g_realGlfwGetKeyScancode.load(std::memory_order_acquire)) { ResolveRealGlfwGetKeyScancode(); }
-    return g_realGlfwGetKeyScancode.load(std::memory_order_acquire);
+GlfwGetKeyNameFn GetRealGlfwGetKeyName() {
+    if (!g_realGlfwGetKeyName.load(std::memory_order_acquire)) { ResolveRealGlfwGetKeyName(); }
+    return g_realGlfwGetKeyName.load(std::memory_order_acquire);
 }
 
 GlfwGetCursorPosProc GetRealGlfwGetCursorPos() {

@@ -1,5 +1,4 @@
 namespace {
-
 toml::table MakeAppearanceTable(const LinuxscreenConfig& cfg) {
     toml::table appearanceTbl;
     appearanceTbl.insert("theme", cfg.guiTheme);
@@ -15,6 +14,20 @@ toml::table MakeAppearanceTable(const LinuxscreenConfig& cfg) {
     }
     appearanceTbl.insert("customColors", std::move(colorsTbl));
     return appearanceTbl;
+}
+
+std::vector<input::BindingKey> DefaultGuiHotkeyBindings() {
+#ifdef __APPLE__
+    return {
+        input::MakeKeyboardBindingKey(59), // Left Ctrl
+        input::MakeKeyboardBindingKey(34), // I
+    };
+#else
+    return {
+        input::MakeKeyboardBindingKey(37), // Left Ctrl
+        input::MakeKeyboardBindingKey(31), // I
+    };
+#endif
 }
 
 void LoadAppearanceTable(const toml::table& tbl, LinuxscreenConfig& cfg) {
@@ -39,11 +52,9 @@ toml::table LinuxscreenConfigToToml(const LinuxscreenConfig& cfg) {
     out.insert_or_assign("defaultMode", cfg.defaultMode);
     out.insert_or_assign("fpsLimit", cfg.fpsLimit);
     
-    toml::array guiHotkeyArr;
-    for (auto key : cfg.guiHotkey) {
-        guiHotkeyArr.push_back(static_cast<int64_t>(key));
+    if (!cfg.guiHotkey.empty()) {
+        out.insert_or_assign("guiHotkey", BindingKeysToToml(cfg.guiHotkey));
     }
-    out.insert_or_assign("guiHotkey", guiHotkeyArr);
     out.erase("rebindToggleHotkey");
     
     toml::array mirrorsArr;
@@ -125,20 +136,10 @@ LinuxscreenConfig LinuxscreenConfigFromToml(const toml::table& tbl) {
     cfg.defaultMode = GetStringOr(tbl, "defaultMode", "");
     cfg.fpsLimit = std::max(0, GetOr(tbl, "fpsLimit", 0));
     
-    if (auto arr = GetArray(tbl, "guiHotkey")) {
-        for (const auto& elem : *arr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.guiHotkey.push_back(static_cast<uint32_t>(*val));
-            }
-        }
-    }
-
-    if (auto arr = GetArray(tbl, "rebindToggleHotkey")) {
-        for (const auto& elem : *arr) {
-            if (auto val = elem.value<int64_t>()) {
-                cfg.rebindToggleHotkey.push_back(static_cast<uint32_t>(*val));
-            }
-        }
+    cfg.guiHotkey = BindingKeysFromToml(tbl, "guiHotkey");
+    cfg.rebindToggleHotkey = BindingKeysFromToml(tbl, "rebindToggleHotkey");
+    if (cfg.guiHotkey.empty()) {
+        cfg.guiHotkey = DefaultGuiHotkeyBindings();
     }
     
     if (auto arr = GetArray(tbl, "mirror")) {
