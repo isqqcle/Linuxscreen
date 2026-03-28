@@ -52,6 +52,11 @@ void DestroyAllInstances() {
 void ResetAllMirrorInstanceCaptureTimers() {
     for (auto& kv : g_instances) {
         X11MirrorInstance& inst = kv.second;
+        // Mode/viewport refreshes can change whether a mirror has any visible
+        // output at all. Drop the previously published texture immediately so
+        // the overlay does not flash stale content before the next capture.
+        inst.hasValidContent = false;
+        inst.hasFrameContent = false;
         inst.contentDetectionPending = false;
         inst.lastCaptureTime = std::chrono::steady_clock::time_point{};
     }
