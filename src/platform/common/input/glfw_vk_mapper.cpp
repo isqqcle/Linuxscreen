@@ -92,6 +92,9 @@ bool IsNonTextVk(VkCode vk) {
     }
 
     switch (vk) {
+    case VK_BACK:
+    case VK_TAB:
+    case VK_RETURN:
     case VK_SHIFT:
     case VK_LSHIFT:
     case VK_RSHIFT:

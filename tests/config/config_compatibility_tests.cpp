@@ -301,6 +301,30 @@ void TestHotkeyRoundTripFields() {
     toml::table savedSensitivity;
     SensitivityHotkeyConfigToToml(sensitivityHotkey, savedSensitivity);
     Require(RequireBool(savedSensitivity, "triggerOnHold"), "Sensitivity hotkey triggerOnHold should serialize");
+
+    KeyRebind rebind;
+    rebind.fromInput = platform::input::MakeKeyboardBindingKey(30);
+    rebind.fromVkHint = platform::input::VK_A;
+    rebind.toInput = platform::input::MakeKeyboardBindingKey(49);
+    rebind.toVkHint = platform::input::VK_SPACE;
+    rebind.useCustomOutput = true;
+    rebind.customOutputKey = platform::input::MakeKeyboardBindingKey(36);
+    rebind.customOutputVkHint = platform::input::VK_RETURN;
+
+    toml::table savedRebind;
+    KeyRebindToToml(rebind, savedRebind);
+    Require(RequireInt(savedRebind, "fromVkHint") == static_cast<std::int64_t>(platform::input::VK_A),
+            "Rebind fromVkHint should serialize");
+    Require(RequireInt(savedRebind, "toVkHint") == static_cast<std::int64_t>(platform::input::VK_SPACE),
+            "Rebind toVkHint should serialize");
+    Require(RequireInt(savedRebind, "customOutputVkHint") == static_cast<std::int64_t>(platform::input::VK_RETURN),
+            "Rebind customOutputVkHint should serialize");
+
+    const KeyRebind reparsedRebind = KeyRebindFromToml(savedRebind);
+    Require(reparsedRebind.fromVkHint == platform::input::VK_A, "Rebind fromVkHint should parse");
+    Require(reparsedRebind.toVkHint == platform::input::VK_SPACE, "Rebind toVkHint should parse");
+    Require(reparsedRebind.customOutputVkHint == platform::input::VK_RETURN,
+            "Rebind customOutputVkHint should parse");
 }
 
 void TestRootFpsLimitRoundTrip() {

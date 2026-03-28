@@ -135,7 +135,10 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
             if (captureResult.target == platform::config::CaptureTarget::RebindDraftInput) {
                 if (confirmed && !capturedBindings.empty()) {
                     g_rebindLayoutState.customDraftInputBinding = capturedBindings.back();
-                    g_rebindLayoutState.customDraftInputVk = 0;
+                    const auto& capturedDetail = capturedBindingKeys.back();
+                    g_rebindLayoutState.customDraftInputVk =
+                        capturedDetail.vk != platform::input::VK_NONE ? capturedDetail.vk
+                                                                      : LegacyUiVkFromBinding(capturedBindings.back());
                 } else if (cleared) {
                     g_rebindLayoutState.customDraftInputBinding = {};
                     g_rebindLayoutState.customDraftInputVk = 0;
@@ -235,27 +238,34 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                             auto& rebind = mutableConfig.keyRebinds.rebinds[captureResult.targetIndex];
                             if (confirmed && !capturedBindings.empty()) {
                                 const platform::input::BindingKey capturedBinding = capturedBindings.back();
+                                const platform::input::VkCode capturedVk = capturedBindingKeys.back().vk;
                                 if (captureResult.target == platform::config::CaptureTarget::RebindFrom) {
                                     rebind.fromInput = capturedBinding;
+                                    rebind.fromVkHint = capturedVk;
                                 } else if (captureResult.target == platform::config::CaptureTarget::RebindTo) {
                                     const bool hadExplicitTextOverride = HasExplicitTextOverride(rebind);
                                     const platform::input::BindingKey previousTrigger = rebind.toInput;
+                                    const platform::input::VkCode previousTriggerVk = rebind.toVkHint;
                                     rebind.toInput = capturedBinding;
+                                    rebind.toVkHint = capturedVk;
                                     if (!hadExplicitTextOverride &&
                                         platform::input::IsValidBindingKey(previousTrigger) &&
                                         previousTrigger != capturedBinding) {
                                         rebind.useCustomOutput = true;
                                         rebind.customOutputKey = previousTrigger;
+                                        rebind.customOutputVkHint = previousTriggerVk;
                                         rebind.customOutputUnicode = 0;
                                         rebind.customOutputShiftUnicode = 0;
                                     }
                                 } else {
                                     rebind.useCustomOutput = true;
                                     rebind.customOutputKey = capturedBinding;
+                                    rebind.customOutputVkHint = capturedVk;
                                     rebind.customOutputUnicode = 0;
                                     rebind.customOutputShiftUnicode = 0;
                                     if (rebind.customOutputKey == rebind.toInput) {
                                         rebind.customOutputKey = {};
+                                        rebind.customOutputVkHint = platform::input::VK_NONE;
                                         rebind.useCustomOutput = false;
                                     }
                                 }
@@ -263,10 +273,13 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                             } else if (cleared) {
                                 if (captureResult.target == platform::config::CaptureTarget::RebindFrom) {
                                     rebind.fromInput = {};
+                                    rebind.fromVkHint = platform::input::VK_NONE;
                                 } else if (captureResult.target == platform::config::CaptureTarget::RebindTo) {
                                     rebind.toInput = {};
+                                    rebind.toVkHint = platform::input::VK_NONE;
                                 } else {
                                     rebind.customOutputKey = {};
+                                    rebind.customOutputVkHint = platform::input::VK_NONE;
                                     rebind.customOutputUnicode = 0;
                                     rebind.customOutputShiftUnicode = 0;
                                     rebind.useCustomOutput = false;

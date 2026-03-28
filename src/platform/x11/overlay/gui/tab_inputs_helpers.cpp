@@ -743,6 +743,50 @@ uint32_t LegacyUiVkFromBinding(const platform::input::BindingKey& binding) {
     return ResolveKeyboardVkFromScanCode(binding.code);
 }
 
+uint32_t ResolveBindingDisplayVk(const platform::input::BindingKey& binding, uint32_t vkHint) {
+    if (platform::input::IsMouseBindingKey(binding)) {
+        if (platform::input::IsMouseVk(vkHint)) {
+            return vkHint;
+        }
+        return platform::input::GlfwMouseButtonToVk(binding.code);
+    }
+    if (platform::input::IsKeyboardBindingKey(binding)) {
+        if (platform::input::IsKeyboardVk(static_cast<platform::input::VkCode>(vkHint))) {
+            return vkHint;
+        }
+        return LegacyUiVkFromBinding(binding);
+    }
+    return 0;
+}
+
+std::string FormatBindingWithHint(const platform::input::BindingKey& binding, uint32_t vkHint) {
+    if (!platform::input::IsValidBindingKey(binding)) {
+        return std::string("<unset>");
+    }
+
+    const uint32_t resolvedVk = ResolveBindingDisplayVk(binding, vkHint);
+    if (resolvedVk != 0) {
+        return FormatSingleVk(resolvedVk);
+    }
+    return FormatSingleBinding(binding);
+}
+
+uint32_t ResolveRebindSourceVk(const platform::config::KeyRebind& rebind) {
+    return ResolveBindingDisplayVk(rebind.fromInput, rebind.fromVkHint);
+}
+
+uint32_t ResolveRebindTriggerVk(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
+    const uint32_t resolvedVk = ResolveBindingDisplayVk(rebind.toInput, rebind.toVkHint);
+    return resolvedVk != 0 ? resolvedVk : originalVk;
+}
+
+uint32_t ResolveRebindTextVk(const platform::config::KeyRebind& rebind, uint32_t originalVk) {
+    if (rebind.useCustomOutput && platform::input::IsValidBindingKey(rebind.customOutputKey)) {
+        return ResolveBindingDisplayVk(rebind.customOutputKey, rebind.customOutputVkHint);
+    }
+    return ResolveRebindTriggerVk(rebind, originalVk);
+}
+
 bool IsPrimaryMouseBinding(const platform::input::BindingKey& binding) {
     return platform::input::IsMouseBindingKey(binding) && (binding.code == 0 || binding.code == 1);
 }
@@ -789,7 +833,7 @@ std::string RebindDisplayName(const platform::config::KeyRebind& rebind) {
     if (!trimmedName.empty()) {
         return trimmedName;
     }
-    return FormatSingleBinding(rebind.fromInput);
+    return FormatBindingWithHint(rebind.fromInput, rebind.fromVkHint);
 }
 
 int FindAnyRebindIndexForKey(const platform::config::LinuxscreenConfig& config, uint32_t fromVk) {
@@ -852,7 +896,9 @@ int EnsureRebindForKey(platform::config::LinuxscreenConfig& config, uint32_t fro
 
     platform::config::KeyRebind rebind;
     rebind.fromInput = BindingFromLegacyUiVk(fromVk);
+    rebind.fromVkHint = fromVk;
     rebind.toInput = rebind.fromInput;
+    rebind.toVkHint = fromVk;
     rebind.enabled = true;
     config.keyRebinds.rebinds.push_back(rebind);
     return static_cast<int>(config.keyRebinds.rebinds.size()) - 1;
@@ -1030,14 +1076,14 @@ std::string CodepointToPreviewDisplay(std::uint32_t codepoint) {
 
 std::string FormatCannotTypePreview(const platform::input::BindingKey& textBinding, uint32_t originalVk) {
     if (platform::input::IsValidBindingKey(textBinding)) {
-        return "Cannot type (" + FormatSingleBinding(textBinding) + ")";
+        return "Cannot type (" + FormatBindingWithHint(textBinding, originalVk) + ")";
     }
     return "Cannot type (" + FormatSingleVk(originalVk) + ")";
 }
 
 std::string ResolveRebindTextPreview(const platform::config::KeyRebind& rebind, uint32_t originalVk, bool shiftDown) {
     const platform::input::BindingKey textBinding = ResolvePreviewTextBinding(rebind, originalVk);
-    const uint32_t textVk = LegacyUiVkFromBinding(textBinding);
+    const uint32_t textVk = ResolveRebindTextVk(rebind, originalVk);
     const int textScanCode = platform::input::IsKeyboardBindingKey(textBinding) ? textBinding.code : 0;
 
     if (shiftDown &&
@@ -1058,10 +1104,10 @@ std::string ResolveRebindTextPreview(const platform::config::KeyRebind& rebind, 
     }
 
     if (platform::input::IsNonTextVk(textVk)) {
-        return FormatCannotTypePreview(textBinding, originalVk);
+        return FormatCannotTypePreview(textBinding, textVk);
     }
     if (platform::input::IsValidBindingKey(textBinding)) {
-        return FormatSingleBinding(textBinding);
+        return FormatBindingWithHint(textBinding, textVk);
     }
     return FormatCannotTypePreview(textBinding, originalVk);
 }
@@ -1080,12 +1126,12 @@ std::string TypesValueForRebind(const platform::config::KeyRebind* rebind, uint3
     }
 
     const platform::input::BindingKey textBinding = ResolvePreviewTextBinding(*rebind, originalVk);
-    const uint32_t textVk = LegacyUiVkFromBinding(textBinding);
+    const uint32_t textVk = ResolveRebindTextVk(*rebind, originalVk);
     if (platform::input::IsNonTextVk(textVk)) {
-        return FormatCannotTypePreview(textBinding, originalVk);
+        return FormatCannotTypePreview(textBinding, textVk);
     }
     if (platform::input::IsValidBindingKey(textBinding)) {
-        return FormatSingleBinding(textBinding);
+        return FormatBindingWithHint(textBinding, textVk);
     }
     return FormatSingleVk(originalVk);
 }
@@ -1093,8 +1139,9 @@ std::string TypesValueForRebind(const platform::config::KeyRebind* rebind, uint3
 std::string TriggersValueForRebind(const platform::config::KeyRebind* rebind, uint32_t originalVk) {
     const platform::input::BindingKey triggerBinding =
         rebind ? ResolvePreviewTriggerBinding(*rebind, originalVk) : BindingFromLegacyUiVk(originalVk);
+    const uint32_t triggerVk = rebind ? ResolveRebindTriggerVk(*rebind, originalVk) : originalVk;
     if (platform::input::IsValidBindingKey(triggerBinding)) {
-        return FormatSingleBinding(triggerBinding);
+        return FormatBindingWithHint(triggerBinding, triggerVk);
     }
     return FormatSingleVk(originalVk);
 }

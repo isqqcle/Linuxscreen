@@ -4,6 +4,7 @@
 #define LINUXSCREEN_PLATFORM_COMMON_LINUXSCREEN_CONFIG_H
 
 #include "input/binding_key.h"
+#include "input/vk_codes.h"
 
 #include <array>
 #include <cstdint>
@@ -270,13 +271,16 @@ struct SensitivityHotkeyConfig {
 
 struct KeyRebind {
     input::BindingKey fromInput;
+    input::VkCode fromVkHint = input::VK_NONE;
     input::BindingKey toInput;
+    input::VkCode toVkHint = input::VK_NONE;
     bool enabled = true;
     bool consumeSourceInput = false;
     std::string name;
 
     bool useCustomOutput = false;
     input::BindingKey customOutputKey;
+    input::VkCode customOutputVkHint = input::VK_NONE;
     uint32_t customOutputUnicode = 0;
     uint32_t customOutputShiftUnicode = 0;
     bool keyRepeatDisabled = false;

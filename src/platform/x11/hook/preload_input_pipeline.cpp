@@ -695,6 +695,9 @@ bool TryDecodeFirstUtf8Codepoint(const char* input, std::uint32_t& outCodepoint)
 
 bool TryResolveGlfwLayoutCodepoint(int nativeKey, int nativeScanCode, bool shiftDown, std::uint32_t& outCodepoint) {
     outCodepoint = 0;
+    if (nativeScanCode <= 0) {
+        return false;
+    }
     GlfwGetKeyNameFn getKeyName = GetRealGlfwGetKeyName();
     if (!getKeyName) {
         return false;
@@ -715,12 +718,67 @@ bool HasKeyboardBindingIdentity(const platform::input::InputEvent& event) {
     return event.type == platform::input::InputEventType::Key && event.nativeScanCode > 0;
 }
 
+int ResolveGlfwKeyForBindingScanCode(int bindingScanCode) {
+    if (bindingScanCode <= 0) {
+        return -1;
+    }
+
+    using GlfwGetKeyScancodeFn = int (*)(int key);
+    static std::once_flag once;
+    static GlfwGetKeyScancodeFn fn = nullptr;
+    std::call_once(once, []() {
+        fn = reinterpret_cast<GlfwGetKeyScancodeFn>(dlsym(RTLD_DEFAULT, "glfwGetKeyScancode"));
+    });
+    if (!fn) {
+        return -1;
+    }
+
+    for (std::uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
+        if (!platform::input::IsKeyboardVk(static_cast<platform::input::VkCode>(vk))) {
+            continue;
+        }
+
+        const int glfwKey = platform::input::VkToGlfwKey(vk);
+        if (glfwKey < 0) {
+            continue;
+        }
+
+        if (fn(glfwKey) == bindingScanCode) {
+            return glfwKey;
+        }
+    }
+
+    return -1;
+}
+
+platform::input::VkCode ResolveKeyboardVkForBinding(const platform::input::BindingKey& binding,
+                                                    platform::input::VkCode vkHint) {
+    if (!platform::input::IsKeyboardBindingKey(binding)) {
+        return platform::input::VK_NONE;
+    }
+
+    if (platform::input::IsKeyboardVk(vkHint)) {
+        return vkHint;
+    }
+
+    const int glfwKey = ResolveGlfwKeyForBindingScanCode(binding.code);
+    if (glfwKey < 0) {
+        return platform::input::VK_NONE;
+    }
+
+    return platform::input::GlfwKeyToVk(glfwKey, binding.code, 0);
+}
+
 struct ResolvedRebindOutput {
     bool matched = false;
     bool consumeSourceInput = false;
     platform::input::VkCode sourceVk = platform::input::VK_NONE;
+    platform::input::VkCode triggerVk = platform::input::VK_NONE;
+    platform::input::VkCode textVk = platform::input::VK_NONE;
     platform::input::BindingKey triggerBinding;
     platform::input::BindingKey textBinding;
+    int outputKey = -1;
+    int textKey = -1;
     int textScanCode = 0;
     int outputScanCode = 0;
     bool targetIsMouse = false;
@@ -756,11 +814,24 @@ std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::
         return resolved;
         }
         resolved.triggerBinding = rebind.toInput;
+        resolved.triggerVk = ResolveKeyboardVkForBinding(resolved.triggerBinding, rebind.toVkHint);
+        resolved.outputKey = resolved.triggerVk != platform::input::VK_NONE
+            ? platform::input::VkToGlfwKey(resolved.triggerVk)
+            : (platform::input::IsKeyboardBindingKey(resolved.triggerBinding)
+                   ? ResolveGlfwKeyForBindingScanCode(resolved.triggerBinding.code)
+                   : -1);
         resolved.outputScanCode =
             platform::input::IsKeyboardBindingKey(resolved.triggerBinding) ? resolved.triggerBinding.code : 0;
         resolved.textBinding =
             (rebind.useCustomOutput && platform::input::IsValidBindingKey(rebind.customOutputKey)) ? rebind.customOutputKey
                                                                                                     : resolved.triggerBinding;
+        resolved.textVk = ResolveKeyboardVkForBinding(resolved.textBinding,
+                                                      rebind.useCustomOutput ? rebind.customOutputVkHint : rebind.toVkHint);
+        resolved.textKey = resolved.textVk != platform::input::VK_NONE
+            ? platform::input::VkToGlfwKey(resolved.textVk)
+            : (platform::input::IsKeyboardBindingKey(resolved.textBinding)
+                   ? ResolveGlfwKeyForBindingScanCode(resolved.textBinding.code)
+                   : -1);
         resolved.textScanCode =
             platform::input::IsKeyboardBindingKey(resolved.textBinding) ? resolved.textBinding.code : 0;
         resolved.targetIsMouse = platform::input::IsMouseBindingKey(resolved.triggerBinding);
@@ -856,21 +927,23 @@ bool TryResolveRebindOutputCodepoint(GLFWwindow* window,
     const int effectiveNativeMods = GetEffectiveNativeMods(window, nativeMods);
     const bool shiftDown = (effectiveNativeMods & static_cast<int>(platform::input::GlfwMod::Shift)) != 0;
     const bool textIsKeyboard = platform::input::IsKeyboardBindingKey(rebindOutput.textBinding);
+    const bool textProducesCharacters =
+        textIsKeyboard && rebindOutput.textKey >= 0 && !platform::input::IsNonTextVk(rebindOutput.textVk);
 
     if (shiftDown &&
         IsValidUnicodeScalar(rebindOutput.customShiftUnicode) &&
-        textIsKeyboard) {
+        textProducesCharacters) {
         outCodepoint = rebindOutput.customShiftUnicode;
         return true;
     }
 
-    if (IsValidUnicodeScalar(rebindOutput.customUnicode) && textIsKeyboard) {
+    if (IsValidUnicodeScalar(rebindOutput.customUnicode) && textProducesCharacters) {
         outCodepoint = rebindOutput.customUnicode;
         return true;
     }
 
-    if (textIsKeyboard &&
-        TryResolveGlfwLayoutCodepoint(-1, rebindOutput.textScanCode, shiftDown, outCodepoint) &&
+    if (textProducesCharacters &&
+        TryResolveGlfwLayoutCodepoint(rebindOutput.textKey, rebindOutput.textScanCode, shiftDown, outCodepoint) &&
         outCodepoint != 0) {
         return true;
     }
@@ -1713,13 +1786,14 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
                              "key->mouse rebind matched but mouse callback is missing; forwarding original key event");
             }
         } else {
-            const int mappedKey = -1;
             if (rebindOutput->outputScanCode <= 0) {
                 LogDebugOnce(g_loggedUnsupportedKeyRebindMapping,
                              "key rebind matched but keyboard target binding has no scan code; forwarding original key event");
             } else if (userCallback) {
+                const int mappedKey = rebindOutput->outputKey;
                 const int mappedScanCode = rebindOutput->outputScanCode;
                 const int effectiveMods = GetEffectiveNativeMods(window, mods);
+                UpdateSyntheticRebindKeyState(window, key, mappedKey, action);
                 userCallback(window, mappedKey, mappedScanCode, action, effectiveMods);
                 if (sourceIsNonText &&
                     (event.action == platform::input::InputAction::Press ||
@@ -2044,13 +2118,14 @@ void HookedGlfwMouseButtonCallback(GLFWwindow* window, int button, int action, i
                              "mouse rebind matched but mouse callback is missing; forwarding original mouse event");
             }
         } else {
-            const int mappedKey = -1;
             if (rebindOutput->outputScanCode > 0 && userKeyCallback) {
+                const int mappedKey = rebindOutput->outputKey;
                 const int effectiveMods = GetEffectiveNativeMods(window, mods);
                 int mappedAction = action;
                 if (mappedAction == static_cast<int>(platform::input::GlfwAction::Repeat)) {
                     mappedAction = static_cast<int>(platform::input::GlfwAction::Press);
                 }
+                UpdateSyntheticRebindKeyState(window, syntheticMouseSourceKey, mappedKey, mappedAction);
                 userKeyCallback(window, mappedKey, rebindOutput->outputScanCode, mappedAction, effectiveMods);
                 if (event.action == platform::input::InputAction::Press ||
                     event.action == platform::input::InputAction::Repeat) {
