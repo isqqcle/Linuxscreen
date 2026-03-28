@@ -269,7 +269,11 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         }
     }
 
-    const bool overscan = IsOverscanActiveInternal() && g_overscanFboRendered;
+    const bool overscanActive = IsOverscanActiveInternal();
+    if (overscanActive && !g_overscanFboRendered) {
+        return;
+    }
+    const bool overscan = overscanActive;
     const bool macRedirect = IsMacMirrorRedirectActiveInternal() && IsMacMirrorRedirectRenderedInternal();
     OverscanDimensions overscanSnap = overscan ? g_overscanDims : OverscanDimensions{};
 
