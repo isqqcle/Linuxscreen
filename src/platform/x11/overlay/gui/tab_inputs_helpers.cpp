@@ -3,6 +3,40 @@ const char* ResolveGlfwKeyNameForOverlay(int key, int scancode);
 
 namespace {
 
+std::unordered_map<int, uint32_t> BuildKnownGlfwScanCodeMap() {
+    std::unordered_map<int, uint32_t> scanToVk;
+    for (uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
+        if (!platform::input::IsKeyboardVk(vk)) {
+            continue;
+        }
+
+        const int glfwKey = platform::input::VkToGlfwKey(vk);
+        if (glfwKey < 0) {
+            continue;
+        }
+
+        const int rawScanCode = platform::x11::ResolveGlfwKeyScancodeForOverlay(glfwKey);
+        const int bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(rawScanCode);
+        if (bindingScanCode <= 0) {
+            continue;
+        }
+
+        scanToVk.emplace(bindingScanCode, vk);
+    }
+    return scanToVk;
+}
+
+const std::unordered_map<int, uint32_t>& GetKnownGlfwScanCodeMap() {
+    static std::mutex cacheMutex;
+    static std::unordered_map<int, uint32_t> cached;
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    if (cached.empty()) {
+        cached = BuildKnownGlfwScanCodeMap();
+    }
+    return cached;
+}
+
 std::string NormalizeResolvedKeyLabel(const char* keyName) {
     if (!keyName || keyName[0] == '\0') {
         return {};
@@ -36,18 +70,17 @@ uint32_t ResolveKeyboardVkFromScanCode(int scanCode) {
         return 0;
     }
 
-    for (uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
-        if (!platform::input::IsKeyboardVk(vk)) {
-            continue;
-        }
+    const auto& scanToVk = GetKnownGlfwScanCodeMap();
+    auto it = scanToVk.find(scanCode);
+    if (it != scanToVk.end()) {
+        return it->second;
+    }
 
-        const int glfwKey = platform::input::VkToGlfwKey(vk);
-        if (glfwKey < 0) {
-            continue;
-        }
-
-        if (platform::x11::NormalizeGlfwScanCodeForLinuxBindings(platform::x11::ResolveGlfwKeyScancodeForOverlay(glfwKey)) == scanCode) {
-            return vk;
+    if (scanToVk.empty()) {
+        const auto rebuilt = BuildKnownGlfwScanCodeMap();
+        auto rebuiltIt = rebuilt.find(scanCode);
+        if (rebuiltIt != rebuilt.end()) {
+            return rebuiltIt->second;
         }
     }
 
@@ -55,8 +88,8 @@ uint32_t ResolveKeyboardVkFromScanCode(int scanCode) {
 }
 
 #ifndef __APPLE__
-std::string TryResolveX11PrintableScanCodeLabel(int scanCode) {
-    if (scanCode <= 0) {
+std::string TryResolveX11ScanCodeLabel(int scanCode) {
+    if (scanCode <= 0 || scanCode > 255) {
         return {};
     }
 
@@ -69,20 +102,50 @@ std::string TryResolveX11PrintableScanCodeLabel(int scanCode) {
         return {};
     }
 
-    const KeySym keysym = XkbKeycodeToKeysym(dpy, static_cast<KeyCode>(scanCode), 0, 0);
-    if (keysym == NoSymbol) {
+    int keysymsPerKeycode = 0;
+    KeySym* keysyms = XGetKeyboardMapping(dpy, static_cast<KeyCode>(scanCode), 1, &keysymsPerKeycode);
+    if (keysyms == nullptr || keysymsPerKeycode <= 0) {
         return {};
     }
 
-    if (keysym >= 0x20 && keysym <= 0x7Eu) {
-        const char text[2] = { static_cast<char>(keysym), '\0' };
-        return NormalizeResolvedKeyLabel(text);
+    std::string resolvedLabel;
+    for (int i = 0; i < keysymsPerKeycode; ++i) {
+        const KeySym keysym = keysyms[i];
+        if (keysym == NoSymbol) {
+            continue;
+        }
+
+        if (keysym >= 0x20 && keysym <= 0x7Eu) {
+            const char text[2] = { static_cast<char>(keysym), '\0' };
+            resolvedLabel = NormalizeResolvedKeyLabel(text);
+            if (!resolvedLabel.empty()) {
+                break;
+            }
+        }
+
+        const char* keysymName = XKeysymToString(keysym);
+        if (!keysymName || keysymName[0] == '\0') {
+            continue;
+        }
+
+        resolvedLabel = keysymName;
+        break;
+    }
+    XFree(keysyms);
+
+    if (resolvedLabel.empty()) {
+        return {};
     }
 
-    return {};
+    std::string label(std::move(resolvedLabel));
+    std::replace(label.begin(), label.end(), '_', ' ');
+    if (label.rfind("XF86", 0) == 0) {
+        label.erase(0, 4);
+    }
+    return label;
 }
 #else
-std::string TryResolveX11PrintableScanCodeLabel(int /*scanCode*/) {
+std::string TryResolveX11ScanCodeLabel(int /*scanCode*/) {
     return {};
 }
 #endif
@@ -167,6 +230,65 @@ const char* GetSpecialBindingScanCodeLabel(int scanCode) {
     return nullptr;
 }
 
+std::pair<int, int> GetBindableScanCodeRange() {
+#ifdef __APPLE__
+    return { 1, 512 };
+#else
+    if (!platform::x11::IsWaylandGlfwPlatform()) {
+        Display* dpy = glXGetCurrentDisplay();
+        if (dpy == nullptr) {
+            const RuntimeHandles handles = GetRuntimeHandles();
+            dpy = reinterpret_cast<Display*>(handles.nativeDisplay);
+        }
+
+        if (dpy != nullptr) {
+            int minKeycode = 8;
+            int maxKeycode = 255;
+            XDisplayKeycodes(dpy, &minKeycode, &maxKeycode);
+            if (minKeycode > 0 && maxKeycode >= minKeycode) {
+                return { minKeycode, maxKeycode };
+            }
+        }
+
+        return { 8, 255 };
+    }
+
+    return { 1, 512 };
+#endif
+}
+
+bool IsBindableKeyboardScanCode(int scanCode) {
+    if (scanCode <= 0) {
+        return false;
+    }
+
+    if (ResolveKeyboardVkFromScanCode(scanCode) != 0) {
+        return true;
+    }
+
+#ifndef __APPLE__
+    const int glfwScanCode = platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(scanCode);
+    const std::string glfwLabel = NormalizeResolvedKeyLabel(platform::x11::ResolveGlfwKeyNameForOverlay(-1, glfwScanCode));
+    if (!glfwLabel.empty() && glfwLabel != "?") {
+        return true;
+    }
+
+    if (!TryResolveX11ScanCodeLabel(scanCode).empty()) {
+        return true;
+    }
+#else
+    if (ResolveKeyboardVkFromScanCode(scanCode) == 0) {
+        return false;
+    }
+#endif
+
+    if (const char* special = GetSpecialBindingScanCodeLabel(scanCode)) {
+        return special[0] != '\0';
+    }
+
+    return false;
+}
+
 bool IsLikelyModifierBinding(const platform::input::BindingKey& key) {
     if (!platform::input::IsKeyboardBindingKey(key)) {
         return false;
@@ -211,14 +333,14 @@ std::string FormatKeyboardScanCode(int scanCode) {
         }
     }
 
-    if (!platform::x11::IsWaylandGlfwPlatform()) {
+    if (resolvedVk != 0 && !platform::x11::IsWaylandGlfwPlatform()) {
         const std::string resolved = NormalizeResolvedKeyLabel(platform::x11::ResolveGlfwKeyNameForOverlay(-1, glfwScanCode));
         if (!resolved.empty() && resolved != "?") {
             return resolved;
         }
     }
 
-    if (const std::string x11Resolved = TryResolveX11PrintableScanCodeLabel(scanCode); !x11Resolved.empty()) {
+    if (const std::string x11Resolved = TryResolveX11ScanCodeLabel(scanCode); !x11Resolved.empty()) {
         return x11Resolved;
     }
 
@@ -928,9 +1050,8 @@ std::string FormatScanDisplay(int scanCode, uint32_t fallbackVk) {
         return FormatSingleVk(fallbackVk);
     }
 
-    std::ostringstream oss;
-    oss << FormatSingleVk(fallbackVk) << " (" << scanCode << ")";
-    return oss.str();
+    (void)fallbackVk;
+    return FormatKeyboardScanCode(scanCode);
 }
 
 using GlfwGetKeyScancodeFn = int (*)(int key);
@@ -962,16 +1083,12 @@ int GetDerivedX11ScanCodeForVk(uint32_t vk) {
     return 0;
 }
 
-void AddKnownScanOption(std::map<int, uint32_t>& scanToVk, uint32_t vk) {
-    if (!platform::input::IsKeyboardVk(vk)) {
+void AddKnownScanOption(std::map<int, uint32_t>& scanToVk, int scanCode) {
+    if (!IsBindableKeyboardScanCode(scanCode)) {
         return;
     }
 
-    const int scanCode = GetDerivedX11ScanCodeForVk(vk);
-    if (scanCode <= 0) {
-        return;
-    }
-
+    const uint32_t vk = ResolveKeyboardVkFromScanCode(scanCode);
     auto it = scanToVk.find(scanCode);
     if (it == scanToVk.end()) {
         scanToVk.emplace(scanCode, vk);
@@ -986,14 +1103,14 @@ void AddKnownScanOption(std::map<int, uint32_t>& scanToVk, uint32_t vk) {
 std::map<int, uint32_t> BuildKnownScanOptions(uint32_t preferredVk) {
     std::map<int, uint32_t> scanToVk;
 
-    auto addVk = [&](uint32_t vk) { AddKnownScanOption(scanToVk, vk); };
-    addVk(preferredVk);
+    const int preferredScanCode = GetDerivedX11ScanCodeForVk(preferredVk);
+    if (preferredScanCode > 0) {
+        AddKnownScanOption(scanToVk, preferredScanCode);
+    }
 
-    for (uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
-        if (!platform::input::IsKeyboardVk(vk)) {
-            continue;
-        }
-        addVk(vk);
+    const auto [minScanCode, maxScanCode] = GetBindableScanCodeRange();
+    for (int scanCode = minScanCode; scanCode <= maxScanCode; ++scanCode) {
+        AddKnownScanOption(scanToVk, scanCode);
     }
 
     return scanToVk;

@@ -949,45 +949,153 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 const int selectedCustomScanCode = selected
                                                        ? (platform::input::IsKeyboardBindingKey(selected->toInput) ? selected->toInput.code : 0)
                                                        : 0;
+                const uint32_t selectedCustomVkHint = selected ? selected->toVkHint : 0;
                 const int previewScanCode =
                     selectedCustomScanCode > 0 ? selectedCustomScanCode : GetDerivedX11ScanCodeForVk(triggerVk);
 
-                std::map<int, uint32_t> scanOptions = BuildKnownScanOptions(triggerVk);
-                auto addScanOption = [&](int scanCode, uint32_t vkHint) {
-                    if (scanCode <= 0) {
-                        return;
-                    }
-
-                    auto it = scanOptions.find(scanCode);
-                    if (it == scanOptions.end()) {
-                        scanOptions.emplace(scanCode, vkHint);
-                    } else if (it->second == 0 && vkHint != 0) {
-                        it->second = vkHint;
-                    }
+                struct DisplayScanOption {
+                    int scanCode = 0;
+                    uint32_t displayVk = 0;
+                    std::string label;
+                    std::string sortKey;
                 };
 
-                addScanOption(selectedCustomScanCode, triggerVk);
+                auto lowerAscii = [](std::string value) {
+                    for (char& ch : value) {
+                        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                    }
+                    return value;
+                };
+
+                auto hashCombine = [](std::uint64_t seed, std::uint64_t value) {
+                    return seed ^ (value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
+                };
+
+                std::uint64_t rebindSignature = static_cast<std::uint64_t>(config.keyRebinds.rebinds.size());
                 for (const auto& rebindEntry : config.keyRebinds.rebinds) {
-                    if (platform::input::IsKeyboardBindingKey(rebindEntry.toInput)) {
-                        const uint32_t hintVk = ResolveRebindTriggerVk(rebindEntry, triggerVk);
-                        addScanOption(rebindEntry.toInput.code, hintVk != 0 ? hintVk : triggerVk);
-                    }
-                }
-                platform::config::BindingInputEvent latestBindingEvent;
-                std::uint64_t latestSeq = platform::config::GetLatestBindingInputSequence();
-                if (latestSeq != 0) {
-                    std::uint64_t probeSequence = latestSeq - 1;
-                    if (platform::config::ConsumeBindingInputEventSince(probeSequence, latestBindingEvent) &&
-                        latestBindingEvent.nativeScanCode > 0) {
-                        const uint32_t latestHintVk =
-                            latestBindingEvent.vk != platform::input::VK_NONE ? latestBindingEvent.vk : triggerVk;
-                        addScanOption(latestBindingEvent.nativeScanCode, latestHintVk);
-                    }
+                    rebindSignature = hashCombine(rebindSignature, static_cast<std::uint64_t>(rebindEntry.fromInput.kind));
+                    rebindSignature = hashCombine(rebindSignature, static_cast<std::uint64_t>(rebindEntry.fromInput.code));
+                    rebindSignature = hashCombine(rebindSignature, static_cast<std::uint64_t>(rebindEntry.toInput.kind));
+                    rebindSignature = hashCombine(rebindSignature, static_cast<std::uint64_t>(rebindEntry.toInput.code));
+                    rebindSignature = hashCombine(rebindSignature, static_cast<std::uint64_t>(rebindEntry.toVkHint));
                 }
 
-                const std::string preview = FormatScanDisplay(previewScanCode, triggerVk);
+                struct CachedTriggerScanOptions {
+                    uint32_t contextVk = 0;
+                    uint32_t triggerVk = 0;
+                    int selectedCustomScanCode = 0;
+                    uint32_t selectedCustomVkHint = 0;
+                    std::uint64_t rebindSignature = 0;
+                    std::uint64_t latestBindingSequence = 0;
+                    std::vector<DisplayScanOption> options;
+                };
+
+                static CachedTriggerScanOptions cachedTriggerScanOptions;
+                const std::uint64_t latestBindingSequence = platform::config::GetLatestBindingInputSequence();
+                const bool shouldRebuildTriggerScanOptions =
+                    cachedTriggerScanOptions.contextVk != g_rebindLayoutState.contextVk ||
+                    cachedTriggerScanOptions.triggerVk != triggerVk ||
+                    cachedTriggerScanOptions.selectedCustomScanCode != selectedCustomScanCode ||
+                    cachedTriggerScanOptions.selectedCustomVkHint != selectedCustomVkHint ||
+                    cachedTriggerScanOptions.rebindSignature != rebindSignature ||
+                    cachedTriggerScanOptions.latestBindingSequence != latestBindingSequence;
+
+                if (shouldRebuildTriggerScanOptions) {
+                    std::map<int, uint32_t> scanOptions = BuildKnownScanOptions(triggerVk);
+                    auto addScanOption = [&](int scanCode, uint32_t vkHint) {
+                        if (scanCode <= 0) {
+                            return;
+                        }
+
+                        auto it = scanOptions.find(scanCode);
+                        if (it == scanOptions.end()) {
+                            scanOptions.emplace(scanCode, vkHint);
+                        } else if (it->second == 0 && vkHint != 0) {
+                            it->second = vkHint;
+                        }
+                    };
+
+                    addScanOption(selectedCustomScanCode, selectedCustomVkHint);
+                    for (const auto& rebindEntry : config.keyRebinds.rebinds) {
+                        if (platform::input::IsKeyboardBindingKey(rebindEntry.toInput)) {
+                            addScanOption(rebindEntry.toInput.code, rebindEntry.toVkHint);
+                        }
+                    }
+
+                    platform::config::BindingInputEvent latestBindingEvent;
+                    if (latestBindingSequence != 0) {
+                        std::uint64_t probeSequence = latestBindingSequence - 1;
+                        if (platform::config::ConsumeBindingInputEventSince(probeSequence, latestBindingEvent) &&
+                            latestBindingEvent.nativeScanCode > 0) {
+                            addScanOption(latestBindingEvent.nativeScanCode, latestBindingEvent.vk);
+                        }
+                    }
+
+                    std::vector<DisplayScanOption> displayScanOptions;
+                    auto addDisplayScanOption = [&](int scanCode, uint32_t displayVk) {
+                        if (scanCode <= 0) {
+                            return;
+                        }
+
+                        DisplayScanOption candidate;
+                        candidate.scanCode = scanCode;
+                        candidate.displayVk = displayVk;
+                        candidate.label = FormatScanDisplay(scanCode, displayVk);
+                        candidate.sortKey = lowerAscii(candidate.label);
+                        if (candidate.label.empty() || candidate.label == "<unset>") {
+                            return;
+                        }
+
+                        auto existing = std::find_if(displayScanOptions.begin(),
+                                                     displayScanOptions.end(),
+                                                     [&](const DisplayScanOption& option) { return option.sortKey == candidate.sortKey; });
+                        if (existing == displayScanOptions.end()) {
+                            displayScanOptions.push_back(std::move(candidate));
+                            return;
+                        }
+
+                        const bool candidateSelected = selectedCustomScanCode == candidate.scanCode;
+                        const bool existingSelected = selectedCustomScanCode == existing->scanCode;
+                        const bool candidatePreferred =
+                            candidateSelected ||
+                            (!existingSelected && candidate.displayVk != 0 && existing->displayVk == 0) ||
+                            (!existingSelected && candidate.scanCode < existing->scanCode);
+                        if (candidatePreferred) {
+                            *existing = std::move(candidate);
+                        }
+                    };
+
+                    for (const auto& scanOption : scanOptions) {
+                        addDisplayScanOption(scanOption.first, scanOption.second);
+                    }
+
+                    std::sort(displayScanOptions.begin(),
+                              displayScanOptions.end(),
+                              [](const DisplayScanOption& lhs, const DisplayScanOption& rhs) {
+                                  if (lhs.sortKey == rhs.sortKey) {
+                                      return lhs.scanCode < rhs.scanCode;
+                                  }
+                                  return lhs.sortKey < rhs.sortKey;
+                              });
+
+                    cachedTriggerScanOptions.contextVk = g_rebindLayoutState.contextVk;
+                    cachedTriggerScanOptions.triggerVk = triggerVk;
+                    cachedTriggerScanOptions.selectedCustomScanCode = selectedCustomScanCode;
+                    cachedTriggerScanOptions.selectedCustomVkHint = selectedCustomVkHint;
+                    cachedTriggerScanOptions.rebindSignature = rebindSignature;
+                    cachedTriggerScanOptions.latestBindingSequence = latestBindingSequence;
+                    cachedTriggerScanOptions.options = std::move(displayScanOptions);
+                }
+
+                const uint32_t previewVk = selectedCustomScanCode > 0 ? selectedCustomVkHint : triggerVk;
+                const std::string preview = FormatScanDisplay(previewScanCode, previewVk);
                 ImGui::SetNextItemWidth(255.0f);
                 if (ImGui::BeginCombo("##triggers_scan_combo", preview.c_str())) {
+                    static char scanFilter[64] = {};
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputTextWithHint("##triggers_scan_filter", "Search keys", scanFilter, sizeof(scanFilter));
+
+                    const std::string scanFilterValue = lowerAscii(scanFilter);
                     const bool defaultSelected = selectedCustomScanCode == 0;
                     if (ImGui::Selectable("Default (Derived from Trigger Key)", defaultSelected)) {
                         const std::size_t previousSize = config.keyRebinds.rebinds.size();
@@ -1013,16 +1121,14 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     }
                     ImGui::Separator();
 
-                    for (const auto& scanOption : scanOptions) {
-                        const int scanCode = scanOption.first;
-                        if (scanCode <= 0) {
+                    for (const auto& displayOption : cachedTriggerScanOptions.options) {
+                        if (!scanFilterValue.empty() &&
+                            displayOption.sortKey.find(scanFilterValue) == std::string::npos) {
                             continue;
                         }
 
-                        const uint32_t displayVk = scanOption.second != 0 ? scanOption.second : triggerVk;
-                        const std::string itemLabel =
-                            FormatScanDisplay(scanCode, displayVk) + "##scan_" + std::to_string(scanCode);
-                        const bool selectedItem = selectedCustomScanCode == scanCode;
+                        const std::string itemLabel = displayOption.label + "##scan_" + std::to_string(displayOption.scanCode);
+                        const bool selectedItem = selectedCustomScanCode == displayOption.scanCode;
                         if (ImGui::Selectable(itemLabel.c_str(), selectedItem)) {
                             const std::size_t previousSize = config.keyRebinds.rebinds.size();
                             idx = EnsureRebindForKey(config, g_rebindLayoutState.contextVk);
@@ -1032,8 +1138,8 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                             }
                             if (idx >= 0) {
                                 auto& edit = config.keyRebinds.rebinds[static_cast<std::size_t>(idx)];
-                                edit.toInput = platform::input::MakeKeyboardBindingKey(scanCode);
-                                edit.toVkHint = displayVk;
+                                edit.toInput = platform::input::MakeKeyboardBindingKey(displayOption.scanCode);
+                                edit.toVkHint = displayOption.displayVk;
                                 AutoSaveConfig(config);
                             }
                         }
