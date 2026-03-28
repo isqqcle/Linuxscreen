@@ -100,4 +100,24 @@ std::vector<BindingKey> KeyStateTracker::GetDownBindings() const {
     return downBindings;
 }
 
+std::vector<DownBindingState> KeyStateTracker::GetDownBindingStates() const {
+    std::vector<DownBindingState> downBindings;
+    downBindings.reserve(m_downScanCodes.size() + m_downMouseButtons.size());
+
+    for (const auto& [scanCode, nativeKey] : m_downKeyboardKeysByScanCode) {
+        if (scanCode <= 0) {
+            continue;
+        }
+        downBindings.push_back(DownBindingState{ MakeKeyboardBindingKey(scanCode), nativeKey });
+    }
+    for (int button : m_downMouseButtons) {
+        if (button < 0) {
+            continue;
+        }
+        downBindings.push_back(DownBindingState{ MakeMouseButtonBindingKey(button), button });
+    }
+
+    return downBindings;
+}
+
 } // namespace platform::input

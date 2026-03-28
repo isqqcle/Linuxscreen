@@ -52,11 +52,11 @@ void DispatchCurrentFreeCursorPosition(GLFWwindow* window);
 bool HasKeyboardBindingIdentity(const platform::input::InputEvent& event);
 
 void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
-    std::vector<platform::input::BindingKey> downBindings;
+    std::vector<platform::input::DownBindingState> downBindings;
     std::optional<std::string> modeToRestore;
     {
         std::lock_guard<std::mutex> lock(g_inputStateMutex);
-        downBindings = g_keyStateTracker.GetDownBindings();
+        downBindings = g_keyStateTracker.GetDownBindingStates();
         g_keyStateTracker.Clear();
     }
 
@@ -87,18 +87,26 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
     std::stable_sort(
         downBindings.begin(),
         downBindings.end(),
-        [](const platform::input::BindingKey& a, const platform::input::BindingKey& b) {
-        const bool aModifier = platform::input::IsKeyboardBindingKey(a) && platform::input::IsModifierScanCode(a.code);
-        const bool bModifier = platform::input::IsKeyboardBindingKey(b) && platform::input::IsModifierScanCode(b.code);
+        [](const platform::input::DownBindingState& a, const platform::input::DownBindingState& b) {
+        const bool aModifier =
+            platform::input::IsKeyboardBindingKey(a.binding) && platform::input::IsModifierScanCode(a.binding.code);
+        const bool bModifier =
+            platform::input::IsKeyboardBindingKey(b.binding) && platform::input::IsModifierScanCode(b.binding.code);
         if (aModifier != bModifier) {
             return !aModifier;
         }
-        if (a.kind != b.kind) {
-            return static_cast<int>(a.kind) < static_cast<int>(b.kind);
+        if (a.binding.kind != b.binding.kind) {
+            return static_cast<int>(a.binding.kind) < static_cast<int>(b.binding.kind);
         }
-        return a.code < b.code;
+        return a.binding.code < b.binding.code;
     });
-    downBindings.erase(std::unique(downBindings.begin(), downBindings.end()), downBindings.end());
+    downBindings.erase(std::unique(downBindings.begin(),
+                                   downBindings.end(),
+                                   [](const platform::input::DownBindingState& lhs,
+                                      const platform::input::DownBindingState& rhs) {
+                                       return lhs.binding == rhs.binding;
+                                   }),
+                       downBindings.end());
 
     if (window) {
         GlfwKeyCallback userKeyCallback = nullptr;
@@ -114,20 +122,20 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
 
         const int releaseAction = static_cast<int>(platform::input::GlfwAction::Release);
         for (const auto& binding : downBindings) {
-            if (platform::input::IsMouseBindingKey(binding)) {
+            if (platform::input::IsMouseBindingKey(binding.binding)) {
                 if (userMouseCallback) {
-                    userMouseCallback(window, binding.code, releaseAction, 0);
+                    userMouseCallback(window, binding.binding.code, releaseAction, 0);
                 }
                 continue;
             }
 
-            if (!platform::input::IsKeyboardBindingKey(binding)) {
+            if (!platform::input::IsKeyboardBindingKey(binding.binding)) {
                 continue;
             }
 
             if (userKeyCallback) {
-                const int scanCode = platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(binding.code);
-                userKeyCallback(window, -1, scanCode, releaseAction, 0);
+                const int scanCode = platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(binding.binding.code);
+                userKeyCallback(window, binding.nativeKey, scanCode, releaseAction, 0);
             }
         }
     }
