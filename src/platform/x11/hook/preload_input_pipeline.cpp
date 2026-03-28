@@ -142,6 +142,22 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
 
 bool ProcessInputEventForGuiToggle(GLFWwindow* sourceWindow, const platform::input::InputEvent& event, const char* sourceLabel) {
     const auto toggleConfigSnapshot = platform::config::GetConfigSnapshot();
+    auto matchesBuiltInGuiHotkey = [&](const platform::input::InputEvent& hotkeyEvent) {
+        if (hotkeyEvent.type != platform::input::InputEventType::Key ||
+            hotkeyEvent.action != platform::input::InputAction::Press) {
+            return false;
+        }
+
+        constexpr int kRequiredMods = static_cast<int>(platform::input::GlfwMod::Control) |
+                                      static_cast<int>(platform::input::GlfwMod::Shift);
+        const int relevantMods = hotkeyEvent.nativeMods &
+                                 (static_cast<int>(platform::input::GlfwMod::Control) |
+                                  static_cast<int>(platform::input::GlfwMod::Shift) |
+                                  static_cast<int>(platform::input::GlfwMod::Alt) |
+                                  static_cast<int>(platform::input::GlfwMod::Super));
+        return hotkeyEvent.vk == static_cast<platform::input::VkCode>('I') && relevantMods == kRequiredMods;
+    };
+
     auto toggleKeyRebindsFromHotkey = [&](int64_t nowMs) {
         const int64_t lastMs = g_lastRebindToggleTimeMs.load(std::memory_order_relaxed);
         if (nowMs - lastMs < 200) {
@@ -180,7 +196,8 @@ bool ProcessInputEventForGuiToggle(GLFWwindow* sourceWindow, const platform::inp
         g_keyStateTracker.ApplyEvent(event);
         const std::vector<platform::input::BindingKey> guiHotkey =
             toggleConfigSnapshot ? toggleConfigSnapshot->guiHotkey : platform::x11::GetGuiHotkey();
-        shouldToggleGui = platform::input::MatchesHotkey(g_keyStateTracker, guiHotkey, event);
+        shouldToggleGui = platform::input::MatchesHotkey(g_keyStateTracker, guiHotkey, event) ||
+                          matchesBuiltInGuiHotkey(event);
         const std::vector<platform::input::BindingKey> rebindToggleHotkey =
             toggleConfigSnapshot ? toggleConfigSnapshot->rebindToggleHotkey : platform::x11::GetRebindToggleHotkey();
         shouldToggleRebinds = platform::input::MatchesHotkey(g_keyStateTracker, rebindToggleHotkey, event);
