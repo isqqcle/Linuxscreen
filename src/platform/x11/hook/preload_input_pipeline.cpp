@@ -1260,6 +1260,11 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
             outCodepoint = mappedCodepoint;
             return ManagedRepeatCharMode::InjectSynthetic;
         }
+
+        if (!platform::input::IsNonTextVk(state.sourceVk)) {
+            return ManagedRepeatCharMode::ConsumeNativeOnly;
+        }
+        return ManagedRepeatCharMode::NoCharacter;
     }
 
     if (platform::input::IsNonTextVk(state.sourceVk)) {
