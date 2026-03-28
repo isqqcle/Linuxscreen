@@ -2,6 +2,105 @@ bool IsGlxMirrorPipelineEnabledInternal() {
     return true;
 }
 
+bool IsPieAnchorInput(const std::string& relativeTo) {
+    return relativeTo == "pieLeft" || relativeTo == "pieRight" ||
+           relativeTo == "pieLeftViewport" || relativeTo == "pieRightViewport";
+}
+
+bool MirrorUsesPieAnchors(const ResolvedMirrorRender& mirrorRender) {
+    for (const auto& input : mirrorRender.config.input) {
+        if (input.enabled && IsPieAnchorInput(input.relativeTo)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ActiveModeViewportMatchesLiveViewport(int containerWidth,
+                                           int containerHeight,
+                                           int viewportTopLeftX,
+                                           int viewportTopLeftY,
+                                           int viewportWidth,
+                                           int viewportHeight) {
+    if (containerWidth <= 0 || containerHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+        return true;
+    }
+
+    auto configSnapshot = GetMirrorModeState().GetConfigSnapshot();
+    if (!configSnapshot) {
+        return true;
+    }
+
+    const std::string activeModeName = GetMirrorModeState().GetActiveModeName();
+    if (activeModeName.empty()) {
+        return true;
+    }
+
+    const auto modeIt = std::find_if(configSnapshot->modes.begin(),
+                                     configSnapshot->modes.end(),
+                                     [&](const auto& mode) { return mode.name == activeModeName; });
+    if (modeIt == configSnapshot->modes.end()) {
+        return true;
+    }
+    const auto& activeMode = *modeIt;
+
+    int expectedWidth = 0;
+    int expectedHeight = 0;
+    MirrorModeState::CalculateModeDimensions(activeMode,
+                                             containerWidth,
+                                             containerHeight,
+                                             expectedWidth,
+                                             expectedHeight);
+    if (expectedWidth <= 0 || expectedHeight <= 0) {
+        return true;
+    }
+
+    std::string anchorPreset = activeMode.positionPreset.empty() ? "topLeftScreen" : activeMode.positionPreset;
+    if (anchorPreset == "custom") {
+        anchorPreset = "topLeftScreen";
+    }
+
+    int expectedX = 0;
+    int expectedY = 0;
+    platform::config::GetRelativeCoords(anchorPreset,
+                                        activeMode.x,
+                                        activeMode.y,
+                                        expectedWidth,
+                                        expectedHeight,
+                                        containerWidth,
+                                        containerHeight,
+                                        expectedX,
+                                        expectedY);
+
+    constexpr int kViewportTolerancePx = 1;
+    return std::abs(viewportTopLeftX - expectedX) <= kViewportTolerancePx &&
+           std::abs(viewportTopLeftY - expectedY) <= kViewportTolerancePx &&
+           std::abs(viewportWidth - expectedWidth) <= kViewportTolerancePx &&
+           std::abs(viewportHeight - expectedHeight) <= kViewportTolerancePx;
+}
+
+void RestorePublishedContentForPieMirrors() {
+    for (const auto& mirrorRender : g_mirrorConfigs) {
+        if (!MirrorUsesPieAnchors(mirrorRender)) {
+            continue;
+        }
+
+        auto it = g_instances.find(mirrorRender.config.name);
+        if (it == g_instances.end()) {
+            continue;
+        }
+
+        X11MirrorInstance& inst = it->second;
+        const int frontIdx = inst.frontIdx.load(std::memory_order_acquire);
+        if ((frontIdx == 0 || frontIdx == 1) &&
+            inst.finalTexture[frontIdx] != 0 &&
+            inst.finalFbo[frontIdx] != 0) {
+            inst.hasValidContent = true;
+            inst.hasFrameContent = true;
+        }
+    }
+}
+
 void RefreshMirrorConfigsForActiveMode(int width,
                                        int height,
                                        const std::string& activeMode,
@@ -277,6 +376,32 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     }
     const int viewportTopLeftX = viewportBottomLeftX;
     const int viewportTopLeftY = containerHeight - (viewportBottomLeftY + currentViewport[3]);
+
+    bool anyMirrorUsesPieAnchors = false;
+    for (const auto& mirrorRender : g_mirrorConfigs) {
+        if (MirrorUsesPieAnchors(mirrorRender)) {
+            anyMirrorUsesPieAnchors = true;
+            break;
+        }
+    }
+    if (anyMirrorUsesPieAnchors &&
+        !ActiveModeViewportMatchesLiveViewport(containerWidth,
+                                              containerHeight,
+                                              viewportTopLeftX,
+                                              viewportTopLeftY,
+                                              currentViewport[2],
+                                              currentViewport[3])) {
+        RestorePublishedContentForPieMirrors();
+        if (IsDebugEnabled()) {
+            fprintf(stderr,
+                    "[Linuxscreen][mirror] Skipping pie-anchor capture while live viewport (%d,%d %dx%d) differs from active mode viewport\n",
+                    viewportTopLeftX,
+                    viewportTopLeftY,
+                    currentViewport[2],
+                    currentViewport[3]);
+        }
+        return;
+    }
 
     int textureOriginTopLeftX = 0;
     int textureOriginTopLeftY = 0;
