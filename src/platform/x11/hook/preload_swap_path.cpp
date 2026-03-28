@@ -75,7 +75,7 @@ void RenderGuiOverlay(GLFWwindow* preferredWindow, const char* sourceLabel) {
         break;
     case platform::x11::ImGuiOverlayRenderStatus::MissingGlContext:
         LogDebugOnce(g_loggedImGuiOverlayMissingGlContext,
-                     "ImGui render enabled but no current GLX context is active during swap hook");
+                     "ImGui render enabled but no current OpenGL context is active during swap hook");
         break;
     case platform::x11::ImGuiOverlayRenderStatus::InitFailed:
         LogOnce(g_loggedImGuiOverlayInitFailed,
@@ -370,6 +370,7 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window) {
     Display* currentDisplay = glXGetCurrentDisplay();
     GLXDrawable currentDrawable = glXGetCurrentDrawable();
     GLXContext currentContext = glXGetCurrentContext();
+    void* currentGlContext = platform::x11::GetCurrentGlContextHandle();
     if (window) {
         g_lastSwapWindow.store(window, std::memory_order_release);
 
@@ -382,6 +383,9 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window) {
         platform::x11::RecordGlfwWindowMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight);
     }
     platform::x11::RegisterImGuiOverlayWindow(window);
+    if (window && currentGlContext) {
+        TrackGlfwWindowForCurrentContext(window, currentGlContext);
+    }
 
     ViewportPlacementBypassGuard bypassGuard(true);
     PumpManagedRepeatScheduler(window);
@@ -399,8 +403,30 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window) {
         RenderMirrorPipelineOverlay();
         RenderGuiOverlay(window, "glfwSwapBuffers");
         RenderRebindToggleIndicatorOverlay();
+    } else if (currentGlContext) {
+        SwapHookSource expectedSource = SwapHookSource::Unknown;
+        if (g_firstSwapSource.compare_exchange_strong(expectedSource, SwapHookSource::GlfwSwapBuffers, std::memory_order_acq_rel)) {
+            LogAlways("first swap hook path selected: %s", SwapHookSourceToString(SwapHookSource::GlfwSwapBuffers));
+        }
+
+        bool expectedFirstSwapLog = false;
+        if (g_loggedFirstSwap.compare_exchange_strong(expectedFirstSwapLog, true, std::memory_order_acq_rel)) {
+            LogAlways("first glfwSwapBuffers call intercepted (non-GLX context=%p)", currentGlContext);
+        }
+
+        if (!platform::x11::IsWindowCaptureRuntimeReady()) {
+            platform::x11::SetWindowCaptureRuntimeReady(true);
+        }
+        MaybeApplyGameStateTransitionReset();
+        TickModeResolutionTransition();
+        SubmitMirrorPipelineCapture();
+        BlitOverscanAndPrepareWindow();
+        PrepareDefaultFramebufferForSwap();
+        RenderMirrorPipelineOverlay();
+        RenderGuiOverlay(window, "glfwSwapBuffers");
+        RenderRebindToggleIndicatorOverlay();
     } else {
-        LogDebug("glfwSwapBuffers intercepted but no current GLX handles were available");
+        LogDebug("glfwSwapBuffers intercepted but no current OpenGL context was available");
     }
 
     ApplyGlobalFpsLimitBeforeSwap();

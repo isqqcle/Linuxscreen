@@ -16,7 +16,7 @@ void ShutdownImGuiOverlayLocked(bool processExit) {
 #ifdef __APPLE__
     const void* currentGlContext = CGLGetCurrentContext();
 #else
-    const void* currentGlContext = reinterpret_cast<void*>(glXGetCurrentContext());
+    const void* currentGlContext = GetCurrentGlContextHandle();
 #endif
     const bool canShutdownOpenGlBackend = !processExit && currentGlContext != nullptr;
 

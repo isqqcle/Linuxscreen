@@ -39,7 +39,7 @@ void BindPixelUnpackBuffer(GLuint buffer) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
 #else
     static PFNGLBINDBUFFERPROC pfnBindBuffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(
-        glXGetProcAddress(reinterpret_cast<const GLubyte*>("glBindBuffer")));
+        platform::x11::ResolveCurrentGlProcAddress("glBindBuffer"));
     if (pfnBindBuffer) {
         pfnBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
     }

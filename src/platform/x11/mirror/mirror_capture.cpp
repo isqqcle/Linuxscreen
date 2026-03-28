@@ -51,7 +51,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
 #ifdef __APPLE__
         true;
 #else
-        false;
+        GetCurrentGlBackend() != CurrentGlBackend::Glx && HasCurrentGlContext();
 #endif
 
     if (!useInlineMirrorProcessing) {

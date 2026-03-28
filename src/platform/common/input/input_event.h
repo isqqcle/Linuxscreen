@@ -32,6 +32,7 @@ struct InputEvent {
     VkCode vk = VK_NONE;
     int nativeKey = 0;
     int nativeScanCode = 0;
+    int bindingScanCode = 0;
     int nativeMods = 0;
     std::uint32_t charCodepoint = 0;
     double x = 0.0;
@@ -43,7 +44,7 @@ struct InputEvent {
 
 inline BindingKey BindingKeyFromInputEvent(const InputEvent& event) {
     if (event.type == InputEventType::Key) {
-        return MakeKeyboardBindingKey(event.nativeScanCode);
+        return MakeKeyboardBindingKey(event.bindingScanCode > 0 ? event.bindingScanCode : event.nativeScanCode);
     }
     if (event.type == InputEventType::MouseButton) {
         return MakeMouseButtonBindingKey(event.nativeKey);

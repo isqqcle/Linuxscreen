@@ -6,6 +6,7 @@
 #include "hook/preload_runtime.cpp"
 #include "hook/preload_mode_runtime.cpp"
 #include "hook/preload_symbols.cpp"
+#include "hook/preload_wayland_pointer_warp.cpp"
 #include "hook/preload_input_pipeline.cpp"
 #include "hook/preload_swap_path.cpp"
 #include "hook/preload_glfw_hooks.cpp"

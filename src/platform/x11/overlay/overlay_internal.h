@@ -4,6 +4,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 
+#include "../gl_context_runtime.h"
 #include "../glx_mirror_pipeline.h"
 #include "../window_capture.h"
 #include "../mirror/glx_shared_contexts.h"
@@ -33,7 +34,21 @@
 #else
 #include <GL/glx.h>
 #include <GL/glext.h>
+#ifdef Status
+#pragma push_macro("Status")
+#define LINUXSCREEN_RESTORE_X11_STATUS_MACRO
+#else
+#define Status int
+#define LINUXSCREEN_CLEAR_X11_STATUS_MACRO
+#endif
 #include <X11/XKBlib.h>
+#ifdef LINUXSCREEN_RESTORE_X11_STATUS_MACRO
+#pragma pop_macro("Status")
+#undef LINUXSCREEN_RESTORE_X11_STATUS_MACRO
+#elif defined(LINUXSCREEN_CLEAR_X11_STATUS_MACRO)
+#undef Status
+#undef LINUXSCREEN_CLEAR_X11_STATUS_MACRO
+#endif
 #endif
 #include <array>
 #include <algorithm>

@@ -1,3 +1,6 @@
+int ResolveGlfwKeyScancodeForOverlay(int key);
+const char* ResolveGlfwKeyNameForOverlay(int key, int scancode);
+
 namespace {
 
 std::string NormalizeResolvedKeyLabel(const char* keyName) {
@@ -33,16 +36,6 @@ uint32_t ResolveKeyboardVkFromScanCode(int scanCode) {
         return 0;
     }
 
-    using GlfwGetKeyScancodeFnLocal = int (*)(int key);
-    static std::once_flag keyScancodeOnce;
-    static GlfwGetKeyScancodeFnLocal getKeyScancode = nullptr;
-    std::call_once(keyScancodeOnce, []() {
-        getKeyScancode = reinterpret_cast<GlfwGetKeyScancodeFnLocal>(dlsym(RTLD_DEFAULT, "glfwGetKeyScancode"));
-    });
-    if (!getKeyScancode) {
-        return 0;
-    }
-
     for (uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
         if (!platform::input::IsKeyboardVk(vk)) {
             continue;
@@ -53,7 +46,7 @@ uint32_t ResolveKeyboardVkFromScanCode(int scanCode) {
             continue;
         }
 
-        if (getKeyScancode(glfwKey) == scanCode) {
+        if (platform::x11::NormalizeGlfwScanCodeForLinuxBindings(platform::x11::ResolveGlfwKeyScancodeForOverlay(glfwKey)) == scanCode) {
             return vk;
         }
     }
@@ -206,24 +199,20 @@ std::string FormatKeyboardScanCode(int scanCode) {
         return FormatSingleVk(resolvedVk);
     }
 
-    using GlfwGetKeyNameFnLocal = const char* (*)(int key, int scancode);
-    static std::once_flag keyNameOnce;
-    static GlfwGetKeyNameFnLocal getKeyName = nullptr;
-    std::call_once(keyNameOnce, []() {
-        getKeyName = reinterpret_cast<GlfwGetKeyNameFnLocal>(dlsym(RTLD_DEFAULT, "glfwGetKeyName"));
-    });
-    if (getKeyName) {
-        if (resolvedVk != 0) {
-            const int glfwKey = platform::input::VkToGlfwKey(resolvedVk);
-            if (glfwKey >= 0) {
-                const std::string resolved = NormalizeResolvedKeyLabel(getKeyName(glfwKey, scanCode));
-                if (!resolved.empty() && resolved != "?") {
-                    return resolved;
-                }
+    const int glfwScanCode = platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(scanCode);
+    if (resolvedVk != 0) {
+        const int glfwKey = platform::input::VkToGlfwKey(resolvedVk);
+        if (glfwKey >= 0) {
+            const std::string resolved =
+                NormalizeResolvedKeyLabel(platform::x11::ResolveGlfwKeyNameForOverlay(glfwKey, glfwScanCode));
+            if (!resolved.empty() && resolved != "?") {
+                return resolved;
             }
         }
+    }
 
-        const std::string resolved = NormalizeResolvedKeyLabel(getKeyName(-1, scanCode));
+    if (!platform::x11::IsWaylandGlfwPlatform()) {
+        const std::string resolved = NormalizeResolvedKeyLabel(platform::x11::ResolveGlfwKeyNameForOverlay(-1, glfwScanCode));
         if (!resolved.empty() && resolved != "?") {
             return resolved;
         }
@@ -948,21 +937,11 @@ using GlfwGetKeyScancodeFn = int (*)(int key);
 using GlfwGetKeyNameFn = const char* (*)(int key, int scancode);
 
 GlfwGetKeyScancodeFn GetGlfwGetKeyScancodeFn() {
-    static std::once_flag once;
-    static GlfwGetKeyScancodeFn fn = nullptr;
-    std::call_once(once, []() {
-        fn = reinterpret_cast<GlfwGetKeyScancodeFn>(dlsym(RTLD_DEFAULT, "glfwGetKeyScancode"));
-    });
-    return fn;
+    return platform::x11::ResolveGlfwKeyScancodeForOverlay;
 }
 
 GlfwGetKeyNameFn GetGlfwGetKeyNameFn() {
-    static std::once_flag once;
-    static GlfwGetKeyNameFn fn = nullptr;
-    std::call_once(once, []() {
-        fn = reinterpret_cast<GlfwGetKeyNameFn>(dlsym(RTLD_DEFAULT, "glfwGetKeyName"));
-    });
-    return fn;
+    return platform::x11::ResolveGlfwKeyNameForOverlay;
 }
 
 int GetDerivedX11ScanCodeForVk(uint32_t vk) {
@@ -975,7 +954,7 @@ int GetDerivedX11ScanCodeForVk(uint32_t vk) {
         if (glfwKey >= 0) {
             const int scanCode = getKeyScancode(glfwKey);
             if (scanCode > 0) {
-                return scanCode;
+                return platform::x11::NormalizeGlfwScanCodeForLinuxBindings(scanCode);
             }
         }
     }
@@ -1027,7 +1006,8 @@ bool TryResolvePreviewCodepoint(uint32_t nativeKey, int scanCode, bool shiftDown
     }
 
     if (GlfwGetKeyNameFn getKeyName = GetGlfwGetKeyNameFn()) {
-        if (TryDecodeFirstUtf8Codepoint(getKeyName(static_cast<int>(nativeKey), scanCode), outCodepoint)) {
+        const int glfwScanCode = platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(scanCode);
+        if (TryDecodeFirstUtf8Codepoint(getKeyName(static_cast<int>(nativeKey), glfwScanCode), outCodepoint)) {
             if (shiftDown &&
                 outCodepoint >= static_cast<std::uint32_t>('a') &&
                 outCodepoint <= static_cast<std::uint32_t>('z')) {

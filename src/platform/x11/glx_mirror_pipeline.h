@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gl_context_runtime.h"
 #include "mirror/mirror_mode_state.h"
 
 #ifdef __APPLE__

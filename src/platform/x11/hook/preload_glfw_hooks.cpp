@@ -1,3 +1,5 @@
+#include "../input_scancode_runtime.h"
+
 extern "C" __attribute__((visibility("default"))) int _glfwLinuxscreenGetCursorCenter(void* opaqueWindow,
                                                                                       double* xpos,
                                                                                       double* ypos) {
@@ -497,6 +499,9 @@ extern "C" void glfwSetInputMode(GLFWwindow* window, int mode, int value) {
         if (!g_cursorCaptureActive.load(std::memory_order_acquire)) {
             PrepareTrackedCursorForCapture(window);
         }
+        if (ShouldAttemptWaylandCursorWarp(window)) {
+            PrimeWaylandPointerWarp(window);
+        }
         double centerX = 0.0;
         double centerY = 0.0;
         if (ResolveCurrentWindowCursorCenter(centerX, centerY)) {
@@ -510,15 +515,44 @@ extern "C" void glfwSetInputMode(GLFWwindow* window, int mode, int value) {
         return;
     }
 
+    double centerX = 0.0;
+    double centerY = 0.0;
+    const bool hadCenterBeforeUnlock = cursorDisabledPrev && ResolveCurrentWindowCursorCenter(centerX, centerY);
+    const bool shouldAttemptWaylandWarp = hadCenterBeforeUnlock && ShouldAttemptWaylandCursorWarp(window);
+    GlfwSetCursorPosProc realSetCursorPos = GetRealGlfwSetCursorPos();
+    bool primedWaylandUnlockCursorHint = false;
+    if (shouldAttemptWaylandWarp && realSetCursorPos) {
+        realSetCursorPos(window, centerX, centerY);
+        primedWaylandUnlockCursorHint = true;
+    }
+    const bool warpedWaylandBeforeUnlock =
+        shouldAttemptWaylandWarp &&
+        TryWarpWaylandCursorToWindowPosition(window, centerX, centerY);
+
     g_restoreCursorDisabledOnGuiClose.store(false, std::memory_order_release);
     g_cursorCaptureActive.store(false, std::memory_order_release);
     ClearTrackedCursorCaptureState();
     realFn(window, mode, value);
+    const bool warpedWaylandAfterUnlock =
+        shouldAttemptWaylandWarp &&
+        TryWarpWaylandCursorToWindowPosition(window, centerX, centerY);
     if (cursorDisabledPrev) {
-        double centerX = 0.0;
-        double centerY = 0.0;
-        if (ResolveCurrentWindowCursorCenter(centerX, centerY)) {
-            GlfwSetCursorPosProc realSetCursorPos = GetRealGlfwSetCursorPos();
+        if (hadCenterBeforeUnlock) {
+            if (shouldAttemptWaylandWarp &&
+                (primedWaylandUnlockCursorHint || warpedWaylandBeforeUnlock || warpedWaylandAfterUnlock)) {
+                ClearPendingSyntheticCursorPosCallbackState();
+                LogAlways("requested Wayland unlock cursor center window=(%.3f, %.3f) hint=%s preWarp=%s postWarp=%s",
+                          centerX,
+                          centerY,
+                          primedWaylandUnlockCursorHint ? "true" : "false",
+                          warpedWaylandBeforeUnlock ? "true" : "false",
+                          warpedWaylandAfterUnlock ? "true" : "false");
+                return;
+            }
+            if (shouldAttemptWaylandWarp) {
+                LogAlways("Wayland pointer warp path did not complete; falling back to GLFW cursor restore");
+            }
+
             if (realSetCursorPos) {
                 StoreTrackedRawCursorPosition(centerX, centerY);
                 realSetCursorPos(window, centerX, centerY);

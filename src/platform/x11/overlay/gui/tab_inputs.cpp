@@ -1,4 +1,5 @@
 #include "../overlay_internal.h"
+#include "../../input_scancode_runtime.h"
 #include "imgui_overlay_helpers.h"
 #include "tab_inputs.h"
 #include "tab_inputs_helpers.h"

@@ -1,5 +1,6 @@
 #include "../mirror_image_source.h"
 #include "../calc_overlay_runtime.h"
+#include "../gl_context_runtime.h"
 
 #include "../../common/config_io.h"
 
@@ -90,14 +91,6 @@ std::atomic<bool> g_mirrorImageShutdownComplete{false};
 
 void ResetMirrorImageShutdownGuard() {
     g_mirrorImageShutdownComplete.store(false, std::memory_order_release);
-}
-
-bool HasCurrentGlContext() {
-#ifdef __APPLE__
-    return CGLGetCurrentContext() != nullptr;
-#else
-    return glXGetCurrentContext() != nullptr;
-#endif
 }
 
 std::string GetMirrorImageStateKey(const std::string& mirrorName, const std::string& resolvedPath) {

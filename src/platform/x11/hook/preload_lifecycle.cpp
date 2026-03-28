@@ -99,7 +99,8 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
     LogOnce(g_loggedBootstrap, "preload bootstrap active (CGLFlushDrawable interposed)");
 #else
     if (!GetRealGlXSwapBuffers()) {
-        LogOnce(g_loggedLaunchContextFailure, "WARNING: preload initialized but glXSwapBuffers resolution failed");
+        LogOnce(g_loggedLaunchContextFailure,
+                "WARNING: preload initialized but glXSwapBuffers resolution failed; native GLFW/EGL swap interception may still be used");
     }
 
     (void)GetRealGlXSwapBuffersMscOML();

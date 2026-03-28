@@ -18,13 +18,14 @@ void KeyStateTracker::ApplyEvent(const InputEvent& event) {
     const bool isRelease = (event.action == InputAction::Release);
     if (!isPress && !isRelease) { return; }
 
-    if (event.type == InputEventType::Key && event.nativeScanCode > 0) {
+    const int bindingScanCode = event.bindingScanCode > 0 ? event.bindingScanCode : event.nativeScanCode;
+    if (event.type == InputEventType::Key && bindingScanCode > 0) {
         if (isPress) {
-            m_downScanCodes.insert(event.nativeScanCode);
-            m_downKeyboardKeysByScanCode[event.nativeScanCode] = event.nativeKey;
+            m_downScanCodes.insert(bindingScanCode);
+            m_downKeyboardKeysByScanCode[bindingScanCode] = event.nativeKey;
         } else {
-            m_downScanCodes.erase(event.nativeScanCode);
-            m_downKeyboardKeysByScanCode.erase(event.nativeScanCode);
+            m_downScanCodes.erase(bindingScanCode);
+            m_downKeyboardKeysByScanCode.erase(bindingScanCode);
         }
     }
     if (event.type == InputEventType::MouseButton && event.nativeKey >= 0) {

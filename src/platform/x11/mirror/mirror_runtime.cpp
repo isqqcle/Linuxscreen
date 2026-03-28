@@ -1327,13 +1327,7 @@ int ResolveEyeZoomOutputHeight(const platform::config::EyeZoomConfig& zoomConfig
 
 void* ResolveGlProc(const char* name) {
     if (!name) { return nullptr; }
-#ifdef __APPLE__
-    return dlsym(RTLD_NEXT, name);
-#else
-    void* ptr = reinterpret_cast<void*>(glXGetProcAddressARB(reinterpret_cast<const GLubyte*>(name)));
-    if (!ptr) { ptr = reinterpret_cast<void*>(glXGetProcAddress(reinterpret_cast<const GLubyte*>(name))); }
-    return ptr;
-#endif
+    return ResolveCurrentGlProcAddress(name);
 }
 
 bool EnsureGlFunctions() {

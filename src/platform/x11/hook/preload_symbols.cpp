@@ -481,6 +481,18 @@ void ResolveRealGlfwGetKey() {
     }
 }
 
+void ResolveRealGlfwGetKeyScancode() {
+    const char* fallbackLabel = nullptr;
+    void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
+    void* symbol = ResolveSymbol("glfwGetKeyScancode", fallbackHandle, fallbackLabel);
+    g_realGlfwGetKeyScancode.store(reinterpret_cast<GlfwGetKeyScancodeFn>(symbol), std::memory_order_release);
+    if (symbol) {
+        LogDebug("resolved real glfwGetKeyScancode symbol at %p", symbol);
+    } else {
+        LogDebug("glfwGetKeyScancode symbol unavailable in current process");
+    }
+}
+
 void ResolveRealGlfwGetKeyName() {
     const char* fallbackLabel = nullptr;
     void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
@@ -528,6 +540,32 @@ void ResolveRealGlfwSetInputMode() {
         LogDebug("glfwSetInputMode symbol unavailable in current process");
     }
 }
+
+#ifndef __APPLE__
+void ResolveRealGlfwGetWaylandDisplay() {
+    const char* fallbackLabel = nullptr;
+    void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
+    void* symbol = ResolveSymbol("glfwGetWaylandDisplay", fallbackHandle, fallbackLabel);
+    g_realGlfwGetWaylandDisplay.store(reinterpret_cast<GlfwGetWaylandDisplayFn>(symbol), std::memory_order_release);
+    if (symbol) {
+        LogDebug("resolved real glfwGetWaylandDisplay symbol at %p", symbol);
+    } else {
+        LogDebug("glfwGetWaylandDisplay symbol unavailable in current process");
+    }
+}
+
+void ResolveRealGlfwGetWaylandWindow() {
+    const char* fallbackLabel = nullptr;
+    void* fallbackHandle = GetGlfwCapturedHandle(fallbackLabel);
+    void* symbol = ResolveSymbol("glfwGetWaylandWindow", fallbackHandle, fallbackLabel);
+    g_realGlfwGetWaylandWindow.store(reinterpret_cast<GlfwGetWaylandWindowFn>(symbol), std::memory_order_release);
+    if (symbol) {
+        LogDebug("resolved real glfwGetWaylandWindow symbol at %p", symbol);
+    } else {
+        LogDebug("glfwGetWaylandWindow symbol unavailable in current process");
+    }
+}
+#endif
 
 #ifndef __APPLE__
 void ResolveRealGlXGetProcAddress() {
@@ -719,6 +757,18 @@ GlfwSetInputModeFn GetRealGlfwSetInputMode() {
 }
 
 #ifndef __APPLE__
+GlfwGetWaylandDisplayFn GetRealGlfwGetWaylandDisplay() {
+    if (!g_realGlfwGetWaylandDisplay.load(std::memory_order_acquire)) { ResolveRealGlfwGetWaylandDisplay(); }
+    return g_realGlfwGetWaylandDisplay.load(std::memory_order_acquire);
+}
+
+GlfwGetWaylandWindowFn GetRealGlfwGetWaylandWindow() {
+    if (!g_realGlfwGetWaylandWindow.load(std::memory_order_acquire)) { ResolveRealGlfwGetWaylandWindow(); }
+    return g_realGlfwGetWaylandWindow.load(std::memory_order_acquire);
+}
+#endif
+
+#ifndef __APPLE__
 GlXGetProcAddressFn GetRealGlXGetProcAddress() {
     if (!g_realGlXGetProcAddress.load(std::memory_order_acquire)) { ResolveRealGlXGetProcAddress(); }
     return g_realGlXGetProcAddress.load(std::memory_order_acquire);
@@ -809,3 +859,22 @@ __GLXextFuncPtr ResolveProcAddressRequest(const GLubyte* procName, GlXGetProcAdd
 #endif
 
 } // namespace
+
+namespace platform::x11 {
+
+int ResolveGlfwKeyScancodeForOverlay(int key) {
+    if (key < 0) {
+        return -1;
+    }
+    if (!g_realGlfwGetKeyScancode.load(std::memory_order_acquire)) { ResolveRealGlfwGetKeyScancode(); }
+    GlfwGetKeyScancodeFn fn = g_realGlfwGetKeyScancode.load(std::memory_order_acquire);
+    return fn ? fn(key) : -1;
+}
+
+const char* ResolveGlfwKeyNameForOverlay(int key, int scancode) {
+    if (!g_realGlfwGetKeyName.load(std::memory_order_acquire)) { ResolveRealGlfwGetKeyName(); }
+    GlfwGetKeyNameFn fn = g_realGlfwGetKeyName.load(std::memory_order_acquire);
+    return fn ? fn(key, scancode) : nullptr;
+}
+
+} // namespace platform::x11

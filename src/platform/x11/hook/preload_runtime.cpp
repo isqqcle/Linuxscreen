@@ -3,6 +3,7 @@
 #endif
 
 #include "glx_mirror_pipeline.h"
+#include "gl_context_runtime.h"
 #include "mirror/glx_shared_contexts.h"
 #include "overlay/imgui_input_bridge.h"
 #include "overlay/imgui_overlay.h"
@@ -55,6 +56,10 @@ using __GLXextFuncPtr = void (*)();
 #include <unistd.h>
 
 struct GLFWwindow;
+#ifndef __APPLE__
+struct wl_display;
+struct wl_surface;
+#endif
 struct GLFWimage {
     int width;
     int height;
@@ -133,6 +138,10 @@ using GlfwGetKeyNameFn = const char* (*)(int, int);
 using GlfwGetCursorPosProc = void (*)(GLFWwindow*, double*, double*);
 using GlfwSetCursorPosProc = void (*)(GLFWwindow*, double, double);
 using GlfwSetInputModeFn = void (*)(GLFWwindow*, int, int);
+#ifndef __APPLE__
+using GlfwGetWaylandDisplayFn = wl_display* (*)();
+using GlfwGetWaylandWindowFn = wl_surface* (*)(GLFWwindow*);
+#endif
 using GlViewportFn = void (*)(GLint, GLint, GLsizei, GLsizei);
 using GlScissorFn = void (*)(GLint, GLint, GLsizei, GLsizei);
 using GlBindFramebufferFn = void (*)(GLenum, GLuint);
@@ -186,6 +195,10 @@ std::atomic<GlfwGetKeyNameFn> g_realGlfwGetKeyName{ nullptr };
 std::atomic<GlfwGetCursorPosProc> g_realGlfwGetCursorPos{ nullptr };
 std::atomic<GlfwSetCursorPosProc> g_realGlfwSetCursorPos{ nullptr };
 std::atomic<GlfwSetInputModeFn> g_realGlfwSetInputMode{ nullptr };
+#ifndef __APPLE__
+std::atomic<GlfwGetWaylandDisplayFn> g_realGlfwGetWaylandDisplay{ nullptr };
+std::atomic<GlfwGetWaylandWindowFn> g_realGlfwGetWaylandWindow{ nullptr };
+#endif
 std::atomic<GlViewportFn> g_realGlViewport{ nullptr };
 std::atomic<GlScissorFn> g_realGlScissor{ nullptr };
 std::atomic<GlBindFramebufferFn> g_realGlBindFramebuffer{ nullptr };
@@ -273,10 +286,8 @@ std::atomic<std::uintptr_t> g_lastContext{ 0 };
 std::atomic<SwapHookSource> g_firstSwapSource{ SwapHookSource::Unknown };
 
 std::mutex g_glfwCallbackMutex;
-#ifdef __APPLE__
 std::mutex g_glfwContextWindowMutex;
 std::map<void*, GLFWwindow*> g_glfwContextWindowMap;
-#endif
 
 struct GlfwCallbackState {
     GlfwKeyCallback key = nullptr;
@@ -646,11 +657,15 @@ GlfwGetKeyNameFn GetRealGlfwGetKeyName();
 GlfwGetCursorPosProc GetRealGlfwGetCursorPos();
 GlfwSetCursorPosProc GetRealGlfwSetCursorPos();
 GlfwSetInputModeFn GetRealGlfwSetInputMode();
+#ifndef __APPLE__
+GlfwGetWaylandDisplayFn GetRealGlfwGetWaylandDisplay();
+GlfwGetWaylandWindowFn GetRealGlfwGetWaylandWindow();
+#endif
 void ResetCursorSensitivityState();
 void RefreshTrackedGlfwWindowMetrics(GLFWwindow* window);
-#ifdef __APPLE__
 void TrackGlfwWindowForCurrentContext(GLFWwindow* window, void* glContext);
 GLFWwindow* FindTrackedGlfwWindowForContext(void* glContext);
+#ifdef __APPLE__
 void ForgetTrackedGlfwWindow(GLFWwindow* window);
 bool ShouldBypassGlfwSetWindowIconOnMac();
 #endif
@@ -721,7 +736,6 @@ bool GetFramebufferSizeFromLatestGlfwWindow(int& outWidth, int& outHeight) {
     platform::x11::RecordGlfwWindowMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight);
 }
 
-#ifdef __APPLE__
 void TrackGlfwWindowForCurrentContext(GLFWwindow* window, void* glContext) {
     if (!window || !glContext) {
         return;
@@ -743,6 +757,8 @@ GLFWwindow* FindTrackedGlfwWindowForContext(void* glContext) {
     }
     return it->second;
 }
+
+#ifdef __APPLE__
 
 void ForgetTrackedGlfwWindow(GLFWwindow* window) {
     if (!window) {

@@ -1,3 +1,5 @@
+#include "../input_scancode_runtime.h"
+
 #define GLFW_CURSOR          0x00033001
 #define GLFW_CURSOR_NORMAL   0x00034001
 #define GLFW_CURSOR_HIDDEN   0x00034002
@@ -124,7 +126,7 @@ void ReleaseAllHeldInputsForGuiOpen(GLFWwindow* window) {
             }
 
             if (userKeyCallback) {
-                const int scanCode = binding.code;
+                const int scanCode = platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(binding.code);
                 userKeyCallback(window, -1, scanCode, releaseAction, 0);
             }
         }
@@ -698,6 +700,9 @@ bool TryResolveGlfwLayoutCodepoint(int nativeKey, int nativeScanCode, bool shift
     if (nativeScanCode <= 0) {
         return false;
     }
+    if (platform::x11::IsWaylandGlfwPlatform() && nativeKey < 0) {
+        return false;
+    }
     GlfwGetKeyNameFn getKeyName = GetRealGlfwGetKeyName();
     if (!getKeyName) {
         return false;
@@ -715,7 +720,35 @@ bool TryResolveGlfwLayoutCodepoint(int nativeKey, int nativeScanCode, bool shift
 }
 
 bool HasKeyboardBindingIdentity(const platform::input::InputEvent& event) {
-    return event.type == platform::input::InputEventType::Key && event.nativeScanCode > 0;
+    return event.type == platform::input::InputEventType::Key &&
+           (event.bindingScanCode > 0 || event.nativeScanCode > 0);
+}
+
+const std::map<int, int>& GetCachedGlfwKeysByBindingScanCode() {
+    static std::once_flag once;
+    static std::map<int, int> cachedKeysByScanCode;
+    std::call_once(once, []() {
+        for (std::uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
+            if (!platform::input::IsKeyboardVk(static_cast<platform::input::VkCode>(vk))) {
+                continue;
+            }
+
+            const int glfwKey = platform::input::VkToGlfwKey(vk);
+            if (glfwKey < 0) {
+                continue;
+            }
+
+            const int rawScanCode = platform::x11::ResolveGlfwKeyScancodeForOverlay(glfwKey);
+            const int bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(rawScanCode);
+            if (bindingScanCode <= 0) {
+                continue;
+            }
+
+            cachedKeysByScanCode.emplace(bindingScanCode, glfwKey);
+        }
+    });
+
+    return cachedKeysByScanCode;
 }
 
 int ResolveGlfwKeyForBindingScanCode(int bindingScanCode) {
@@ -723,32 +756,9 @@ int ResolveGlfwKeyForBindingScanCode(int bindingScanCode) {
         return -1;
     }
 
-    using GlfwGetKeyScancodeFn = int (*)(int key);
-    static std::once_flag once;
-    static GlfwGetKeyScancodeFn fn = nullptr;
-    std::call_once(once, []() {
-        fn = reinterpret_cast<GlfwGetKeyScancodeFn>(dlsym(RTLD_DEFAULT, "glfwGetKeyScancode"));
-    });
-    if (!fn) {
-        return -1;
-    }
-
-    for (std::uint32_t vk = 1; vk <= platform::input::VK_APPS; ++vk) {
-        if (!platform::input::IsKeyboardVk(static_cast<platform::input::VkCode>(vk))) {
-            continue;
-        }
-
-        const int glfwKey = platform::input::VkToGlfwKey(vk);
-        if (glfwKey < 0) {
-            continue;
-        }
-
-        if (fn(glfwKey) == bindingScanCode) {
-            return glfwKey;
-        }
-    }
-
-    return -1;
+    const auto& cachedKeysByScanCode = GetCachedGlfwKeysByBindingScanCode();
+    auto it = cachedKeysByScanCode.find(bindingScanCode);
+    return it != cachedKeysByScanCode.end() ? it->second : -1;
 }
 
 platform::input::VkCode ResolveKeyboardVkForBinding(const platform::input::BindingKey& binding,
@@ -766,7 +776,9 @@ platform::input::VkCode ResolveKeyboardVkForBinding(const platform::input::Bindi
         return platform::input::VK_NONE;
     }
 
-    return platform::input::GlfwKeyToVk(glfwKey, binding.code, 0);
+    return platform::input::GlfwKeyToVk(glfwKey,
+                                        platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(binding.code),
+                                        0);
 }
 
 struct ResolvedRebindOutput {
@@ -820,8 +832,9 @@ std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::
             : (platform::input::IsKeyboardBindingKey(resolved.triggerBinding)
                    ? ResolveGlfwKeyForBindingScanCode(resolved.triggerBinding.code)
                    : -1);
-        resolved.outputScanCode =
-            platform::input::IsKeyboardBindingKey(resolved.triggerBinding) ? resolved.triggerBinding.code : 0;
+        resolved.outputScanCode = platform::input::IsKeyboardBindingKey(resolved.triggerBinding)
+            ? platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(resolved.triggerBinding.code)
+            : 0;
         resolved.textBinding =
             (rebind.useCustomOutput && platform::input::IsValidBindingKey(rebind.customOutputKey)) ? rebind.customOutputKey
                                                                                                     : resolved.triggerBinding;
@@ -832,8 +845,9 @@ std::optional<ResolvedRebindOutput> ResolveRebindOutput(const platform::config::
             : (platform::input::IsKeyboardBindingKey(resolved.textBinding)
                    ? ResolveGlfwKeyForBindingScanCode(resolved.textBinding.code)
                    : -1);
-        resolved.textScanCode =
-            platform::input::IsKeyboardBindingKey(resolved.textBinding) ? resolved.textBinding.code : 0;
+        resolved.textScanCode = platform::input::IsKeyboardBindingKey(resolved.textBinding)
+            ? platform::x11::DenormalizeLinuxBindingScanCodeForGlfw(resolved.textBinding.code)
+            : 0;
         resolved.targetIsMouse = platform::input::IsMouseBindingKey(resolved.triggerBinding);
         resolved.customUnicode = rebind.useCustomOutput ? rebind.customOutputUnicode : 0;
         resolved.customShiftUnicode = rebind.useCustomOutput ? rebind.customOutputShiftUnicode : 0;
@@ -1072,7 +1086,8 @@ ManagedRepeatSettings ResolveManagedRepeatSettings(const platform::config::Linux
         return resolved;
     }
     if (event.type == platform::input::InputEventType::Key &&
-        (platform::input::IsModifierGlfwKey(event.nativeKey) || platform::input::IsModifierScanCode(event.nativeScanCode))) {
+        (platform::input::IsModifierGlfwKey(event.nativeKey) ||
+         platform::input::IsModifierScanCode(event.bindingScanCode > 0 ? event.bindingScanCode : event.nativeScanCode))) {
         return resolved;
     }
     if (IsRepeatBlacklistedSourceVk(event.vk)) {
@@ -1158,7 +1173,7 @@ void InvalidateManagedRepeatKeyboardStatesForAdditionalPress(GLFWwindow* window,
         event.type != platform::input::InputEventType::Key ||
         event.action != platform::input::InputAction::Press ||
         (!HasKeyboardBindingIdentity(event)) ||
-        platform::input::IsModifierScanCode(event.nativeScanCode)) {
+        platform::input::IsModifierScanCode(event.bindingScanCode > 0 ? event.bindingScanCode : event.nativeScanCode)) {
         return;
     }
 
@@ -1225,6 +1240,7 @@ ManagedRepeatCharMode ResolveManagedRepeatCharMode(const platform::config::Linux
     repeatEvent.vk = state.sourceVk;
     repeatEvent.nativeKey = state.key.sourceCode;
     repeatEvent.nativeScanCode = state.nativeScanCode;
+    repeatEvent.bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(state.nativeScanCode);
     repeatEvent.nativeMods = state.nativeMods;
 
     if (const auto rebindOutput = ResolveRebindOutput(config, repeatEvent, false)) {
@@ -1468,6 +1484,7 @@ void PumpManagedRepeatScheduler(GLFWwindow* preferredWindow) {
             sourceEvent.vk = state.sourceVk;
             sourceEvent.nativeKey = state.key.sourceCode;
             sourceEvent.nativeScanCode = state.nativeScanCode;
+            sourceEvent.bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(state.nativeScanCode);
             sourceEvent.nativeMods = state.nativeMods;
 
             const ManagedRepeatSettings settings = ResolveManagedRepeatSettings(*configSnapshot, sourceEvent);
@@ -1580,6 +1597,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
     event.vk = platform::input::GlfwKeyToVk(key, scancode, mods);
     event.nativeKey = key;
     event.nativeScanCode = scancode;
+    event.bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(scancode);
     event.nativeMods = mods;
     const bool syntheticManagedRepeatEvent =
         g_dispatchingManagedSyntheticRepeat &&
@@ -1594,7 +1612,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
     UpdateSyntheticPhysicalKeyState(window, key, action);
 
     if (!syntheticManagedRepeatEvent &&
-        (event.vk != platform::input::VK_NONE || event.nativeScanCode > 0) &&
+        (event.vk != platform::input::VK_NONE || HasKeyboardBindingIdentity(event)) &&
         (event.action == platform::input::InputAction::Press || event.action == platform::input::InputAction::Release ||
          event.action == platform::input::InputAction::Repeat)) {
         platform::config::RegisterBindingInputEvent(platform::input::BindingKeyFromInputEvent(event),
@@ -1602,7 +1620,7 @@ void HookedGlfwKeyCallback(GLFWwindow* window, int key, int scancode, int action
                                                     event.nativeKey,
                                                     event.nativeMods,
                                                     platform::input::IsModifierGlfwKey(event.nativeKey) ||
-                                                        platform::input::IsModifierScanCode(event.nativeScanCode),
+                                                        platform::input::IsModifierScanCode(event.bindingScanCode),
                                                     event.action);
     }
 
@@ -2429,12 +2447,14 @@ void HookedGlfwWindowFocusCallback(GLFWwindow* window, int focused) {
     }
 
     if (!event.focused) {
+        NotifyWaylandPointerWarpFocusChanged(window, false);
         ClearPendingSyntheticCursorPosCallbackState();
         ClearSyntheticRebindWindow(window);
         ClearPendingCharRemaps();
         ClearManagedRepeatStatesForWindow(window);
         ResetCursorSensitivityState();
     } else {
+        NotifyWaylandPointerWarpFocusChanged(window, true);
         RefreshTrackedCursorPositionAfterFocusGain(window);
         ResetCursorSensitivityState();
     }

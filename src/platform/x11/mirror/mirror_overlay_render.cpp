@@ -803,7 +803,7 @@ void ShutdownGlxMirrorPipeline() {
 #ifdef __APPLE__
     if (g_glReady.load(std::memory_order_acquire) && CGLGetCurrentContext() != nullptr) {
 #else
-    if (g_glReady.load(std::memory_order_acquire) && glXGetCurrentContext() != nullptr) {
+    if (g_glReady.load(std::memory_order_acquire) && HasCurrentGlContext()) {
 #endif
         DestroyAllInstances();
         CleanupMirrorShaders();

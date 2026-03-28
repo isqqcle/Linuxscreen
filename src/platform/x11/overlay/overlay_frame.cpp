@@ -23,7 +23,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
 #ifdef __APPLE__
         if (CGLGetCurrentContext() == nullptr) {
 #else
-        if (glXGetCurrentContext() == nullptr) {
+        if (!HasCurrentGlContext()) {
 #endif
             std::lock_guard<std::mutex> lock(g_imguiOverlayMutex);
             if (g_imguiOverlayState.context) { ShutdownImGuiOverlayLocked(false); }
@@ -51,7 +51,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
 #ifdef __APPLE__
     void* currentGlContext = reinterpret_cast<void*>(CGLGetCurrentContext());
 #else
-    void* currentGlContext = reinterpret_cast<void*>(glXGetCurrentContext());
+    void* currentGlContext = GetCurrentGlContextHandle();
 #endif
     if (!currentGlContext) {
         result.status = ImGuiOverlayRenderStatus::MissingGlContext;
@@ -510,7 +510,7 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
     static auto pfnBindBuffer = reinterpret_cast<BindBufferProc>(dlsym(RTLD_NEXT, "glBindBuffer"));
 #else
     static auto pfnBindBuffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(
-        glXGetProcAddressARB(reinterpret_cast<const GLubyte*>("glBindBuffer")));
+        ResolveCurrentGlProcAddress("glBindBuffer"));
 #endif
 #ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
     GLint lastPixelUnpackBuffer = 0;
