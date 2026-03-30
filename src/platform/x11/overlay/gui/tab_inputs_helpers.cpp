@@ -17,7 +17,7 @@ std::unordered_map<int, uint32_t> BuildKnownGlfwScanCodeMap() {
 
         const int rawScanCode = platform::x11::ResolveGlfwKeyScancodeForOverlay(glfwKey);
         const int bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(rawScanCode);
-        if (bindingScanCode <= 0) {
+        if (!platform::input::IsValidKeyboardScanCode(bindingScanCode)) {
             continue;
         }
 
@@ -66,7 +66,7 @@ std::string NormalizeResolvedKeyLabel(const char* keyName) {
 }
 
 uint32_t ResolveKeyboardVkFromScanCode(int scanCode) {
-    if (scanCode <= 0) {
+    if (!platform::input::IsValidKeyboardScanCode(scanCode)) {
         return 0;
     }
 
@@ -258,7 +258,7 @@ std::pair<int, int> GetBindableScanCodeRange() {
 }
 
 bool IsBindableKeyboardScanCode(int scanCode) {
-    if (scanCode <= 0) {
+    if (!platform::input::IsValidKeyboardScanCode(scanCode)) {
         return false;
     }
 
@@ -311,7 +311,7 @@ bool IsLikelyModifierBinding(const platform::input::BindingKey& key) {
 }
 
 std::string FormatKeyboardScanCode(int scanCode) {
-    if (scanCode <= 0) {
+    if (!platform::input::IsValidKeyboardScanCode(scanCode)) {
         return std::string("<unset>");
     }
 
@@ -838,7 +838,7 @@ platform::input::BindingKey BindingFromLegacyUiVk(uint32_t vk) {
     }
 
     const int scanCode = GetDerivedX11ScanCodeForVk(vk);
-    if (scanCode > 0) {
+    if (platform::input::IsValidKeyboardScanCode(scanCode)) {
         return platform::input::MakeKeyboardBindingKey(scanCode);
     }
     return {};
@@ -1046,7 +1046,7 @@ void EraseRebindAdjustingLayoutState(platform::config::LinuxscreenConfig& config
 }
 
 std::string FormatScanDisplay(int scanCode, uint32_t fallbackVk) {
-    if (scanCode <= 0) {
+    if (!platform::input::IsValidKeyboardScanCode(scanCode)) {
         return FormatSingleVk(fallbackVk);
     }
 
@@ -1074,7 +1074,7 @@ int GetDerivedX11ScanCodeForVk(uint32_t vk) {
         const int glfwKey = platform::input::VkToGlfwKey(vk);
         if (glfwKey >= 0) {
             const int scanCode = getKeyScancode(glfwKey);
-            if (scanCode > 0) {
+            if (platform::input::IsValidKeyboardScanCode(scanCode)) {
                 return platform::x11::NormalizeGlfwScanCodeForLinuxBindings(scanCode);
             }
         }
@@ -1104,7 +1104,7 @@ std::map<int, uint32_t> BuildKnownScanOptions(uint32_t preferredVk) {
     std::map<int, uint32_t> scanToVk;
 
     const int preferredScanCode = GetDerivedX11ScanCodeForVk(preferredVk);
-    if (preferredScanCode > 0) {
+    if (platform::input::IsValidKeyboardScanCode(preferredScanCode)) {
         AddKnownScanOption(scanToVk, preferredScanCode);
     }
 

@@ -18,8 +18,9 @@ void KeyStateTracker::ApplyEvent(const InputEvent& event) {
     const bool isRelease = (event.action == InputAction::Release);
     if (!isPress && !isRelease) { return; }
 
-    const int bindingScanCode = event.bindingScanCode > 0 ? event.bindingScanCode : event.nativeScanCode;
-    if (event.type == InputEventType::Key && bindingScanCode > 0) {
+    const int bindingScanCode =
+        IsValidKeyboardScanCode(event.bindingScanCode) ? event.bindingScanCode : event.nativeScanCode;
+    if (event.type == InputEventType::Key && IsValidKeyboardScanCode(bindingScanCode)) {
         if (isPress) {
             m_downScanCodes.insert(bindingScanCode);
             m_downKeyboardKeysByScanCode[bindingScanCode] = event.nativeKey;
@@ -45,7 +46,7 @@ void KeyStateTracker::Clear() {
 }
 
 bool KeyStateTracker::IsScanCodeDown(int nativeScanCode) const {
-    if (nativeScanCode <= 0) {
+    if (!IsValidKeyboardScanCode(nativeScanCode)) {
         return false;
     }
     return m_downScanCodes.find(nativeScanCode) != m_downScanCodes.end();
@@ -85,7 +86,7 @@ std::vector<BindingKey> KeyStateTracker::GetDownBindings() const {
 
     for (const auto& [scanCode, nativeKey] : m_downKeyboardKeysByScanCode) {
         (void)nativeKey;
-        if (scanCode <= 0) {
+        if (!IsValidKeyboardScanCode(scanCode)) {
             continue;
         }
         downBindings.push_back(MakeKeyboardBindingKey(scanCode));
@@ -105,7 +106,7 @@ std::vector<DownBindingState> KeyStateTracker::GetDownBindingStates() const {
     downBindings.reserve(m_downScanCodes.size() + m_downMouseButtons.size());
 
     for (const auto& [scanCode, nativeKey] : m_downKeyboardKeysByScanCode) {
-        if (scanCode <= 0) {
+        if (!IsValidKeyboardScanCode(scanCode)) {
             continue;
         }
         downBindings.push_back(DownBindingState{ MakeKeyboardBindingKey(scanCode), nativeKey });

@@ -1659,7 +1659,8 @@ bool EvaluateSensitivityHotkeys(const platform::config::LinuxscreenConfig& confi
                                 const std::string& gameState,
                                 platform::input::BindingKey rebindTargetKey) {
     if (event.type != platform::input::InputEventType::MouseButton &&
-        !(event.type == platform::input::InputEventType::Key && event.nativeScanCode > 0)) {
+        !(event.type == platform::input::InputEventType::Key &&
+          platform::input::IsValidKeyboardScanCode(event.nativeScanCode))) {
         return false;
     }
 

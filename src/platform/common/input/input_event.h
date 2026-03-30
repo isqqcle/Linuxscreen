@@ -44,7 +44,9 @@ struct InputEvent {
 
 inline BindingKey BindingKeyFromInputEvent(const InputEvent& event) {
     if (event.type == InputEventType::Key) {
-        return MakeKeyboardBindingKey(event.bindingScanCode > 0 ? event.bindingScanCode : event.nativeScanCode);
+        const int keyboardScanCode =
+            IsValidKeyboardScanCode(event.bindingScanCode) ? event.bindingScanCode : event.nativeScanCode;
+        return MakeKeyboardBindingKey(keyboardScanCode);
     }
     if (event.type == InputEventType::MouseButton) {
         return MakeMouseButtonBindingKey(event.nativeKey);

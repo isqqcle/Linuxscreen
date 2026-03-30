@@ -15,6 +15,14 @@ struct BindingKey {
     int code = 0;
 };
 
+inline bool IsValidKeyboardScanCode(int scanCode) {
+#ifdef __APPLE__
+    return scanCode >= 0;
+#else
+    return scanCode > 0;
+#endif
+}
+
 inline bool operator==(const BindingKey& lhs, const BindingKey& rhs) {
     return lhs.kind == rhs.kind && lhs.code == rhs.code;
 }
@@ -24,7 +32,7 @@ inline bool operator!=(const BindingKey& lhs, const BindingKey& rhs) {
 }
 
 inline BindingKey MakeKeyboardBindingKey(int scanCode) {
-    if (scanCode <= 0) {
+    if (!IsValidKeyboardScanCode(scanCode)) {
         return {};
     }
     return BindingKey{ BindingKeyKind::Keyboard, scanCode };
@@ -38,7 +46,7 @@ inline BindingKey MakeMouseButtonBindingKey(int button) {
 }
 
 inline bool IsKeyboardBindingKey(const BindingKey& key) {
-    return key.kind == BindingKeyKind::Keyboard && key.code > 0;
+    return key.kind == BindingKeyKind::Keyboard && IsValidKeyboardScanCode(key.code);
 }
 
 inline bool IsMouseBindingKey(const BindingKey& key) {

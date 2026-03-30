@@ -946,12 +946,14 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     triggerVk = g_rebindLayoutState.contextVk;
                 }
 
-                const int selectedCustomScanCode = selected
-                                                       ? (platform::input::IsKeyboardBindingKey(selected->toInput) ? selected->toInput.code : 0)
-                                                       : 0;
+                const int selectedCustomScanCode = selected && platform::input::IsKeyboardBindingKey(selected->toInput)
+                                                       ? selected->toInput.code
+                                                       : -1;
                 const uint32_t selectedCustomVkHint = selected ? selected->toVkHint : 0;
                 const int previewScanCode =
-                    selectedCustomScanCode > 0 ? selectedCustomScanCode : GetDerivedX11ScanCodeForVk(triggerVk);
+                    platform::input::IsValidKeyboardScanCode(selectedCustomScanCode)
+                        ? selectedCustomScanCode
+                        : GetDerivedX11ScanCodeForVk(triggerVk);
 
                 struct DisplayScanOption {
                     int scanCode = 0;
@@ -983,7 +985,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 struct CachedTriggerScanOptions {
                     uint32_t contextVk = 0;
                     uint32_t triggerVk = 0;
-                    int selectedCustomScanCode = 0;
+                    int selectedCustomScanCode = -1;
                     uint32_t selectedCustomVkHint = 0;
                     std::uint64_t rebindSignature = 0;
                     std::uint64_t latestBindingSequence = 0;
@@ -1003,7 +1005,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                 if (shouldRebuildTriggerScanOptions) {
                     std::map<int, uint32_t> scanOptions = BuildKnownScanOptions(triggerVk);
                     auto addScanOption = [&](int scanCode, uint32_t vkHint) {
-                        if (scanCode <= 0) {
+                        if (!platform::input::IsValidKeyboardScanCode(scanCode)) {
                             return;
                         }
 
@@ -1026,14 +1028,14 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     if (latestBindingSequence != 0) {
                         std::uint64_t probeSequence = latestBindingSequence - 1;
                         if (platform::config::ConsumeBindingInputEventSince(probeSequence, latestBindingEvent) &&
-                            latestBindingEvent.nativeScanCode > 0) {
+                            platform::input::IsValidKeyboardScanCode(latestBindingEvent.nativeScanCode)) {
                             addScanOption(latestBindingEvent.nativeScanCode, latestBindingEvent.vk);
                         }
                     }
 
                     std::vector<DisplayScanOption> displayScanOptions;
                     auto addDisplayScanOption = [&](int scanCode, uint32_t displayVk) {
-                        if (scanCode <= 0) {
+                        if (!platform::input::IsValidKeyboardScanCode(scanCode)) {
                             return;
                         }
 
@@ -1087,7 +1089,8 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     cachedTriggerScanOptions.options = std::move(displayScanOptions);
                 }
 
-                const uint32_t previewVk = selectedCustomScanCode > 0 ? selectedCustomVkHint : triggerVk;
+                const uint32_t previewVk =
+                    platform::input::IsValidKeyboardScanCode(selectedCustomScanCode) ? selectedCustomVkHint : triggerVk;
                 const std::string preview = FormatScanDisplay(previewScanCode, previewVk);
                 ImGui::SetNextItemWidth(255.0f);
                 if (ImGui::BeginCombo("##triggers_scan_combo", preview.c_str())) {
@@ -1096,7 +1099,7 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                     ImGui::InputTextWithHint("##triggers_scan_filter", "Search keys", scanFilter, sizeof(scanFilter));
 
                     const std::string scanFilterValue = lowerAscii(scanFilter);
-                    const bool defaultSelected = selectedCustomScanCode == 0;
+                    const bool defaultSelected = !platform::input::IsValidKeyboardScanCode(selectedCustomScanCode);
                     if (ImGui::Selectable("Default (Derived from Trigger Key)", defaultSelected)) {
                         const std::size_t previousSize = config.keyRebinds.rebinds.size();
                         idx = EnsureRebindForKey(config, g_rebindLayoutState.contextVk);

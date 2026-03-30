@@ -722,7 +722,7 @@ bool TryDecodeFirstUtf8Codepoint(const char* input, std::uint32_t& outCodepoint)
 
 bool TryResolveGlfwLayoutCodepoint(int nativeKey, int nativeScanCode, bool shiftDown, std::uint32_t& outCodepoint) {
     outCodepoint = 0;
-    if (nativeScanCode <= 0) {
+    if (!platform::input::IsValidKeyboardScanCode(nativeScanCode)) {
         return false;
     }
     if (platform::x11::IsWaylandGlfwPlatform() && nativeKey < 0) {
@@ -746,7 +746,8 @@ bool TryResolveGlfwLayoutCodepoint(int nativeKey, int nativeScanCode, bool shift
 
 bool HasKeyboardBindingIdentity(const platform::input::InputEvent& event) {
     return event.type == platform::input::InputEventType::Key &&
-           (event.bindingScanCode > 0 || event.nativeScanCode > 0);
+           (platform::input::IsValidKeyboardScanCode(event.bindingScanCode) ||
+            platform::input::IsValidKeyboardScanCode(event.nativeScanCode));
 }
 
 const std::map<int, int>& GetCachedGlfwKeysByBindingScanCode() {
@@ -765,7 +766,7 @@ const std::map<int, int>& GetCachedGlfwKeysByBindingScanCode() {
 
             const int rawScanCode = platform::x11::ResolveGlfwKeyScancodeForOverlay(glfwKey);
             const int bindingScanCode = platform::x11::NormalizeGlfwScanCodeForLinuxBindings(rawScanCode);
-            if (bindingScanCode <= 0) {
+            if (!platform::input::IsValidKeyboardScanCode(bindingScanCode)) {
                 continue;
             }
 
@@ -777,7 +778,7 @@ const std::map<int, int>& GetCachedGlfwKeysByBindingScanCode() {
 }
 
 int ResolveGlfwKeyForBindingScanCode(int bindingScanCode) {
-    if (bindingScanCode <= 0) {
+    if (!platform::input::IsValidKeyboardScanCode(bindingScanCode)) {
         return -1;
     }
 
