@@ -3463,19 +3463,11 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                 }
             }
             if (showGroupedItemInspectorTabs && ImGui::BeginTabBar("##direct_edit_subject_tabs")) {
-                if (ImGui::BeginTabItem("Mirror",
-                                        nullptr,
-                                        !g_mirrorEditorState.directEditShowGroupInspector
-                                            ? ImGuiTabItemFlags_SetSelected
-                                            : 0)) {
+                if (ImGui::BeginTabItem("Mirror")) {
                     g_mirrorEditorState.directEditShowGroupInspector = false;
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Group",
-                                        nullptr,
-                                        g_mirrorEditorState.directEditShowGroupInspector
-                                            ? ImGuiTabItemFlags_SetSelected
-                                            : 0)) {
+                if (ImGui::BeginTabItem("Group")) {
                     g_mirrorEditorState.directEditShowGroupInspector = true;
                     ImGui::EndTabItem();
                 }
