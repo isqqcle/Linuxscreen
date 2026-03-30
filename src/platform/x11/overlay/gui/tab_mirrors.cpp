@@ -34,11 +34,20 @@ struct MirrorDirectEditViewportContext {
     bool hasDisplay = false;
     float displayWidth = 0.0f;
     float displayHeight = 0.0f;
+    float framebufferScaleX = 1.0f;
+    float framebufferScaleY = 1.0f;
+    float physicalDisplayWidth = 0.0f;
+    float physicalDisplayHeight = 0.0f;
     bool hasModeViewport = false;
     float modeViewportX = 0.0f;
     float modeViewportY = 0.0f;
     float modeViewportWidth = 0.0f;
     float modeViewportHeight = 0.0f;
+    bool hasPhysicalModeViewport = false;
+    float physicalModeViewportX = 0.0f;
+    float physicalModeViewportY = 0.0f;
+    float physicalModeViewportWidth = 0.0f;
+    float physicalModeViewportHeight = 0.0f;
     const platform::config::ModeConfig* activeMode = nullptr;
 };
 
@@ -284,11 +293,17 @@ bool ResolveCropRectInSourceForDirectEdit(const platform::config::MirrorConfig& 
 
 MirrorDirectEditViewportContext BuildMirrorDirectEditViewportContext(const platform::config::LinuxscreenConfig& config,
                                                                      float displayWidth,
-                                                                     float displayHeight) {
+                                                                     float displayHeight,
+                                                                     float framebufferScaleX,
+                                                                     float framebufferScaleY) {
     MirrorDirectEditViewportContext ctx;
     ctx.hasDisplay = displayWidth > 0.0f && displayHeight > 0.0f;
     ctx.displayWidth = displayWidth;
     ctx.displayHeight = displayHeight;
+    ctx.framebufferScaleX = framebufferScaleX > 0.0f ? framebufferScaleX : 1.0f;
+    ctx.framebufferScaleY = framebufferScaleY > 0.0f ? framebufferScaleY : 1.0f;
+    ctx.physicalDisplayWidth = displayWidth * ctx.framebufferScaleX;
+    ctx.physicalDisplayHeight = displayHeight * ctx.framebufferScaleY;
     if (!ctx.hasDisplay) {
         return ctx;
     }
@@ -336,6 +351,32 @@ MirrorDirectEditViewportContext BuildMirrorDirectEditViewportContext(const platf
     ctx.modeViewportY = static_cast<float>(viewportY);
     ctx.modeViewportWidth = static_cast<float>(modeWidth);
     ctx.modeViewportHeight = static_cast<float>(modeHeight);
+
+    int physicalModeWidth = 0;
+    int physicalModeHeight = 0;
+    MirrorModeState::CalculateModeDimensions(*ctx.activeMode,
+                                             static_cast<int>(std::round(ctx.physicalDisplayWidth)),
+                                             static_cast<int>(std::round(ctx.physicalDisplayHeight)),
+                                             physicalModeWidth,
+                                             physicalModeHeight);
+    if (physicalModeWidth > 0 && physicalModeHeight > 0) {
+        int physicalViewportX = 0;
+        int physicalViewportY = 0;
+        platform::config::GetRelativeCoords(anchorPreset,
+                                            ctx.activeMode->x,
+                                            ctx.activeMode->y,
+                                            physicalModeWidth,
+                                            physicalModeHeight,
+                                            static_cast<int>(std::round(ctx.physicalDisplayWidth)),
+                                            static_cast<int>(std::round(ctx.physicalDisplayHeight)),
+                                            physicalViewportX,
+                                            physicalViewportY);
+        ctx.hasPhysicalModeViewport = true;
+        ctx.physicalModeViewportX = static_cast<float>(physicalViewportX);
+        ctx.physicalModeViewportY = static_cast<float>(physicalViewportY);
+        ctx.physicalModeViewportWidth = static_cast<float>(physicalModeWidth);
+        ctx.physicalModeViewportHeight = static_cast<float>(physicalModeHeight);
+    }
     return ctx;
 }
 
@@ -366,6 +407,33 @@ bool ResolveOutputContainerForDirectEdit(const platform::config::MirrorRenderCon
     return outWidth > 0.0f && outHeight > 0.0f;
 }
 
+bool ResolvePhysicalOutputContainerForDirectEdit(const platform::config::MirrorRenderConfig& output,
+                                                 const MirrorDirectEditViewportContext& ctx,
+                                                 float& outWidth,
+                                                 float& outHeight,
+                                                 float& outOffsetX,
+                                                 float& outOffsetY) {
+    if (!ctx.hasDisplay) {
+        outWidth = 0.0f;
+        outHeight = 0.0f;
+        outOffsetX = 0.0f;
+        outOffsetY = 0.0f;
+        return false;
+    }
+
+    outWidth = ctx.physicalDisplayWidth;
+    outHeight = ctx.physicalDisplayHeight;
+    outOffsetX = 0.0f;
+    outOffsetY = 0.0f;
+    if (ctx.hasPhysicalModeViewport && ShouldUseViewportRelativeTo(output.relativeTo)) {
+        outWidth = ctx.physicalModeViewportWidth;
+        outHeight = ctx.physicalModeViewportHeight;
+        outOffsetX = ctx.physicalModeViewportX;
+        outOffsetY = ctx.physicalModeViewportY;
+    }
+    return outWidth > 0.0f && outHeight > 0.0f;
+}
+
 bool ResolveDirectEditOutputContainerSize(const platform::config::MirrorRenderConfig& output,
                                           const MirrorDirectEditViewportContext& ctx,
                                           float& outWidth,
@@ -388,6 +456,11 @@ void ResolveDirectEditOutputPixels(const platform::config::MirrorRenderConfig& o
     }
     outX = resolved.x;
     outY = resolved.y;
+}
+
+ImRect ConvertLogicalRectToPhysical(const ImRect& rect, const MirrorDirectEditViewportContext& ctx) {
+    return ImRect(ImVec2(rect.Min.x * ctx.framebufferScaleX, rect.Min.y * ctx.framebufferScaleY),
+                  ImVec2(rect.Max.x * ctx.framebufferScaleX, rect.Max.y * ctx.framebufferScaleY));
 }
 
 void UpdateDirectEditRelativeFromPixels(platform::config::MirrorRenderConfig& output,
@@ -614,6 +687,72 @@ bool ResolveOutputRectForDirectEdit(const platform::config::MirrorConfig& mirror
     return true;
 }
 
+bool ResolveResolvedOutputRectForDirectEdit(const platform::config::MirrorConfig& mirror,
+                                            const MirrorDirectEditViewportContext& ctx,
+                                            ImRect& outRect) {
+    if (!ctx.hasDisplay) {
+        return false;
+    }
+
+    float containerWidth = ctx.physicalDisplayWidth;
+    float containerHeight = ctx.physicalDisplayHeight;
+    float containerOffsetX = 0.0f;
+    float containerOffsetY = 0.0f;
+    if (ctx.hasPhysicalModeViewport && ShouldUseViewportRelativeTo(mirror.output.relativeTo)) {
+        containerWidth = ctx.physicalModeViewportWidth;
+        containerHeight = ctx.physicalModeViewportHeight;
+        containerOffsetX = ctx.physicalModeViewportX;
+        containerOffsetY = ctx.physicalModeViewportY;
+    }
+    if (!(containerWidth > 0.0f) || !(containerHeight > 0.0f)) {
+        return false;
+    }
+
+    const int dynamicBorder = platform::config::GetMirrorDynamicBorderPadding(mirror.border);
+    const float baseWidth = static_cast<float>(mirror.captureWidth + (2 * dynamicBorder));
+    const float baseHeight = static_cast<float>(mirror.captureHeight + (2 * dynamicBorder));
+    if (!(baseWidth > 0.0f) || !(baseHeight > 0.0f)) {
+        return false;
+    }
+
+    float width = 0.0f;
+    float height = 0.0f;
+    const float scaleX = mirror.output.separateScale ? mirror.output.scaleX : mirror.output.scale;
+    const float scaleY = mirror.output.separateScale ? mirror.output.scaleY : mirror.output.scale;
+    if (mirror.output.preserveAspectRatio) {
+        const float uniformScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
+                                                                           scaleY,
+                                                                           NormalizeAspectFitMode(mirror.output.aspectFitMode)),
+                                              kDirectEditOutputScaleMin,
+                                              kDirectEditOutputScaleMax);
+        width = baseWidth * uniformScale;
+        height = baseHeight * uniformScale;
+    } else {
+        width = baseWidth * std::clamp(scaleX, kDirectEditOutputScaleMin, kDirectEditOutputScaleMax);
+        height = baseHeight * std::clamp(scaleY, kDirectEditOutputScaleMin, kDirectEditOutputScaleMax);
+    }
+
+    int topLeftX = 0;
+    int topLeftY = 0;
+    platform::config::GetRelativeCoords(mirror.output.relativeTo,
+                                        mirror.output.x,
+                                        mirror.output.y,
+                                        static_cast<int>(std::round(width)),
+                                        static_cast<int>(std::round(height)),
+                                        static_cast<int>(std::round(containerWidth)),
+                                        static_cast<int>(std::round(containerHeight)),
+                                        topLeftX,
+                                        topLeftY);
+
+    const float logicalLeft = (containerOffsetX + static_cast<float>(topLeftX)) / ctx.framebufferScaleX;
+    const float logicalTop = (containerOffsetY + static_cast<float>(topLeftY)) / ctx.framebufferScaleY;
+    const float logicalWidth = width / ctx.framebufferScaleX;
+    const float logicalHeight = height / ctx.framebufferScaleY;
+    outRect = ImRect(ImVec2(logicalLeft, logicalTop),
+                     ImVec2(logicalLeft + logicalWidth, logicalTop + logicalHeight));
+    return logicalWidth > 0.0f && logicalHeight > 0.0f;
+}
+
 bool ResolveDirectEditGroupItemScale(const platform::config::LinuxscreenConfig& config,
                                      const MirrorEditorState::DirectEditSelection& selection,
                                      const MirrorDirectEditViewportContext& ctx,
@@ -670,19 +809,20 @@ bool ApplyOutputRectPositionToRenderConfig(platform::config::MirrorRenderConfig&
     float containerHeight = 0.0f;
     float containerOffsetX = 0.0f;
     float containerOffsetY = 0.0f;
-    if (!ResolveOutputContainerForDirectEdit(output,
-                                             ctx,
-                                             containerWidth,
-                                             containerHeight,
-                                             containerOffsetX,
-                                             containerOffsetY)) {
+    if (!ResolvePhysicalOutputContainerForDirectEdit(output,
+                                                     ctx,
+                                                     containerWidth,
+                                                     containerHeight,
+                                                     containerOffsetX,
+                                                     containerOffsetY)) {
         return false;
     }
 
-    const float localLeft = rect.Min.x - containerOffsetX;
-    const float localTop = rect.Min.y - containerOffsetY;
-    const float width = std::max(1.0f, rect.GetWidth());
-    const float height = std::max(1.0f, rect.GetHeight());
+    const ImRect physicalRect = ConvertLogicalRectToPhysical(rect, ctx);
+    const float localLeft = physicalRect.Min.x - containerOffsetX;
+    const float localTop = physicalRect.Min.y - containerOffsetY;
+    const float width = std::max(1.0f, physicalRect.GetWidth());
+    const float height = std::max(1.0f, physicalRect.GetHeight());
 
     float anchorX = 0.0f;
     float anchorY = 0.0f;
@@ -718,8 +858,9 @@ void ApplyOutputRectToMirror(platform::config::MirrorConfig& mirror,
     if (!(baseWidth > 0.0f) || !(baseHeight > 0.0f)) {
         return;
     }
-    const float width = std::max(1.0f, rect.GetWidth());
-    const float height = std::max(1.0f, rect.GetHeight());
+    const ImRect physicalRect = ConvertLogicalRectToPhysical(rect, ctx);
+    const float width = std::max(1.0f, physicalRect.GetWidth());
+    const float height = std::max(1.0f, physicalRect.GetHeight());
 
     const float scaleX = std::clamp(width / baseWidth, kDirectEditOutputScaleMin, kDirectEditOutputScaleMax);
     const float scaleY = std::clamp(height / baseHeight, kDirectEditOutputScaleMin, kDirectEditOutputScaleMax);
@@ -1127,6 +1268,26 @@ bool ResolveMirrorSourceSizeForDirectEdit(const platform::config::MirrorConfig& 
     return outWidth > 0.0f && outHeight > 0.0f;
 }
 
+bool ResolveMirrorPhysicalSourceSizeForDirectEdit(const platform::config::MirrorConfig& mirror,
+                                                  const MirrorDirectEditViewportContext& ctx,
+                                                  float& outWidth,
+                                                  float& outHeight) {
+    outWidth = static_cast<float>(mirror.captureWidth);
+    outHeight = static_cast<float>(mirror.captureHeight);
+    if (mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer) {
+        if (ctx.physicalDisplayWidth > 0.0f && ctx.physicalDisplayHeight > 0.0f) {
+            outWidth = ctx.physicalDisplayWidth;
+            outHeight = ctx.physicalDisplayHeight;
+        }
+        return outWidth > 0.0f && outHeight > 0.0f;
+    }
+    if (mirror.source.lastKnownWidth > 0 && mirror.source.lastKnownHeight > 0) {
+        outWidth = static_cast<float>(mirror.source.lastKnownWidth);
+        outHeight = static_cast<float>(mirror.source.lastKnownHeight);
+    }
+    return outWidth > 0.0f && outHeight > 0.0f;
+}
+
 ImRect ResolveMirrorSourceViewportRectForDirectEdit(const platform::config::MirrorConfig& mirror,
                                                     const MirrorDirectEditViewportContext& ctx,
                                                     float sourceWidth,
@@ -1139,6 +1300,21 @@ ImRect ResolveMirrorSourceViewportRectForDirectEdit(const platform::config::Mirr
     viewport.Min.y = std::clamp(ctx.modeViewportY, 0.0f, sourceHeight);
     viewport.Max.x = std::clamp(viewport.Min.x + ctx.modeViewportWidth, viewport.Min.x, sourceWidth);
     viewport.Max.y = std::clamp(viewport.Min.y + ctx.modeViewportHeight, viewport.Min.y, sourceHeight);
+    return viewport;
+}
+
+ImRect ResolveMirrorPhysicalSourceViewportRectForDirectEdit(const platform::config::MirrorConfig& mirror,
+                                                            const MirrorDirectEditViewportContext& ctx,
+                                                            float sourceWidth,
+                                                            float sourceHeight) {
+    ImRect viewport(ImVec2(0.0f, 0.0f), ImVec2(sourceWidth, sourceHeight));
+    if (mirror.source.type != platform::config::MirrorSourceType::GameFramebuffer || !ctx.hasPhysicalModeViewport) {
+        return viewport;
+    }
+    viewport.Min.x = std::clamp(ctx.physicalModeViewportX, 0.0f, sourceWidth);
+    viewport.Min.y = std::clamp(ctx.physicalModeViewportY, 0.0f, sourceHeight);
+    viewport.Max.x = std::clamp(viewport.Min.x + ctx.physicalModeViewportWidth, viewport.Min.x, sourceWidth);
+    viewport.Max.y = std::clamp(viewport.Min.y + ctx.physicalModeViewportHeight, viewport.Min.y, sourceHeight);
     return viewport;
 }
 
@@ -1163,21 +1339,34 @@ bool ResolveCropRectInSourceForDirectEdit(const platform::config::MirrorConfig& 
         containerOffsetY = viewportRect.Min.y;
     }
 
+    const float captureWidth = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (static_cast<float>(mirror.captureWidth) / ctx.framebufferScaleX)
+        : static_cast<float>(mirror.captureWidth);
+    const float captureHeight = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (static_cast<float>(mirror.captureHeight) / ctx.framebufferScaleY)
+        : static_cast<float>(mirror.captureHeight);
+    const float zoneX = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (static_cast<float>(zone.x) / ctx.framebufferScaleX)
+        : static_cast<float>(zone.x);
+    const float zoneY = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (static_cast<float>(zone.y) / ctx.framebufferScaleY)
+        : static_cast<float>(zone.y);
+
     int cropX = 0;
     int cropY = 0;
     platform::config::GetRelativeCoords(zone.relativeTo,
-                                        zone.x,
-                                        zone.y,
-                                        mirror.captureWidth,
-                                        mirror.captureHeight,
+                                        static_cast<int>(std::round(zoneX)),
+                                        static_cast<int>(std::round(zoneY)),
+                                        static_cast<int>(std::round(captureWidth)),
+                                        static_cast<int>(std::round(captureHeight)),
                                         static_cast<int>(std::round(containerWidth)),
                                         static_cast<int>(std::round(containerHeight)),
                                         cropX,
                                         cropY);
     outRect = ImRect(ImVec2(containerOffsetX + static_cast<float>(cropX),
                             containerOffsetY + static_cast<float>(cropY)),
-                     ImVec2(containerOffsetX + static_cast<float>(cropX + mirror.captureWidth),
-                            containerOffsetY + static_cast<float>(cropY + mirror.captureHeight)));
+                     ImVec2(containerOffsetX + static_cast<float>(cropX) + captureWidth,
+                            containerOffsetY + static_cast<float>(cropY) + captureHeight));
     return true;
 }
 
@@ -1215,6 +1404,19 @@ void NormalizeCropZoneAnchorForDirectEdit(platform::config::MirrorConfig& mirror
 
     const bool useViewport = ShouldUseViewportRelativeTo(zone.relativeTo);
     zone.relativeTo = useViewport ? "topLeftViewport" : "topLeftScreen";
+
+    if (mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer) {
+        float physicalSourceWidth = sourceWidth;
+        float physicalSourceHeight = sourceHeight;
+        ResolveMirrorPhysicalSourceSizeForDirectEdit(mirror, ctx, physicalSourceWidth, physicalSourceHeight);
+        const ImRect viewportRect =
+            ResolveMirrorPhysicalSourceViewportRectForDirectEdit(mirror, ctx, physicalSourceWidth, physicalSourceHeight);
+        const float physicalLeft = currentRect.Min.x * ctx.framebufferScaleX;
+        const float physicalTop = currentRect.Min.y * ctx.framebufferScaleY;
+        zone.x = static_cast<int>(std::round(physicalLeft - (useViewport ? viewportRect.Min.x : 0.0f)));
+        zone.y = static_cast<int>(std::round(physicalTop - (useViewport ? viewportRect.Min.y : 0.0f)));
+        return;
+    }
 
     const ImRect viewportRect = ResolveMirrorSourceViewportRectForDirectEdit(mirror, ctx, sourceWidth, sourceHeight);
     zone.x = static_cast<int>(std::round(currentRect.Min.x - (useViewport ? viewportRect.Min.x : 0.0f)));
@@ -1254,17 +1456,35 @@ void ApplyCropSizeToMirror(platform::config::MirrorConfig& mirror,
 void ApplyCropRectToMirror(platform::config::MirrorConfig& mirror,
                            platform::config::MirrorCaptureConfig& zone,
                            const MirrorDirectEditViewportContext& ctx,
-                          const ImRect& rect,
-                          float sourceWidth,
+                           const ImRect& rect,
+                           float sourceWidth,
                           float sourceHeight,
                           bool resizeCapture,
                           float outputScaleX,
                           float outputScaleY) {
-    const ImRect viewportRect = ResolveMirrorSourceViewportRectForDirectEdit(mirror, ctx, sourceWidth, sourceHeight);
-    float containerWidth = sourceWidth;
-    float containerHeight = sourceHeight;
-    float left = rect.Min.x;
-    float top = rect.Min.y;
+    float physicalSourceWidth = sourceWidth;
+    float physicalSourceHeight = sourceHeight;
+    if (mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer) {
+        ResolveMirrorPhysicalSourceSizeForDirectEdit(mirror, ctx, physicalSourceWidth, physicalSourceHeight);
+    }
+
+    const ImRect viewportRect = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? ResolveMirrorPhysicalSourceViewportRectForDirectEdit(mirror, ctx, physicalSourceWidth, physicalSourceHeight)
+        : ResolveMirrorSourceViewportRectForDirectEdit(mirror, ctx, sourceWidth, sourceHeight);
+    float containerWidth = physicalSourceWidth;
+    float containerHeight = physicalSourceHeight;
+    float left = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (rect.Min.x * ctx.framebufferScaleX)
+        : rect.Min.x;
+    float top = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (rect.Min.y * ctx.framebufferScaleY)
+        : rect.Min.y;
+    const float width = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (rect.GetWidth() * ctx.framebufferScaleX)
+        : rect.GetWidth();
+    const float height = mirror.source.type == platform::config::MirrorSourceType::GameFramebuffer
+        ? (rect.GetHeight() * ctx.framebufferScaleY)
+        : rect.GetHeight();
     if (ShouldUseViewportRelativeTo(zone.relativeTo)) {
         containerWidth = viewportRect.GetWidth();
         containerHeight = viewportRect.GetHeight();
@@ -1272,7 +1492,7 @@ void ApplyCropRectToMirror(platform::config::MirrorConfig& mirror,
         top -= viewportRect.Min.y;
     }
 
-    const ImRect localRect(ImVec2(left, top), ImVec2(left + rect.GetWidth(), top + rect.GetHeight()));
+    const ImRect localRect(ImVec2(left, top), ImVec2(left + width, top + height));
     if (!resizeCapture) {
         ApplyCropZonePositionToMirror(zone, zone.relativeTo, localRect, containerWidth, containerHeight);
         return;
@@ -1720,7 +1940,7 @@ void RenderSharedMirrorGroupEditorSections(platform::config::LinuxscreenConfig& 
     float framebufferScaleY = 1.0f;
     GetOverlayDisplayMetrics(displayWidth, displayHeight, framebufferScaleX, framebufferScaleY);
     const MirrorDirectEditViewportContext viewportContext =
-        BuildMirrorDirectEditViewportContext(config, displayWidth, displayHeight);
+        BuildMirrorDirectEditViewportContext(config, displayWidth, displayHeight, framebufferScaleX, framebufferScaleY);
 
     auto& grp = config.mirrorGroups[static_cast<std::size_t>(groupIndex)];
     ImGui::PushID(idSuffix);
@@ -2178,7 +2398,7 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
     }
 
     const MirrorDirectEditViewportContext viewportContext =
-        BuildMirrorDirectEditViewportContext(config, displayWidth, displayHeight);
+        BuildMirrorDirectEditViewportContext(config, displayWidth, displayHeight, ImGui::GetIO().DisplayFramebufferScale.x, ImGui::GetIO().DisplayFramebufferScale.y);
     const bool shiftHeld = IsDirectEditShiftHeld();
     const bool altHeld = IsDirectEditAltHeld();
     const MirrorVisualEditorMode effectiveMode = ResolveEffectiveDirectEditMode();
@@ -2196,7 +2416,7 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
     items.reserve(config.mirrors.size());
     for (const auto& resolved : GetMirrorModeState().GetActiveMirrorRenderList()) {
         ImRect rect;
-        if (!ResolveOutputRectForDirectEdit(resolved.config, viewportContext, rect)) {
+        if (!ResolveResolvedOutputRectForDirectEdit(resolved.config, viewportContext, rect)) {
             continue;
         }
         items.push_back(DirectEditResolvedItem{resolved, rect});
@@ -2482,8 +2702,16 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                     const int dynamicBorder = clickedItem
                         ? platform::config::GetMirrorDynamicBorderPadding(clickedItem->resolved.config.border)
                         : 0;
-                    const float baseWidth = std::max(1.0f, g_mirrorEditorState.visualDrag.startCaptureWidth + (2.0f * static_cast<float>(dynamicBorder)));
-                    const float baseHeight = std::max(1.0f, g_mirrorEditorState.visualDrag.startCaptureHeight + (2.0f * static_cast<float>(dynamicBorder)));
+                    const float rawBaseWidth = std::max(1.0f, g_mirrorEditorState.visualDrag.startCaptureWidth + (2.0f * static_cast<float>(dynamicBorder)));
+                    const float rawBaseHeight = std::max(1.0f, g_mirrorEditorState.visualDrag.startCaptureHeight + (2.0f * static_cast<float>(dynamicBorder)));
+                    const bool framebufferMirror = clickedItem &&
+                        clickedItem->resolved.config.source.type == platform::config::MirrorSourceType::GameFramebuffer;
+                    const float baseWidth = framebufferMirror
+                        ? (rawBaseWidth / viewportContext.framebufferScaleX)
+                        : rawBaseWidth;
+                    const float baseHeight = framebufferMirror
+                        ? (rawBaseHeight / viewportContext.framebufferScaleY)
+                        : rawBaseHeight;
                     g_mirrorEditorState.visualDrag.startOutputScaleX =
                         std::clamp(g_mirrorEditorState.visualDrag.startOutputWidth / baseWidth,
                                    kDirectEditOutputScaleMin,
