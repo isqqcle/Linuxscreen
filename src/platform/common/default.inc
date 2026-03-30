@@ -229,7 +229,7 @@ triggerOnRelease = false
 
 [[mirror]]
 captureHeight = 7
-captureWidth = 29
+captureWidth = 35
 colorPassthrough = false
 colorSensitivity = 0.0010000000474974513
 fps = 60
@@ -1532,7 +1532,7 @@ modeSensitivityX = 1.0
 modeSensitivityY = 1.0
 positionPreset = 'centerScreen'
 relativeHeight = 1.0
-relativeWidth = 0.18000000715255737
+relativeWidth = 0.19
 sensitivityOverrideEnabled = false
 separateXYSensitivity = false
 useRelativeSize = true
