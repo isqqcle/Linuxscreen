@@ -17,7 +17,8 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
 
     bool guiVisible = IsGuiVisible();
 
-    if (!guiVisible && !needsEyeZoomText) {
+    const bool mirrorDirectEditActive = IsMirrorDirectEditActive();
+    if (!guiVisible && !needsEyeZoomText && !mirrorDirectEditActive) {
         // Keep the ImGui context alive so that tab selection and scroll positions are
         // preserved across open/close cycles within the same session.
 #ifdef __APPLE__
@@ -330,6 +331,11 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
         ImGui::GetStyle().Alpha = frameConfig->guiOpacity;
     }
 
+    if (frameConfig && mirrorDirectEditActive) {
+        auto mutableConfig = *frameConfig;
+        RenderMirrorDirectEditOverlay(mutableConfig, displayWidth, displayHeight, &guiVisible);
+    }
+
     bool windowVisible = false;
     bool windowBegun = false;
     if (guiVisible) {
@@ -371,15 +377,24 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
     {
         std::lock_guard<std::mutex> captureLock(g_imguiOverlayCaptureMutex);
         g_imguiOverlayCaptureState.hasFrame = true;
-        g_imguiOverlayCaptureState.wantCaptureMouse = guiVisible ? io.WantCaptureMouse : false;
-        g_imguiOverlayCaptureState.forceConsumeMouse = guiVisible && g_rebindLayoutState.keyboardLayoutOpen;
-        g_imguiOverlayCaptureState.wantCaptureKeyboard = guiVisible ? io.WantCaptureKeyboard : false;
+        g_imguiOverlayCaptureState.wantCaptureMouse = mirrorDirectEditActive ? true : (guiVisible ? io.WantCaptureMouse : false);
+        g_imguiOverlayCaptureState.forceConsumeMouse =
+            mirrorDirectEditActive || (guiVisible && g_rebindLayoutState.keyboardLayoutOpen);
+        g_imguiOverlayCaptureState.wantCaptureKeyboard = mirrorDirectEditActive ? true : (guiVisible ? io.WantCaptureKeyboard : false);
         g_imguiOverlayCaptureState.wantTextInput = guiVisible ? io.WantTextInput : false;
-        g_imguiOverlayCaptureState.hasWindowRect = windowSize.x > 0.0f && windowSize.y > 0.0f;
-        g_imguiOverlayCaptureState.windowX = windowPos.x;
-        g_imguiOverlayCaptureState.windowY = windowPos.y;
-        g_imguiOverlayCaptureState.windowWidth = windowSize.x;
-        g_imguiOverlayCaptureState.windowHeight = windowSize.y;
+        if (mirrorDirectEditActive && g_mirrorEditorState.directEditFullscreenActive) {
+            g_imguiOverlayCaptureState.hasWindowRect = displayWidth > 0.0f && displayHeight > 0.0f;
+            g_imguiOverlayCaptureState.windowX = 0.0;
+            g_imguiOverlayCaptureState.windowY = 0.0;
+            g_imguiOverlayCaptureState.windowWidth = displayWidth;
+            g_imguiOverlayCaptureState.windowHeight = displayHeight;
+        } else {
+            g_imguiOverlayCaptureState.hasWindowRect = windowSize.x > 0.0f && windowSize.y > 0.0f;
+            g_imguiOverlayCaptureState.windowX = windowPos.x;
+            g_imguiOverlayCaptureState.windowY = windowPos.y;
+            g_imguiOverlayCaptureState.windowWidth = windowSize.x;
+            g_imguiOverlayCaptureState.windowHeight = windowSize.y;
+        }
 
         if (!g_imguiOverlayCaptureState.hasPointerPosition) {
             g_imguiOverlayCaptureState.pointerX = io.MousePos.x;
@@ -389,6 +404,9 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
 
         RefreshPointerOverWindowLocked();
         if (windowHovered) { g_imguiOverlayCaptureState.pointerOverWindow = true; }
+        if (mirrorDirectEditActive && g_mirrorEditorState.directEditFullscreenHovered) {
+            g_imguiOverlayCaptureState.pointerOverWindow = true;
+        }
     }
 
     if (windowBegun && windowVisible) {

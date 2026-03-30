@@ -7,6 +7,7 @@
 #include "mirror/glx_shared_contexts.h"
 #include "overlay/imgui_input_bridge.h"
 #include "overlay/imgui_overlay.h"
+#include "overlay/gui/tab_mirrors.h"
 #include "calc_overlay_runtime.h"
 #include "x11_runtime.h"
 
@@ -1303,8 +1304,12 @@ bool ResolveCurrentLogicalCursorCenter(double& outX, double& outY) {
     return true;
 }
 
+bool IsOverlayCursorReleaseActive() {
+    return platform::x11::IsGuiVisible() || platform::x11::IsMirrorDirectEditActive();
+}
+
 bool IsCursorDisabledForGameInput() {
-    return g_cursorCaptureActive.load(std::memory_order_acquire) && !platform::x11::IsGuiVisible();
+    return g_cursorCaptureActive.load(std::memory_order_acquire) && !IsOverlayCursorReleaseActive();
 }
 
 void ArmCaptureEntryCenterSuppression(double centerX, double centerY) {

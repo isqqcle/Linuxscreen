@@ -26,7 +26,7 @@ void UpdateImGuiOverlayPointerPosition(double x, double y) {
 }
 
 bool ShouldConsumeInputForOverlay(const input::InputEvent& event) {
-    if (!IsImGuiRenderEnabled() || !IsGuiVisible()) { return false; }
+    if (!IsImGuiRenderEnabled() || (!IsGuiVisible() && !IsMirrorDirectEditActive())) { return false; }
 
     std::lock_guard<std::mutex> lock(g_imguiOverlayCaptureMutex);
     ImGuiOverlayCaptureState& state = g_imguiOverlayCaptureState;

@@ -489,11 +489,11 @@ extern "C" void glfwSetInputMode(GLFWwindow* window, int mode, int value) {
     }
 
     if (value == GLFW_CURSOR_DISABLED) {
-        if (platform::x11::IsGuiVisible()) {
+        if (IsOverlayCursorReleaseActive()) {
             g_cursorCaptureActive.store(false, std::memory_order_release);
             g_restoreCursorDisabledOnGuiClose.store(true, std::memory_order_release);
             ClearTrackedCursorCaptureState();
-            LogDebug("glfwSetInputMode CURSOR_DISABLED suppressed (GUI visible)");
+            LogDebug("glfwSetInputMode CURSOR_DISABLED suppressed (overlay cursor release active)");
             return;
         }
         if (!g_cursorCaptureActive.load(std::memory_order_acquire)) {

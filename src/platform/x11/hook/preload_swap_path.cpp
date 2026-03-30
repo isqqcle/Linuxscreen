@@ -51,11 +51,11 @@ void RenderGuiOverlay(GLFWwindow* preferredWindow, const char* sourceLabel) {
         return;
     }
 
-    const bool guiVisibleBeforeRender = platform::x11::IsGuiVisible();
+    const bool overlayCursorReleasedBeforeRender = IsOverlayCursorReleaseActive();
     const platform::x11::ImGuiOverlayRenderResult result = platform::x11::RenderImGuiOverlayFrame(preferredWindow, sourceLabel);
-    const bool guiVisibleAfterRender = platform::x11::IsGuiVisible();
-    if (guiVisibleBeforeRender && !guiVisibleAfterRender) {
-        // Handle window-close button (X) the same as hotkey toggle close so
+    const bool overlayCursorReleasedAfterRender = IsOverlayCursorReleaseActive();
+    if (overlayCursorReleasedBeforeRender && !overlayCursorReleasedAfterRender) {
+        // Handle overlay close transitions the same as a hotkey close so
         // cursor mode restoration stays consistent.
         GLFWwindow* targetWindow = ResolveGuiToggleWindow(preferredWindow);
         RestoreCursorDisabledAfterGuiClose(targetWindow);
