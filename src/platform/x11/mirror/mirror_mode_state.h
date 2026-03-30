@@ -9,10 +9,19 @@
 
 namespace platform::x11 {
 
+enum class ResolvedMirrorSourceKind {
+    Mirror = 0,
+    GroupItem = 1,
+};
+
 struct ResolvedMirrorRender {
     config::MirrorConfig config;
     // config.output.x/y/scale/relativeTo reflect final values after any group override.
     // config.captureWidth/captureHeight reflect final values after any group per-item sizing.
+    ResolvedMirrorSourceKind sourceKind = ResolvedMirrorSourceKind::Mirror;
+    std::string sourceMirrorId;
+    std::string sourceGroupId;
+    int sourceGroupItemIndex = -1;
 };
 
 class MirrorModeState {

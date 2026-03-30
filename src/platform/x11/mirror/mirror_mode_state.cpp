@@ -340,6 +340,8 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
     auto appendResolvedMirror = [&](const config::MirrorConfig& mirrorCfg) {
         ResolvedMirrorRender resolved;
         resolved.config = mirrorCfg;
+        resolved.sourceKind = ResolvedMirrorSourceKind::Mirror;
+        resolved.sourceMirrorId = mirrorCfg.name;
         ApplyWindowCaptureSizeOverride(resolved.config);
         ApplyImageSourceSizeOverride(resolved.config);
         if (hasScreenSize) {
@@ -374,6 +376,10 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
 
             ResolvedMirrorRender resolved;
             resolved.config = *mirrorIt->second;
+            resolved.sourceKind = ResolvedMirrorSourceKind::GroupItem;
+            resolved.sourceMirrorId = item.mirrorId;
+            resolved.sourceGroupId = groupCfg.name;
+            resolved.sourceGroupItemIndex = static_cast<int>(&item - groupCfg.mirrors.data());
             ApplyWindowCaptureSizeOverride(resolved.config);
             ApplyImageSourceSizeOverride(resolved.config);
             int groupX = groupCfg.output.x;
