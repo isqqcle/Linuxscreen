@@ -2,10 +2,9 @@ R"TSRB(
 configVersion = 2
 defaultMode = 'Fullscreen'
 fpsLimit = 0
-guiFontPath = ''
+guiFontPath = 'NotoSans-Regular'
 guiFontSize = 20
 guiHeight = 818
-guiHotkey = [ 162, 73 ]
 guiOpacity = 1.0
 guiScale = 1.25
 guiTheme = 'Monokai'
@@ -14,10 +13,100 @@ keyRepeatAffectsMouseButtons = false
 keyRepeatDelay = 0
 keyRepeatStartDelay = 0
 mouseSensitivity = 1.0
-rebindToggleHotkey = []
+sensitivityHotkey = []
 windowsMouseSpeed = 0
 
+[appearance]
+theme = 'Monokai'
+
+    [appearance.customColors]
+
+[calcOverlay]
+allAdvancementsEnabled = true
+angleDisplay = 'all'
+blindCoordsEnabled = true
+enabled = true
+fontSize = 48
+netherCoordsColor = [ 255, 255, 255 ]
+onlyShowCurrentDimensionCoords = false
+outlineWidth = 3
+overlayPosition = 'top left'
+overworldCoordsMode = 'chunk'
+showDirectionAndDistance = false
+showInfoBar = false
+shownMeasurements = 3
+
+    [[calcOverlay.allAdvancements.columns]]
+    headerRow = 'nothing'
+    name = 'icons'
+    visible = true
+
+    [[calcOverlay.allAdvancements.columns]]
+    headerRow = 'show text'
+    name = 'location'
+    visible = true
+
+    [[calcOverlay.allAdvancements.columns]]
+    headerRow = 'show text'
+    name = 'nether coords'
+    visible = true
+
+    [[calcOverlay.allAdvancements.columns]]
+    headerRow = 'show text'
+    name = 'angle'
+    visible = true
+
+    [[calcOverlay.allAdvancements.rows]]
+    name = 'STRONGHOLD'
+    visible = true
+
+    [[calcOverlay.allAdvancements.rows]]
+    name = 'SPAWN'
+    visible = true
+
+    [[calcOverlay.allAdvancements.rows]]
+    name = 'OUTPOST'
+    visible = true
+
+    [[calcOverlay.allAdvancements.rows]]
+    name = 'MONUMENT'
+    visible = true
+
+    [calcOverlay.clearOverlayAfter]
+    amount = 1
+    timeUnit = 'never'
+
+    [calcOverlay.negativeCoords]
+    color = [ 255, 180, 180 ]
+    use = true
+
+    [[calcOverlay.eyeColumns]]
+    headerRow = 'show icon'
+    name = 'overworld coords'
+    visible = true
+
+    [[calcOverlay.eyeColumns]]
+    headerRow = 'show icon'
+    name = 'certainty'
+    visible = true
+
+    [[calcOverlay.eyeColumns]]
+    headerRow = 'show icon'
+    name = 'distance'
+    visible = true
+
+    [[calcOverlay.eyeColumns]]
+    headerRow = 'show icon'
+    name = 'nether coords'
+    visible = true
+
+    [[calcOverlay.eyeColumns]]
+    headerRow = 'show icon'
+    name = 'angle'
+    visible = true
+
 [eyezoom]
+activeOverlayIndex = -1
 autoFontSize = true
 centerLineColor = [ 255, 255, 255 ]
 centerLineColorOpacity = 1.0
@@ -41,6 +130,7 @@ outputUseRelativePosition = true
 outputUseRelativeSize = true
 outputX = 0.05000000074505806
 outputY = 0.0
+overlay = []
 overlayWidth = 12
 positionX = 0
 positionY = 0
@@ -60,63 +150,95 @@ zoomAreaHeight = 900
 zoomAreaWidth = 800
 
 [keyRebinds]
-enabled = false
+enabled = true
+resolveRebindTargetsForHotkeys = true
+
+    [[keyRebinds.rebinds]]
+    consumeSourceInput = false
+    customOutputShiftUnicode = 0
+    customOutputUnicode = 0
+    enabled = false
+    fromVkHint = 70
+    keyRepeatDelay = 0
+    keyRepeatDisabled = false
+    keyRepeatStartDelay = 0
+    name = ''
+    toVkHint = 70
+    useCustomOutput = false
+
+        [keyRebinds.rebinds.fromInput]
+        code = 41
+        kind = 'keyboard'
+
+        [keyRebinds.rebinds.toInput]
+        code = 41
+        kind = 'keyboard'
+
+[[guiHotkey]]
+code = 37
+kind = 'keyboard'
+
+[[guiHotkey]]
+code = 31
+kind = 'keyboard'
 
 [[hotkey]]
+allowExitToFullscreenRegardlessOfGameState = true
 altSecondaryModes = []
-debounce = 100
-keys = [ 90 ]
+blockKeyFromGame = true
+debounce = 0
 mainMode = 'Fullscreen'
+returnMode = ''
+returnToDefaultOnRepeat = true
 secondaryMode = 'Thin'
 triggerOnHold = false
 triggerOnRelease = false
 
     [hotkey.conditions]
-    exclusions = [ 114 ]
     gameState = []
 
 [[hotkey]]
+allowExitToFullscreenRegardlessOfGameState = true
 altSecondaryModes = []
-debounce = 100
-keys = [ 74 ]
+blockKeyFromGame = true
+debounce = 0
 mainMode = 'Fullscreen'
+returnMode = ''
+returnToDefaultOnRepeat = true
 secondaryMode = 'EyeZoom'
 triggerOnHold = false
 triggerOnRelease = false
 
     [hotkey.conditions]
-    exclusions = [ 114 ]
     gameState = []
 
 [[hotkey]]
+allowExitToFullscreenRegardlessOfGameState = true
 altSecondaryModes = []
-debounce = 100
-keys = [ 164 ]
+blockKeyFromGame = true
+debounce = 0
 mainMode = 'Fullscreen'
+returnMode = ''
+returnToDefaultOnRepeat = true
 secondaryMode = 'Wide'
 triggerOnHold = false
 triggerOnRelease = false
 
     [hotkey.conditions]
-    exclusions = [ 114 ]
     gameState = []
 
 [[mirror]]
 captureHeight = 7
-captureWidth = 23
+captureWidth = 29
 colorPassthrough = false
-colorSensitivity = 0.001
-colors = { border = [ 0, 0, 0 ], output = [ 255, 255, 255 ], targetColors = [ [ 221, 221, 221 ], [ 67, 67, 67 ] ] }
-fps = 100
-input = [ { relativeTo = 'topLeftViewport', x = 14, y = 38 } ]
+colorSensitivity = 0.0010000000474974513
+fps = 60
 name = 'E Counter'
-onlyOnMyScreen = false
 opacity = 1.0
-output = { aspectFitMode = 'contain', preserveAspectRatio = true, relativeHeight = 0.5, relativeTo = 'topRightViewport', relativeWidth = 0.5, relativeX = 1.1000000238418579, relativeY = 0.079999998211860657, scale = 8.0, scaleX = 1.0, scaleY = 1.0, separateScale = false, useRelativePosition = true, useRelativeSize = false, x = 1.1000000238418579, y = 0.079999998211860657 }
 rawOutput = false
 
     [mirror.border]
-    dynamicThickness = 2
+    dynamicThickness = 1
     staticColor = [ 255, 255, 255 ]
     staticHeight = 0
     staticOffsetX = 0
@@ -126,24 +248,43 @@ rawOutput = false
     staticThickness = 2
     staticWidth = 0
     type = 'Dynamic'
+
+    [mirror.colors]
+    border = [ 0, 0, 0 ]
+    output = [ 255, 255, 255 ]
+    targetColors = [ [ 221, 221, 221 ], [ 67, 67, 67 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = false
+    relativeHeight = 0.5
+    relativeTo = 'topRightScreen'
+    relativeWidth = 0.5
+    relativeX = 0.60000002384185791
+    relativeY = 0.05000000074505806
+    scale = 8.0
+    scaleX = 8.0
+    scaleY = 8.0
+    separateScale = true
+    useRelativePosition = true
+    useRelativeSize = false
+    x = 0.60000002384185791
+    y = 0.05000000074505806
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'topLeftViewport'
+    x = 14
+    y = 38
 
 [[mirror]]
 captureHeight = 7
 captureWidth = 19
 colorPassthrough = false
-colorSensitivity = 0.001
-colors = { border = [ 0, 0, 0 ], output = [ 255, 255, 255 ], targetColors = [ [ 233, 109, 77 ] ] }
-fps = 100
-input = [
-    { relativeTo = 'pieRight', x = 0, y = 0 },
-    { relativeTo = 'pieRight', x = 0, y = 8 },
-    { relativeTo = 'pieRight', x = 0, y = 16 },
-    { relativeTo = 'pieRight', x = 0, y = 24 }
-]
+colorSensitivity = 0.0010000000474974513
+fps = 60
 name = 'Mapless'
-onlyOnMyScreen = false
 opacity = 1.0
-output = { relativeTo = 'bottomRightViewport', relativeX = 0.5, relativeY = 0.5, scale = 8.0, scaleX = 8.0, scaleY = 8.0, separateScale = false, useRelativePosition = false, x = 71, y = 242 }
 rawOutput = false
 
     [mirror.border]
@@ -157,24 +298,61 @@ rawOutput = false
     staticThickness = 2
     staticWidth = 0
     type = 'Dynamic'
+
+    [mirror.colors]
+    border = [ 0, 0, 0 ]
+    output = [ 255, 255, 255 ]
+    targetColors = [ [ 233, 109, 77 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = true
+    relativeHeight = 0.5
+    relativeTo = 'bottomRightViewport'
+    relativeWidth = 0.5
+    relativeX = 0.5
+    relativeY = 0.5
+    scale = 8.0
+    scaleX = 8.0
+    scaleY = 8.0
+    separateScale = false
+    useRelativePosition = false
+    useRelativeSize = false
+    x = 71
+    y = 242
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieRight'
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieRight'
+    x = 0
+    y = 8
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieRight'
+    x = 0
+    y = 16
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieRight'
+    x = 0
+    y = 24
 
 [[mirror]]
 captureHeight = 7
 captureWidth = 26
 colorPassthrough = true
 colorSensitivity = 0.0010000000474974513
-colors = { border = [ 19, 56, 50 ], output = [ 243, 169, 78 ], targetColors = [ [ 77, 225, 202 ] ] }
-fps = 100
-input = [
-    { relativeTo = 'pieLeft', x = 0, y = 0 },
-    { relativeTo = 'pieLeft', x = 0, y = 8 },
-    { relativeTo = 'pieLeft', x = 0, y = 16 },
-    { relativeTo = 'pieLeft', x = 0, y = 24 }
-]
+fps = 60
 name = 'minecraft:mob_spawner left'
-onlyOnMyScreen = false
 opacity = 1.0
-output = { aspectFitMode = 'contain', preserveAspectRatio = true, relativeHeight = 0.056880518794059753, relativeTo = 'bottomRightViewport', relativeWidth = 0.095462493598461151, relativeX = 0.0, relativeY = 0.004999999888241291, scale = 6.0, scaleX = 1.0, scaleY = 1.0, separateScale = false, useRelativePosition = true, useRelativeSize = true, x = 0.0, y = 0.004999999888241291 }
 rawOutput = false
 
     [mirror.border]
@@ -189,23 +367,60 @@ rawOutput = false
     staticWidth = 0
     type = 'Dynamic'
 
+    [mirror.colors]
+    border = [ 19, 56, 50 ]
+    output = [ 255, 255, 255 ]
+    targetColors = [ [ 77, 225, 202 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = true
+    relativeHeight = 0.056880518794059753
+    relativeTo = 'bottomRightViewport'
+    relativeWidth = 0.095462493598461151
+    relativeX = 0.0
+    relativeY = 0.050999999046325684
+    scale = 6.0
+    scaleX = 1.0
+    scaleY = 1.0
+    separateScale = false
+    useRelativePosition = true
+    useRelativeSize = true
+    x = 0.0
+    y = 0.050999999046325684
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 8
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 16
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 24
+
 [[mirror]]
 captureHeight = 7
 captureWidth = 11
 colorPassthrough = false
-colorSensitivity = 0.001
-colors = { border = [ 90, 54, 14 ], output = [ 243, 169, 78 ], targetColors = [ [ 233, 109, 77 ] ] }
-fps = 100
-input = [
-    { relativeTo = 'pieLeft', x = 0, y = 0 },
-    { relativeTo = 'pieLeft', x = 0, y = 8 },
-    { relativeTo = 'pieLeft', x = 0, y = 16 },
-    { relativeTo = 'pieLeft', x = 0, y = 24 }
-]
+colorSensitivity = 0.0010000000474974513
+fps = 60
 name = 'blockentities left'
-onlyOnMyScreen = false
 opacity = 1.0
-output = { relativeTo = 'centerScreen', relativeX = 0.5, relativeY = 0.5, scale = 8.0, scaleX = 1.0, scaleY = 1.0, separateScale = false, useRelativePosition = false, x = 0, y = 0 }
 rawOutput = false
 
     [mirror.border]
@@ -219,24 +434,61 @@ rawOutput = false
     staticThickness = 2
     staticWidth = 0
     type = 'Dynamic'
+
+    [mirror.colors]
+    border = [ 90, 54, 14 ]
+    output = [ 243, 169, 78 ]
+    targetColors = [ [ 233, 109, 77 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = true
+    relativeHeight = 0.5
+    relativeTo = 'centerScreen'
+    relativeWidth = 0.5
+    relativeX = 0.5
+    relativeY = 0.5
+    scale = 8.0
+    scaleX = 1.0
+    scaleY = 1.0
+    separateScale = false
+    useRelativePosition = false
+    useRelativeSize = false
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 8
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 16
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 24
 
 [[mirror]]
 captureHeight = 7
 captureWidth = 11
 colorPassthrough = true
-colorSensitivity = 0.001
-colors = { border = [ 51, 88, 48 ], output = [ 0, 0, 0 ], targetColors = [ [ 69, 204, 101 ], [ 69, 203, 101 ] ] }
-fps = 100
-input = [
-    { relativeTo = 'pieLeft', x = 0, y = 0 },
-    { relativeTo = 'pieLeft', x = 0, y = 8 },
-    { relativeTo = 'pieLeft', x = 0, y = 16 },
-    { relativeTo = 'pieLeft', x = 0, y = 24 }
-]
+colorSensitivity = 0.0010000000474974513
+fps = 60
 name = 'unspecified left'
-onlyOnMyScreen = false
 opacity = 1.0
-output = { relativeTo = 'centerViewport', relativeX = 0.5, relativeY = 0.5, scale = 8.0, scaleX = 1.0, scaleY = 1.0, separateScale = false, useRelativePosition = false, x = 0, y = 0 }
 rawOutput = false
 
     [mirror.border]
@@ -250,19 +502,61 @@ rawOutput = false
     staticThickness = 2
     staticWidth = 0
     type = 'Dynamic'
+
+    [mirror.colors]
+    border = [ 51, 88, 48 ]
+    output = [ 255, 255, 255 ]
+    targetColors = [ [ 69, 204, 101 ], [ 69, 203, 101 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = true
+    relativeHeight = 0.5
+    relativeTo = 'centerViewport'
+    relativeWidth = 0.5
+    relativeX = 0.5
+    relativeY = 0.5
+    scale = 8.0
+    scaleX = 1.0
+    scaleY = 1.0
+    separateScale = false
+    useRelativePosition = false
+    useRelativeSize = false
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 8
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 16
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = 0
+    y = 24
 
 [[mirror]]
 captureHeight = 169
 captureWidth = 319
 colorPassthrough = true
-colorSensitivity = 0.001
-colors = { border = [ 35, 30, 37 ], output = [ 239, 187, 187 ], targetColors = [ [ 70, 206, 102 ], [ 236, 110, 78 ], [ 228, 70, 196 ], [ 204, 108, 70 ], [ 70, 76, 70 ] ] }
-fps = 100
-input = [ { relativeTo = 'pieLeft', x = -238, y = -180 } ]
+colorSensitivity = 0.0010000000474974513
+fps = 60
 name = 'Pie'
-onlyOnMyScreen = false
 opacity = 1.0
-output = { aspectFitMode = 'contain', preserveAspectRatio = true, relativeHeight = 0.0099999997764825821, relativeTo = 'centerViewport', relativeWidth = 0.64322918653488159, relativeX = 0.8913043737411499, relativeY = 0.02152777835726738, scale = 1.1399999856948853, scaleX = 0.75999999046325684, scaleY = 1.5, separateScale = true, useRelativePosition = false, useRelativeSize = true, x = 410, y = 31 }
 rawOutput = false
 
     [mirror.border]
@@ -277,14 +571,41 @@ rawOutput = false
     staticWidth = 238
     type = 'Dynamic'
 
+    [mirror.colors]
+    border = [ 35, 30, 37 ]
+    output = [ 239, 187, 187 ]
+    targetColors = [ [ 70, 206, 102 ], [ 236, 110, 78 ], [ 228, 70, 196 ], [ 204, 108, 70 ], [ 70, 76, 70 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = true
+    relativeHeight = 0.019768284633755684
+    relativeTo = 'centerViewport'
+    relativeWidth = 0.1102173924446106
+    relativeX = 0.8913043737411499
+    relativeY = 0.02152777835726738
+    scale = 1.0
+    scaleX = 1.0
+    scaleY = 1.0
+    separateScale = false
+    useRelativePosition = false
+    useRelativeSize = false
+    x = 410
+    y = 31
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = -238
+    y = -180
+
 [[mirror]]
 captureHeight = 8
 captureWidth = 14
 colorPassthrough = true
 colorSensitivity = 0.00030000001424923539
-fps = 100
+fps = 60
 name = 'tick key'
-onlyOnMyScreen = false
 opacity = 1.0
 rawOutput = false
 
@@ -381,9 +702,8 @@ captureHeight = 8
 captureWidth = 14
 colorPassthrough = true
 colorSensitivity = 0.0032999999821186066
-fps = 100
+fps = 60
 name = 'level key'
-onlyOnMyScreen = false
 opacity = 1.0
 rawOutput = false
 
@@ -480,9 +800,8 @@ captureHeight = 8
 captureWidth = 14
 colorPassthrough = true
 colorSensitivity = 0.00030000001424923539
-fps = 100
+fps = 60
 name = 'entities key'
-onlyOnMyScreen = false
 opacity = 1.0
 rawOutput = false
 
@@ -533,13 +852,13 @@ rawOutput = false
     y = 8
 
     [[mirror.input]]
-    enabled = false
+    enabled = true
     relativeTo = 'pieLeft'
     x = -238
     y = 16
 
     [[mirror.input]]
-    enabled = false
+    enabled = true
     relativeTo = 'pieLeft'
     x = -238
     y = 24
@@ -579,9 +898,8 @@ captureHeight = 8
 captureWidth = 14
 colorPassthrough = true
 colorSensitivity = 0.00030000001424923539
-fps = 100
+fps = 60
 name = 'blockEntities key'
-onlyOnMyScreen = false
 opacity = 1.0
 rawOutput = false
 
@@ -678,9 +996,8 @@ captureHeight = 8
 captureWidth = 14
 colorPassthrough = true
 colorSensitivity = 0.00030000001424923539
-fps = 100
+fps = 60
 name = 'gameRenderer key'
-onlyOnMyScreen = false
 opacity = 1.0
 rawOutput = false
 
@@ -772,14 +1089,147 @@ rawOutput = false
     x = -238
     y = 64
 
+[[mirror]]
+captureHeight = 8
+captureWidth = 14
+colorPassthrough = true
+colorSensitivity = 0.00030000001424923539
+fps = 60
+name = 'minecraft:mob_spawner key'
+opacity = 1.0
+rawOutput = false
+
+    [mirror.border]
+    dynamicThickness = 1
+    staticColor = [ 255, 255, 255 ]
+    staticHeight = 0
+    staticOffsetX = 0
+    staticOffsetY = 0
+    staticRadius = 0
+    staticShape = 'Rectangle'
+    staticThickness = 0
+    staticWidth = 0
+    type = 'Dynamic'
+
+    [mirror.colors]
+    border = [ 0, 0, 0 ]
+    output = [ 0, 0, 0 ]
+    targetColors = [ [ 77, 225, 202 ], [ 19, 56, 50 ] ]
+
+    [mirror.output]
+    aspectFitMode = 'contain'
+    preserveAspectRatio = true
+    relativeHeight = 0.5
+    relativeTo = 'centerScreen'
+    relativeWidth = 0.5
+    relativeX = 0.12812499701976776
+    relativeY = -0.068790733814239502
+    scale = 1.0
+    scaleX = 1.0
+    scaleY = 1.0
+    separateScale = false
+    useRelativePosition = false
+    useRelativeSize = false
+    x = 0
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 0
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 8
+
+    [[mirror.input]]
+    enabled = true
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 16
+
+    [[mirror.input]]
+    enabled = false
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 24
+
+    [[mirror.input]]
+    enabled = false
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 32
+
+    [[mirror.input]]
+    enabled = false
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 40
+
+    [[mirror.input]]
+    enabled = false
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 48
+
+    [[mirror.input]]
+    enabled = false
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 56
+
+    [[mirror.input]]
+    enabled = false
+    relativeTo = 'pieLeft'
+    x = -238
+    y = 64
+
 [[mirrorGroup]]
-mirrors = [
-    { enabled = true, heightPercent = 1.4700000286102295, mirrorId = 'Pie', offsetX = 360, offsetY = 0, widthPercent = 1.5900000333786011 },
-    { enabled = true, heightPercent = 1.0, mirrorId = 'blockentities left', offsetX = 590, offsetY = -46, widthPercent = 1.0 },
-    { enabled = true, heightPercent = 1.0, mirrorId = 'unspecified left', offsetX = 590, offsetY = 26, widthPercent = 1.0 }
-]
 name = 'Preemptive Pie'
-output = { aspectFitMode = 'fitHeight', preserveAspectRatio = true, relativeHeight = 0.18437500298023224, relativeTo = 'middleLeftScreen', relativeWidth = 0.54026085138320923, relativeX = 0.48900002241134644, relativeY = 0.0, scale = 1.0, scaleX = 1.0, scaleY = 1.0, separateScale = false, useRelativePosition = true, useRelativeSize = false, x = 0.48900002241134644, y = 0.0 }
+
+    [mirrorGroup.output]
+    aspectFitMode = 'fitHeight'
+    preserveAspectRatio = true
+    relativeHeight = 0.18437500298023224
+    relativeTo = 'middleLeftScreen'
+    relativeWidth = 0.54026085138320923
+    relativeX = 0.60000002384185791
+    relativeY = 0.0
+    scale = 1.25
+    scaleX = 1.25
+    scaleY = 1.25
+    separateScale = false
+    useRelativePosition = true
+    useRelativeSize = false
+    x = 0.60000002384185791
+    y = 0.0
+
+    [[mirrorGroup.mirrors]]
+    enabled = true
+    heightPercent = 1.7999999523162842
+    mirrorId = 'Pie'
+    offsetX = 360
+    offsetY = 0
+    widthPercent = 1.0
+
+    [[mirrorGroup.mirrors]]
+    enabled = true
+    heightPercent = 1.0
+    mirrorId = 'blockentities left'
+    offsetX = 533
+    offsetY = 61
+    widthPercent = 1.0
+
+    [[mirrorGroup.mirrors]]
+    enabled = true
+    heightPercent = 1.0
+    mirrorId = 'unspecified left'
+    offsetX = 533
+    offsetY = 149
+    widthPercent = 1.0
 
 [[mirrorGroup]]
 name = 'root.tick.level.entities.blockEntities'
@@ -833,6 +1283,14 @@ name = 'root.tick.level.entities.blockEntities'
     offsetY = 0
     widthPercent = 1.0
 
+    [[mirrorGroup.mirrors]]
+    enabled = true
+    heightPercent = 1.0
+    mirrorId = 'minecraft:mob_spawner key'
+    offsetX = 0
+    offsetY = 0
+    widthPercent = 1.0
+
 [[mirrorGroup]]
 name = 'root.gameRenderer.level'
 
@@ -878,10 +1336,8 @@ name = 'root.gameRenderer.level'
     widthPercent = 1.0
 
 [[mode]]
-border = { color = [ 255, 255, 255 ], enabled = false, radius = 0, width = 4 }
 height = 1.0
 id = 'Fullscreen'
-imageIds = []
 mirrorGroupIds = [ 'root.tick.level.entities.blockEntities', 'root.gameRenderer.level' ]
 mirrorIds = [ 'Mapless', 'minecraft:mob_spawner left' ]
 modeSensitivity = 1.0
@@ -892,27 +1348,10 @@ relativeHeight = 1.0
 relativeWidth = 1.0
 sensitivityOverrideEnabled = false
 separateXYSensitivity = false
-stretch = { enabled = true, height = 1440, width = 2560, x = 0, y = 0 }
 useRelativeSize = true
 width = 1.0
-windowOverlayIds = []
 x = 0
 y = 0
-
-    [mode.transition]
-    gameTransition = 'Bounce'
-    overlayTransition = 'Cut'
-    backgroundTransition = 'Cut'
-    transitionDurationMs = 300
-    easeInPower = 1.0
-    easeOutPower = 3.0
-    bounceCount = 0
-    bounceIntensity = 0.15
-    bounceDurationMs = 150
-    relativeStretching = false
-    skipAnimateX = false
-    skipAnimateY = false
-    slideMirrorsIn = true
 
     [mode.background]
     color = [ 0, 0, 0 ]
@@ -939,39 +1378,49 @@ y = 0
         color = [ 0, 0, 0 ]
         position = 0.029999999329447746
 
+    [mode.border]
+    color = [ 255, 255, 255 ]
+    enabled = false
+    radius = 0
+    width = 4
+
+    [[mode.layers]]
+    enabled = true
+    id = 'Mapless'
+    type = 'mirror'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'minecraft:mob_spawner left'
+    type = 'mirror'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'root.tick.level.entities.blockEntities'
+    type = 'group'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'root.gameRenderer.level'
+    type = 'group'
+
 [[mode]]
-border = { color = [ 35, 30, 37 ], enabled = true, radius = 0, width = 2 }
 height = 16384
 id = 'EyeZoom'
-imageIds = []
 mirrorGroupIds = [ 'Preemptive Pie' ]
 mirrorIds = [ 'E Counter' ]
 modeSensitivity = 1.0
 modeSensitivityX = 1.0
 modeSensitivityY = 1.0
 positionPreset = 'centerScreen'
+relativeHeight = 0.5
+relativeWidth = 0.5
 sensitivityOverrideEnabled = false
 separateXYSensitivity = false
-stretch = { enabled = false, height = 0, width = 0, x = 0, y = 0 }
+useRelativeSize = false
 width = 384
-windowOverlayIds = []
 x = 0
 y = 0
-
-    [mode.transition]
-    gameTransition = 'Bounce'
-    overlayTransition = 'Cut'
-    backgroundTransition = 'Cut'
-    transitionDurationMs = 300
-    easeInPower = 1.0
-    easeOutPower = 3.0
-    bounceCount = 0
-    bounceIntensity = 0.15
-    bounceDurationMs = 150
-    relativeStretching = false
-    skipAnimateX = false
-    skipAnimateY = true
-    slideMirrorsIn = true
 
     [mode.background]
     color = [ 0, 0, 0 ]
@@ -998,39 +1447,39 @@ y = 0
         color = [ 0, 0, 0 ]
         position = 0.029999999329447746
 
+    [mode.border]
+    color = [ 35, 30, 37 ]
+    enabled = true
+    radius = 0
+    width = 2
+
+    [[mode.layers]]
+    enabled = true
+    id = 'E Counter'
+    type = 'mirror'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'Preemptive Pie'
+    type = 'group'
+
 [[mode]]
-border = { color = [ 35, 30, 37 ], enabled = true, radius = 0, width = 2 }
 height = 16384
 id = 'Preemptive'
-imageIds = []
 mirrorGroupIds = [ 'Preemptive Pie' ]
 mirrorIds = [ 'E Counter' ]
 modeSensitivity = 1.0
 modeSensitivityX = 1.0
 modeSensitivityY = 1.0
 positionPreset = 'centerScreen'
+relativeHeight = 0.5
+relativeWidth = 0.5
 sensitivityOverrideEnabled = false
 separateXYSensitivity = false
-stretch = { enabled = false, height = 0, width = 0, x = 0, y = 0 }
+useRelativeSize = false
 width = 384
-windowOverlayIds = []
 x = 0
 y = 0
-
-    [mode.transition]
-    gameTransition = 'Bounce'
-    overlayTransition = 'Cut'
-    backgroundTransition = 'Cut'
-    transitionDurationMs = 300
-    easeInPower = 1.0
-    easeOutPower = 3.0
-    bounceCount = 0
-    bounceIntensity = 0.15
-    bounceDurationMs = 150
-    relativeStretching = false
-    skipAnimateX = false
-    skipAnimateY = true
-    slideMirrorsIn = true
 
     [mode.background]
     color = [ 0, 0, 0 ]
@@ -1057,11 +1506,25 @@ y = 0
         color = [ 0, 0, 0 ]
         position = 0.029999999329447746
 
+    [mode.border]
+    color = [ 35, 30, 37 ]
+    enabled = true
+    radius = 0
+    width = 2
+
+    [[mode.layers]]
+    enabled = true
+    id = 'E Counter'
+    type = 'mirror'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'Preemptive Pie'
+    type = 'group'
+
 [[mode]]
-border = { color = [ 35, 30, 37 ], enabled = true, radius = 0, width = 2 }
 height = 1.0
 id = 'Thin'
-imageIds = []
 mirrorGroupIds = [ 'Preemptive Pie' ]
 mirrorIds = [ 'Mapless', 'E Counter' ]
 modeSensitivity = 1.0
@@ -1072,27 +1535,10 @@ relativeHeight = 1.0
 relativeWidth = 0.18000000715255737
 sensitivityOverrideEnabled = false
 separateXYSensitivity = false
-stretch = { enabled = false, height = 0, width = 0, x = 0, y = 0 }
 useRelativeSize = true
 width = 0.18000000715255737
-windowOverlayIds = []
 x = 0
 y = 0
-
-    [mode.transition]
-    gameTransition = 'Bounce'
-    overlayTransition = 'Cut'
-    backgroundTransition = 'Cut'
-    transitionDurationMs = 300
-    easeInPower = 1.0
-    easeOutPower = 3.0
-    bounceCount = 0
-    bounceIntensity = 0.02
-    bounceDurationMs = 200
-    relativeStretching = false
-    skipAnimateX = false
-    skipAnimateY = false
-    slideMirrorsIn = true
 
     [mode.background]
     color = [ 0, 0, 0 ]
@@ -1119,11 +1565,30 @@ y = 0
         color = [ 0, 0, 0 ]
         position = 0.029999999329447746
 
+    [mode.border]
+    color = [ 35, 30, 37 ]
+    enabled = true
+    radius = 0
+    width = 2
+
+    [[mode.layers]]
+    enabled = true
+    id = 'Mapless'
+    type = 'mirror'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'E Counter'
+    type = 'mirror'
+
+    [[mode.layers]]
+    enabled = true
+    id = 'Preemptive Pie'
+    type = 'group'
+
 [[mode]]
-border = { color = [ 35, 30, 37 ], enabled = true, radius = 0, width = 2 }
 height = 0.25
 id = 'Wide'
-imageIds = []
 mirrorGroupIds = []
 mirrorIds = []
 modeSensitivity = 1.0
@@ -1134,27 +1599,10 @@ relativeHeight = 0.25
 relativeWidth = 1.0
 sensitivityOverrideEnabled = false
 separateXYSensitivity = false
-stretch = { enabled = false, height = 0, width = 0, x = 0, y = 0 }
 useRelativeSize = true
 width = 1.0
-windowOverlayIds = []
 x = 0
 y = 0
-
-    [mode.transition]
-    gameTransition = 'Bounce'
-    overlayTransition = 'Cut'
-    backgroundTransition = 'Cut'
-    transitionDurationMs = 300
-    easeInPower = 1.0
-    easeOutPower = 3.0
-    bounceCount = 0
-    bounceIntensity = 0.15
-    bounceDurationMs = 150
-    relativeStretching = false
-    skipAnimateX = false
-    skipAnimateY = false
-    slideMirrorsIn = true
 
     [mode.background]
     color = [ 0, 0, 0 ]
@@ -1180,4 +1628,10 @@ y = 0
         [[mode.background.gradientStops]]
         color = [ 0, 0, 0 ]
         position = 0.029999999329447746
+
+    [mode.border]
+    color = [ 35, 30, 37 ]
+    enabled = true
+    radius = 0
+    width = 2
 )TSRB"
