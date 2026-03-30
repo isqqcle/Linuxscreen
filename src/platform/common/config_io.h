@@ -21,6 +21,7 @@ std::string ResolvePathFromConfigDir(const std::string& path);
 std::string NormalizePathForConfig(const std::string& path);
 
 LinuxscreenConfig LoadLinuxscreenConfig();
+LinuxscreenConfig LoadEmbeddedDefaultConfig();
 
 void SaveLinuxscreenConfig(const LinuxscreenConfig& cfg);
 

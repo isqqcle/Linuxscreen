@@ -22,6 +22,11 @@ enum class MirrorDirectEditSelectionKind {
     Group = 3,
 };
 
+enum class MirrorsMainEditorTab {
+    Mirrors = 0,
+    Groups = 1,
+};
+
 struct MirrorEditorState {
     struct WaylandSelectionTask {
         bool inFlight = false;
@@ -94,6 +99,9 @@ struct MirrorEditorState {
     bool directEditShowCaptureGuides = true;
     int directEditSelectedCaptureZoneIndex = 0;
     bool directEditShowGroupInspector = false;
+    MirrorsMainEditorTab mainEditorTab = MirrorsMainEditorTab::Mirrors;
+    bool openMirrorPresetPopup = false;
+    std::string mirrorPresetStatusMessage;
     int groupListSelectionIndex = 0;
     int selectedGroupIndex = -1;
     char groupNameBuffer[256] = {};

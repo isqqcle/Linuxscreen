@@ -145,4 +145,19 @@ LinuxscreenConfig LoadDefaultConfig() {
     }
 }
 
+LinuxscreenConfig LoadEmbeddedDefaultConfigImpl() {
+    try {
+        LinuxscreenConfig cfg = LinuxscreenConfigFromToml(toml::parse(kEmbeddedDefaultConfigToml));
+        if (cfg.guiFontPath.empty()) {
+            cfg.guiFontPath = PickDefaultGuiFont();
+        }
+        return cfg;
+    } catch (const std::exception& e) {
+        LogWarning("Failed to parse embedded preset config: %s", e.what());
+        LinuxscreenConfig cfg;
+        cfg.configVersion = 1;
+        return cfg;
+    }
+}
+
 std::string GetConfigPathInternal();

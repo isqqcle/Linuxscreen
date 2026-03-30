@@ -341,52 +341,24 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         mirror.output.scaleY = uniformScale;
     };
 
-    auto makeUniqueMirrorCopyName = [&](const std::string& sourceName) {
-        const std::string stem = sourceName.empty() ? "Mirror" : sourceName;
-        const std::string baseCopyName = stem + " (Copy)";
-        std::string candidate = baseCopyName;
-        int suffix = 2;
-        auto exists = [&](const std::string& name) {
-            for (const auto& mirror : config.mirrors) {
-                if (mirror.name == name) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        while (exists(candidate)) {
-            candidate = stem + " (Copy " + std::to_string(suffix) + ")";
-            ++suffix;
-        }
-        return candidate;
-    };
-
-    auto makeUniqueGroupCopyName = [&](const std::string& sourceName) {
-        const std::string stem = sourceName.empty() ? "Group" : sourceName;
-        const std::string baseCopyName = stem + " (Copy)";
-        std::string candidate = baseCopyName;
-        int suffix = 2;
-        auto exists = [&](const std::string& name) {
-            for (const auto& group : config.mirrorGroups) {
-                if (group.name == name) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        while (exists(candidate)) {
-            candidate = stem + " (Copy " + std::to_string(suffix) + ")";
-            ++suffix;
-        }
-        return candidate;
-    };
-
     int mirrorToRemove = -1;
     int mirrorToDuplicate = -1;
     int groupToRemove = -1;
     int groupToDuplicate = -1;
     int& s_selectedMirrorIndex = g_mirrorEditorState.mirrorListSelectionIndex;
     int& s_selectedGroupIndex = g_mirrorEditorState.groupListSelectionIndex;
+
+    auto resetMirrorEditorState = [&]() {
+        g_mirrorEditorState.selectedMirrorIndex = -1;
+        g_mirrorEditorState.nameBuffer[0] = '\0';
+        g_mirrorEditorState.mirrorNameError.clear();
+    };
+
+    auto resetGroupEditorState = [&]() {
+        g_mirrorEditorState.selectedGroupIndex = -1;
+        g_mirrorEditorState.groupNameBuffer[0] = '\0';
+        g_mirrorEditorState.groupNameError.clear();
+    };
 
     auto addNewMirror = [&]() {
         platform::config::MirrorConfig newMirror;
@@ -401,9 +373,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         newMirror.input.push_back(newZone);
         config.mirrors.push_back(std::move(newMirror));
         s_selectedMirrorIndex = static_cast<int>(config.mirrors.size()) - 1;
-        g_mirrorEditorState.selectedMirrorIndex = -1;
-        g_mirrorEditorState.nameBuffer[0] = '\0';
-        g_mirrorEditorState.mirrorNameError.clear();
+        resetMirrorEditorState();
         AutoSaveConfig(config);
     };
 
@@ -413,16 +383,17 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         grp.output.relativeTo = "centerViewport";
         config.mirrorGroups.push_back(grp);
         s_selectedGroupIndex = static_cast<int>(config.mirrorGroups.size()) - 1;
-        g_mirrorEditorState.selectedGroupIndex = -1;
-        g_mirrorEditorState.groupNameBuffer[0] = '\0';
-        g_mirrorEditorState.groupNameError.clear();
+        resetGroupEditorState();
         AutoSaveConfig(config);
     };
 
     const ImGuiTableFlags splitPaneFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV;
 
     if (ImGui::BeginTabBar("##mirrors_split_panes")) {
-        if (ImGui::BeginTabItem("Mirrors")) {
+        const ImGuiTabItemFlags mirrorsTabFlags =
+            g_mirrorEditorState.mainEditorTab == MirrorsMainEditorTab::Mirrors ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Mirrors", nullptr, mirrorsTabFlags)) {
+            g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Mirrors;
             ImGui::Separator();
 
             if (!config.mirrors.empty()) {
@@ -488,6 +459,112 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
                 if (!hasMirrorSelection) {
                     ImGui::EndDisabled();
+                }
+
+                ImGui::SameLine();
+                const float presetsButtonWidth = std::max(72.0f, ImGui::GetContentRegionAvail().x);
+                if (AnimatedButton("Presets##mirror_sidebar_presets", ImVec2(presetsButtonWidth, 0.0f))) {
+                    g_mirrorEditorState.openMirrorPresetPopup = true;
+                    g_mirrorEditorState.mirrorPresetStatusMessage.clear();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Import preset mirrors or groups");
+                }
+
+                if (g_mirrorEditorState.openMirrorPresetPopup) {
+                    ImGui::OpenPopup("##mirror_presets_popup");
+                    g_mirrorEditorState.openMirrorPresetPopup = false;
+                }
+
+                if (ImGui::BeginPopup("##mirror_presets_popup")) {
+                    const platform::config::LinuxscreenConfig presetConfig = platform::config::LoadEmbeddedDefaultConfig();
+
+                    ImGui::TextUnformatted("Mirror Presets");
+                    ImGui::Separator();
+                    if (presetConfig.mirrors.empty()) {
+                        ImGui::TextDisabled("No mirror presets available");
+                    } else {
+                        for (std::size_t presetMirrorIndex = 0; presetMirrorIndex < presetConfig.mirrors.size(); ++presetMirrorIndex) {
+                            const auto& presetMirror = presetConfig.mirrors[presetMirrorIndex];
+                            const std::string label = presetMirror.name.empty() ? "[Unnamed Mirror]" : presetMirror.name;
+                            const std::string itemId = label + "##mirror_preset_" + std::to_string(presetMirrorIndex);
+                            if (ImGui::Selectable(itemId.c_str())) {
+                                int importedMirrorIndex = -1;
+                                if (platform::config::TryImportMirrorPreset(config,
+                                                                            presetConfig,
+                                                                            presetMirror.name,
+                                                                            importedMirrorIndex)) {
+                                    s_selectedMirrorIndex = importedMirrorIndex;
+                                    resetMirrorEditorState();
+                                    g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Mirrors;
+                                    g_mirrorEditorState.mirrorPresetStatusMessage.clear();
+                                    AutoSaveConfig(config);
+                                    ImGui::CloseCurrentPopup();
+                                } else {
+                                    g_mirrorEditorState.mirrorPresetStatusMessage =
+                                        "Could not import preset mirror.";
+                                }
+                            }
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Group Presets");
+                    ImGui::Separator();
+                    if (presetConfig.mirrorGroups.empty()) {
+                        ImGui::TextDisabled("No group presets available");
+                    } else {
+                        for (std::size_t presetGroupIndex = 0; presetGroupIndex < presetConfig.mirrorGroups.size(); ++presetGroupIndex) {
+                            const auto& presetGroup = presetConfig.mirrorGroups[presetGroupIndex];
+                            const std::string label = presetGroup.name.empty() ? "[Unnamed Group]" : presetGroup.name;
+                            const std::string itemId = label + "##group_preset_" + std::to_string(presetGroupIndex);
+                            if (ImGui::Selectable(itemId.c_str())) {
+                                int importedGroupIndex = -1;
+                                std::vector<int> importedMirrorIndices;
+                                if (platform::config::TryImportGroupPreset(config,
+                                                                           presetConfig,
+                                                                           presetGroup.name,
+                                                                           importedGroupIndex,
+                                                                           importedMirrorIndices)) {
+                                    s_selectedGroupIndex = importedGroupIndex;
+                                    resetGroupEditorState();
+                                    g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Groups;
+                                    g_mirrorEditorState.mirrorPresetStatusMessage.clear();
+                                    AutoSaveConfig(config);
+                                    ImGui::CloseCurrentPopup();
+                                } else {
+                                    std::string missingMirrorName;
+                                    for (const auto& item : presetGroup.mirrors) {
+                                        const bool foundPresetMirror = std::any_of(presetConfig.mirrors.begin(),
+                                                                                   presetConfig.mirrors.end(),
+                                                                                   [&](const auto& presetMirror) {
+                                                                                       return presetMirror.name == item.mirrorId;
+                                                                                   });
+                                        if (!foundPresetMirror) {
+                                            missingMirrorName = item.mirrorId;
+                                            break;
+                                        }
+                                    }
+                                    if (!missingMirrorName.empty()) {
+                                        g_mirrorEditorState.mirrorPresetStatusMessage =
+                                            "Could not import preset group: missing preset mirror '" + missingMirrorName + "'";
+                                    } else {
+                                        g_mirrorEditorState.mirrorPresetStatusMessage =
+                                            "Could not import preset group.";
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!g_mirrorEditorState.mirrorPresetStatusMessage.empty()) {
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                                           "%s",
+                                           g_mirrorEditorState.mirrorPresetStatusMessage.c_str());
+                    }
+
+                    ImGui::EndPopup();
                 }
 
                 if (ImGui::BeginPopupModal("##del_mir", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1156,7 +1233,10 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("Mirror Groups")) {
+        const ImGuiTabItemFlags groupsTabFlags =
+            g_mirrorEditorState.mainEditorTab == MirrorsMainEditorTab::Groups ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Mirror Groups", nullptr, groupsTabFlags)) {
+            g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Groups;
             ImGui::Separator();
 
             if (!config.mirrorGroups.empty()) {
@@ -1264,7 +1344,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
     if (mirrorToDuplicate != -1 && mirrorToDuplicate < static_cast<int>(config.mirrors.size())) {
         const auto sourceIndex = static_cast<size_t>(mirrorToDuplicate);
         platform::config::MirrorConfig duplicate = config.mirrors[sourceIndex];
-        duplicate.name = makeUniqueMirrorCopyName(duplicate.name);
+        duplicate.name = platform::config::MakeUniqueMirrorCopyName(config, duplicate.name);
         config.mirrors.insert(config.mirrors.begin() + sourceIndex + 1, std::move(duplicate));
         s_selectedMirrorIndex = static_cast<int>(sourceIndex + 1);
         AutoSaveConfig(config);
@@ -1290,7 +1370,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
     if (groupToDuplicate != -1 && groupToDuplicate < static_cast<int>(config.mirrorGroups.size())) {
         const auto sourceIndex = static_cast<size_t>(groupToDuplicate);
         platform::config::MirrorGroupConfig duplicate = config.mirrorGroups[sourceIndex];
-        duplicate.name = makeUniqueGroupCopyName(duplicate.name);
+        duplicate.name = platform::config::MakeUniqueGroupCopyName(config, duplicate.name);
         config.mirrorGroups.insert(config.mirrorGroups.begin() + sourceIndex + 1, std::move(duplicate));
         s_selectedGroupIndex = static_cast<int>(sourceIndex + 1);
         AutoSaveConfig(config);

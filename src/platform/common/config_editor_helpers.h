@@ -44,4 +44,16 @@ void RemoveMirrorReferences(LinuxscreenConfig& config, const std::string& mirror
 void RenameModeInHotkeys(LinuxscreenConfig& config, const std::string& oldName, const std::string& newName);
 void RemoveModeFromHotkeys(LinuxscreenConfig& config, const std::string& modeName);
 
+std::string MakeUniqueMirrorCopyName(const LinuxscreenConfig& config, const std::string& sourceName);
+std::string MakeUniqueGroupCopyName(const LinuxscreenConfig& config, const std::string& sourceName);
+bool TryImportMirrorPreset(LinuxscreenConfig& target,
+                           const LinuxscreenConfig& presetSource,
+                           const std::string& mirrorName,
+                           int& outImportedMirrorIndex);
+bool TryImportGroupPreset(LinuxscreenConfig& target,
+                          const LinuxscreenConfig& presetSource,
+                          const std::string& groupName,
+                          int& outImportedGroupIndex,
+                          std::vector<int>& outImportedMirrorIndices);
+
 } // namespace platform::config
