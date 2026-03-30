@@ -26,6 +26,9 @@ void AddGroupToMode(ModeConfig& mode, const std::string& groupId);
 void RemoveGroupFromMode(ModeConfig& mode, const std::string& groupId);
 
 std::vector<std::string> GetModesContainingMirror(const LinuxscreenConfig& config, const std::string& mirrorId);
+std::vector<std::string> GetModesContainingMirrorDirect(const LinuxscreenConfig& config, const std::string& mirrorId);
+std::vector<std::string> GetModesContainingGroup(const LinuxscreenConfig& config, const std::string& groupId);
+std::vector<std::string> GetGroupsContainingMirror(const LinuxscreenConfig& config, const std::string& mirrorId);
 
 ModeConfig CreateNewMode(const std::string& name);
 

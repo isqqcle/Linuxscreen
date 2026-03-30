@@ -683,6 +683,26 @@ struct MirrorShaderPrograms {
     bool ready = false;
 };
 
+constexpr float kMirrorOutputScaleMin = 0.01f;
+constexpr float kMirrorOutputScaleMax = 100.0f;
+
+float ClampMirrorOutputScale(float scale) {
+    return std::clamp(scale, kMirrorOutputScaleMin, kMirrorOutputScaleMax);
+}
+
+std::string BuildResolvedMirrorInstanceKey(const ResolvedMirrorRender& resolved) {
+    std::string key = resolved.sourceMirrorId.empty() ? resolved.config.name : resolved.sourceMirrorId;
+    key += "|";
+    key += std::to_string(static_cast<int>(resolved.sourceKind));
+    if (resolved.sourceKind == ResolvedMirrorSourceKind::GroupItem) {
+        key += "|";
+        key += resolved.sourceGroupId;
+        key += "|";
+        key += std::to_string(resolved.sourceGroupItemIndex);
+    }
+    return key;
+}
+
 struct X11MirrorInstance {
     GLuint filterFbo = 0;
     GLuint filterTexture = 0;

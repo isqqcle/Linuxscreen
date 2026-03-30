@@ -149,23 +149,25 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         return DrawRelativeToCombo(label, relativeTo);
     };
 
+    const platform::config::ModeConfig* activeModeConfig = nullptr;
+    int activeModeViewportX = 0;
+    int activeModeViewportY = 0;
     int activeModeViewportWidth = static_cast<int>(displayWidth);
     int activeModeViewportHeight = static_cast<int>(displayHeight);
     bool hasActiveModeViewport = false;
     if (hasValidDisplaySize) {
         const std::string activeModeName = GetMirrorModeState().GetActiveModeName();
-        const platform::config::ModeConfig* activeMode = nullptr;
         for (const auto& mode : config.modes) {
             if (mode.name == activeModeName) {
-                activeMode = &mode;
+                activeModeConfig = &mode;
                 break;
             }
         }
 
-        if (activeMode) {
+        if (activeModeConfig) {
             int modeWidth = 0;
             int modeHeight = 0;
-            platform::x11::MirrorModeState::CalculateModeDimensions(*activeMode,
+            platform::x11::MirrorModeState::CalculateModeDimensions(*activeModeConfig,
                                                                      static_cast<int>(displayWidth),
                                                                      static_cast<int>(displayHeight),
                                                                      modeWidth,
@@ -174,6 +176,21 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                 hasActiveModeViewport = true;
                 activeModeViewportWidth = modeWidth;
                 activeModeViewportHeight = modeHeight;
+                std::string anchorPreset = activeModeConfig->positionPreset.empty()
+                    ? "topLeftScreen"
+                    : activeModeConfig->positionPreset;
+                if (anchorPreset == "custom") {
+                    anchorPreset = "topLeftScreen";
+                }
+                platform::config::GetRelativeCoords(anchorPreset,
+                                                    activeModeConfig->x,
+                                                    activeModeConfig->y,
+                                                    modeWidth,
+                                                    modeHeight,
+                                                    static_cast<int>(displayWidth),
+                                                    static_cast<int>(displayHeight),
+                                                    activeModeViewportX,
+                                                    activeModeViewportY);
             }
         }
     }
@@ -250,109 +267,6 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         }
     };
 
-    auto updateGroupRelativeSizeFromScale = [&](platform::config::MirrorGroupConfig& group) {
-        float containerWidth = 0.0f;
-        float containerHeight = 0.0f;
-        if (!resolveOutputContainerSize(group.output, containerWidth, containerHeight)) {
-            return;
-        }
-
-        const platform::config::MirrorGroupItem* firstEnabledItem = nullptr;
-        const platform::config::MirrorConfig* itemMirror = nullptr;
-        for (const auto& item : group.mirrors) {
-            if (!item.enabled) {
-                continue;
-            }
-            const platform::config::MirrorConfig* resolvedMirror = nullptr;
-            for (const auto& mirror : config.mirrors) {
-                if (mirror.name == item.mirrorId) {
-                    resolvedMirror = &mirror;
-                    break;
-                }
-            }
-            if (!resolvedMirror) {
-                continue;
-            }
-            firstEnabledItem = &item;
-            itemMirror = resolvedMirror;
-            break;
-        }
-        if (!firstEnabledItem || !itemMirror) {
-            return;
-        }
-
-        const float mirrorScaleX = itemMirror->output.separateScale ? itemMirror->output.scaleX : itemMirror->output.scale;
-        const float mirrorScaleY = itemMirror->output.separateScale ? itemMirror->output.scaleY : itemMirror->output.scale;
-        const int border = platform::config::GetMirrorDynamicBorderPadding(itemMirror->border);
-        const float baseWidth = static_cast<float>(itemMirror->captureWidth + (2 * border));
-        const float baseHeight = static_cast<float>(itemMirror->captureHeight + (2 * border));
-        if (!(baseWidth > 0.0f) || !(baseHeight > 0.0f)) {
-            return;
-        }
-
-        const float outputWidth = baseWidth * mirrorScaleX * group.output.scale * firstEnabledItem->widthPercent;
-        const float outputHeight = baseHeight * mirrorScaleY * group.output.scale * firstEnabledItem->heightPercent;
-        group.output.relativeWidth = std::clamp(outputWidth / containerWidth, 0.01f, 20.0f);
-        group.output.relativeHeight = std::clamp(outputHeight / containerHeight, 0.01f, 20.0f);
-    };
-
-    auto updateGroupScaleFromRelativeSize = [&](platform::config::MirrorGroupConfig& group) {
-        float containerWidth = 0.0f;
-        float containerHeight = 0.0f;
-        if (!resolveOutputContainerSize(group.output, containerWidth, containerHeight)) {
-            return;
-        }
-
-        const platform::config::MirrorGroupItem* firstEnabledItem = nullptr;
-        const platform::config::MirrorConfig* itemMirror = nullptr;
-        for (const auto& item : group.mirrors) {
-            if (!item.enabled) {
-                continue;
-            }
-            const platform::config::MirrorConfig* resolvedMirror = nullptr;
-            for (const auto& mirror : config.mirrors) {
-                if (mirror.name == item.mirrorId) {
-                    resolvedMirror = &mirror;
-                    break;
-                }
-            }
-            if (!resolvedMirror) {
-                continue;
-            }
-            firstEnabledItem = &item;
-            itemMirror = resolvedMirror;
-            break;
-        }
-        if (!firstEnabledItem || !itemMirror) {
-            return;
-        }
-
-        const int border = platform::config::GetMirrorDynamicBorderPadding(itemMirror->border);
-        const float baseWidth = static_cast<float>(itemMirror->captureWidth + (2 * border));
-        const float baseHeight = static_cast<float>(itemMirror->captureHeight + (2 * border));
-        const float itemWidthPercent = std::max(0.0001f, firstEnabledItem->widthPercent);
-        const float itemHeightPercent = std::max(0.0001f, firstEnabledItem->heightPercent);
-
-        const float scaleX = std::clamp((containerWidth * group.output.relativeWidth * itemWidthPercent) / baseWidth, 0.01f, 20.0f);
-        const float scaleY = std::clamp((containerHeight * group.output.relativeHeight * itemHeightPercent) / baseHeight, 0.01f, 20.0f);
-        if (group.output.preserveAspectRatio) {
-            const float uniformScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
-                                                                               scaleY,
-                                                                               NormalizeAspectFitMode(group.output.aspectFitMode)),
-                                                  0.01f,
-                                                  20.0f);
-            group.output.separateScale = false;
-            group.output.scale = uniformScale;
-            group.output.scaleX = uniformScale;
-            group.output.scaleY = uniformScale;
-        } else {
-            group.output.separateScale = true;
-            group.output.scale = scaleX;
-            group.output.scaleX = scaleX;
-            group.output.scaleY = scaleY;
-        }
-    };
-
     auto getMirrorUniformRelativeScale = [&](const platform::config::MirrorConfig& mirror, float& outScale) {
         float containerWidth = 0.0f;
         float containerHeight = 0.0f;
@@ -425,135 +339,6 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         mirror.output.scale = uniformScale;
         mirror.output.scaleX = uniformScale;
         mirror.output.scaleY = uniformScale;
-    };
-
-    auto resolveGroupScaleReference = [&](const platform::config::MirrorGroupConfig& group,
-                                          float& outContainerWidth,
-                                          float& outContainerHeight,
-                                          float& outBaseWidth,
-                                          float& outBaseHeight,
-                                          float& outItemWidthPercent,
-                                          float& outItemHeightPercent) {
-        outContainerWidth = 0.0f;
-        outContainerHeight = 0.0f;
-        outBaseWidth = 0.0f;
-        outBaseHeight = 0.0f;
-        outItemWidthPercent = 1.0f;
-        outItemHeightPercent = 1.0f;
-        if (!resolveOutputContainerSize(group.output, outContainerWidth, outContainerHeight)) {
-            return false;
-        }
-
-        const platform::config::MirrorGroupItem* firstEnabledItem = nullptr;
-        const platform::config::MirrorConfig* itemMirror = nullptr;
-        for (const auto& item : group.mirrors) {
-            if (!item.enabled) {
-                continue;
-            }
-            const platform::config::MirrorConfig* resolvedMirror = nullptr;
-            for (const auto& mirror : config.mirrors) {
-                if (mirror.name == item.mirrorId) {
-                    resolvedMirror = &mirror;
-                    break;
-                }
-            }
-            if (!resolvedMirror) {
-                continue;
-            }
-            firstEnabledItem = &item;
-            itemMirror = resolvedMirror;
-            break;
-        }
-        if (!firstEnabledItem || !itemMirror) {
-            return false;
-        }
-
-        const int border = platform::config::GetMirrorDynamicBorderPadding(itemMirror->border);
-        outBaseWidth = static_cast<float>(itemMirror->captureWidth + (2 * border));
-        outBaseHeight = static_cast<float>(itemMirror->captureHeight + (2 * border));
-        outItemWidthPercent = std::max(0.0001f, firstEnabledItem->widthPercent);
-        outItemHeightPercent = std::max(0.0001f, firstEnabledItem->heightPercent);
-        return outBaseWidth > 0.0f && outBaseHeight > 0.0f;
-    };
-
-    auto getGroupUniformRelativeScale = [&](const platform::config::MirrorGroupConfig& group, float& outScale) {
-        float containerWidth = 0.0f;
-        float containerHeight = 0.0f;
-        float baseWidth = 0.0f;
-        float baseHeight = 0.0f;
-        float itemWidthPercent = 1.0f;
-        float itemHeightPercent = 1.0f;
-        if (!resolveGroupScaleReference(group,
-                                        containerWidth,
-                                        containerHeight,
-                                        baseWidth,
-                                        baseHeight,
-                                        itemWidthPercent,
-                                        itemHeightPercent)) {
-            return false;
-        }
-
-        const float scaleX = (containerWidth * group.output.relativeWidth * itemWidthPercent) / baseWidth;
-        const float scaleY = (containerHeight * group.output.relativeHeight * itemHeightPercent) / baseHeight;
-        outScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
-                                                           scaleY,
-                                                           NormalizeAspectFitMode(group.output.aspectFitMode)),
-                              0.01f,
-                              20.0f);
-        return true;
-    };
-
-    auto setGroupRelativeSizeFromUniformScale = [&](platform::config::MirrorGroupConfig& group, float uniformScale) {
-        uniformScale = std::clamp(uniformScale, 0.01f, 20.0f);
-
-        float containerWidth = 0.0f;
-        float containerHeight = 0.0f;
-        float baseWidth = 0.0f;
-        float baseHeight = 0.0f;
-        float itemWidthPercent = 1.0f;
-        float itemHeightPercent = 1.0f;
-        if (!resolveGroupScaleReference(group,
-                                        containerWidth,
-                                        containerHeight,
-                                        baseWidth,
-                                        baseHeight,
-                                        itemWidthPercent,
-                                        itemHeightPercent)) {
-            group.output.relativeWidth = uniformScale;
-            group.output.relativeHeight = uniformScale;
-            return;
-        }
-
-        group.output.relativeWidth = std::clamp((uniformScale * baseWidth) / (containerWidth * itemWidthPercent), 0.01f, 20.0f);
-        group.output.relativeHeight = std::clamp((uniformScale * baseHeight) / (containerHeight * itemHeightPercent), 0.01f, 20.0f);
-    };
-
-    auto getGroupUniformScale = [&](const platform::config::MirrorGroupConfig& group, float& outScale) {
-        if (group.output.useRelativeSize) {
-            return getGroupUniformRelativeScale(group, outScale);
-        }
-
-        const float scaleX = group.output.separateScale ? group.output.scaleX : group.output.scale;
-        const float scaleY = group.output.separateScale ? group.output.scaleY : group.output.scale;
-        outScale = std::clamp(ResolveUniformScaleByFitMode(scaleX,
-                                                           scaleY,
-                                                           NormalizeAspectFitMode(group.output.aspectFitMode)),
-                              0.01f,
-                              20.0f);
-        return true;
-    };
-
-    auto setGroupUniformScale = [&](platform::config::MirrorGroupConfig& group, float uniformScale) {
-        uniformScale = std::clamp(uniformScale, 0.01f, 20.0f);
-        if (group.output.useRelativeSize) {
-            setGroupRelativeSizeFromUniformScale(group, uniformScale);
-            return;
-        }
-
-        group.output.separateScale = false;
-        group.output.scale = uniformScale;
-        group.output.scaleX = uniformScale;
-        group.output.scaleY = uniformScale;
     };
 
     auto makeUniqueMirrorCopyName = [&](const std::string& sourceName) {
@@ -739,6 +524,65 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                                sizeof(g_mirrorEditorState.nameBuffer),
                                                mirror.name);
                         g_mirrorEditorState.mirrorNameError.clear();
+                        g_mirrorEditorState.visualDrag = MirrorEditorState::VisualDragState{};
+                        g_mirrorEditorState.visualEditorCropZoneIndex = 0;
+                    }
+
+                    if (AnimatedButton("Edit On Game Screen")) {
+                        ImGui::OpenPopup("##mirror_direct_edit_launcher");
+                    }
+                    if (ImGui::BeginPopup("##mirror_direct_edit_launcher")) {
+                        const auto launchMirrorDirectEdit = [&](const std::string& modeName,
+                                                                const std::string& mirrorId,
+                                                                const std::string& groupId,
+                                                                MirrorDirectEditSelectionKind selectionKind) {
+                            if (!modeName.empty() && modeName != GetMirrorModeState().GetActiveModeName()) {
+                                StartModeSwitchWithTransition(modeName, config, GetMirrorModeState());
+                            }
+                            g_mirrorEditorState.directEditSelection.kind = selectionKind;
+                            g_mirrorEditorState.directEditSelection.mirrorId = mirrorId;
+                            g_mirrorEditorState.directEditSelection.groupId = groupId;
+                            g_mirrorEditorState.directEditSelection.groupItemIndex = -1;
+                            g_mirrorEditorState.directEditSelectedCaptureZoneIndex = 0;
+                            SetMirrorDirectEditActive(true, true);
+                            SetGuiVisible(false);
+                        };
+
+                        const auto directModes = platform::config::GetModesContainingMirrorDirect(config, mirror.name);
+                        const auto containingGroups = platform::config::GetGroupsContainingMirror(config, mirror.name);
+                        ImGui::TextUnformatted("Edit Relative To");
+                        ImGui::Separator();
+
+                        ImGui::TextDisabled("Mirror");
+                        if (directModes.empty()) {
+                            ImGui::TextDisabled("No modes");
+                        } else {
+                            for (const auto& modeName : directModes) {
+                                const std::string itemId = modeName + "##mirror_scope_mode";
+                                if (ImGui::Selectable(itemId.c_str())) {
+                                    launchMirrorDirectEdit(modeName, mirror.name, "", MirrorDirectEditSelectionKind::Mirror);
+                                    ImGui::CloseCurrentPopup();
+                                }
+                            }
+                        }
+
+                        for (const auto& groupName : containingGroups) {
+                            ImGui::Separator();
+                            ImGui::TextDisabled("Group: %s", groupName.c_str());
+                            const auto groupModes = platform::config::GetModesContainingGroup(config, groupName);
+                            if (groupModes.empty()) {
+                                ImGui::TextDisabled("No modes");
+                                continue;
+                            }
+                            for (const auto& modeName : groupModes) {
+                                const std::string itemId = modeName + "##group_scope_mode_" + groupName;
+                                if (ImGui::Selectable(itemId.c_str())) {
+                                    launchMirrorDirectEdit(modeName, mirror.name, groupName, MirrorDirectEditSelectionKind::Group);
+                                    ImGui::CloseCurrentPopup();
+                                }
+                            }
+                        }
+                        ImGui::EndPopup();
                     }
 
                     if (AnimatedCollapsingHeader("General")) {
@@ -841,7 +685,6 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                         }
                         ImGui::Unindent();
                     }
-
                     if (AnimatedCollapsingHeader("Border")) {
 
 
@@ -1406,455 +1249,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                     ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No mirror groups configured.");
                     ImGui::Text("Use + in the group list to add one.");
                 } else {
-                    auto& grp = config.mirrorGroups[static_cast<size_t>(s_selectedGroupIndex)];
-                    ImGui::PushID(10000 + s_selectedGroupIndex);
-
-                    if (g_mirrorEditorState.selectedGroupIndex != s_selectedGroupIndex) {
-                        g_mirrorEditorState.selectedGroupIndex = s_selectedGroupIndex;
-                        CopyEditorNameToBuffer(g_mirrorEditorState.groupNameBuffer,
-                                               sizeof(g_mirrorEditorState.groupNameBuffer),
-                                               grp.name);
-                        g_mirrorEditorState.groupNameError.clear();
-                    }
-
-                    if (AnimatedCollapsingHeader("General")) {
-
-
-                        HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
-                        ImGui::Indent();
-                        if (ImGui::InputText("Group Name",
-                                             g_mirrorEditorState.groupNameBuffer,
-                                             sizeof(g_mirrorEditorState.groupNameBuffer))) {
-                            g_mirrorEditorState.groupNameError.clear();
-                        }
-                        if (ImGui::IsItemDeactivatedAfterEdit()) {
-                            const std::string newName = TrimEditorName(g_mirrorEditorState.groupNameBuffer);
-                            if (newName.empty()) {
-                                g_mirrorEditorState.groupNameError = "Group name cannot be empty.";
-                            } else if (HasDuplicateGroupName(config, newName, s_selectedGroupIndex)) {
-                                g_mirrorEditorState.groupNameError = "Group name must be unique.";
-                            } else {
-                                g_mirrorEditorState.groupNameError.clear();
-                                if (newName != grp.name) {
-                                    platform::config::RenameGroup(config, grp.name, newName);
-                                }
-                                CopyEditorNameToBuffer(g_mirrorEditorState.groupNameBuffer,
-                                                       sizeof(g_mirrorEditorState.groupNameBuffer),
-                                                       newName);
-                                AutoSaveConfig(config);
-                            }
-                        }
-                        if (!g_mirrorEditorState.groupNameError.empty()) {
-                            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", g_mirrorEditorState.groupNameError.c_str());
-                        }
-                        ImGui::Unindent();
-                    }
-
-                    if (AnimatedCollapsingHeader("Group Scaling")) {
-
-
-                        HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
-                        ImGui::Indent();
-                        if (ImGui::Checkbox("Relative size to container##grpout_size", &grp.output.useRelativeSize)) {
-                            if (grp.output.useRelativeSize) {
-                                updateGroupRelativeSizeFromScale(grp);
-                            } else {
-                                updateGroupScaleFromRelativeSize(grp);
-                            }
-                            AutoSaveConfig(config);
-                        }
-                        ImGui::SameLine();
-                        HelpMarker("When enabled, group output width/height are stored as percentages of the anchor container.\n"
-                                   "Container is screen for *Screen anchors and mode viewport for *Viewport/Pie anchors.");
-
-                        if (ImGui::Checkbox("Preserve aspect ratio##grpout_size", &grp.output.preserveAspectRatio)) {
-                            if (grp.output.preserveAspectRatio) {
-                                float uniformScale = 1.0f;
-                                if (getGroupUniformScale(grp, uniformScale)) {
-                                    setGroupUniformScale(grp, uniformScale);
-                                }
-                            } else if (!grp.output.useRelativeSize) {
-                                const float currentScale = grp.output.separateScale ? grp.output.scaleX : grp.output.scale;
-                                grp.output.separateScale = true;
-                                grp.output.scaleX = currentScale;
-                                grp.output.scaleY = currentScale;
-                            }
-                            AutoSaveConfig(config);
-                        }
-
-                        if (grp.output.preserveAspectRatio) {
-                            if (DrawAspectFitModeCombo("Fit Mode##grpout_size", grp.output.aspectFitMode)) {
-                                grp.output.aspectFitMode = NormalizeAspectFitMode(grp.output.aspectFitMode);
-                                AutoSaveConfig(config);
-                            }
-                        }
-
-                        if (grp.output.preserveAspectRatio) {
-                            float uniformScale = 1.0f;
-                            if (!getGroupUniformScale(grp, uniformScale)) {
-                                uniformScale = 1.0f;
-                            }
-                            float scalePercent = uniformScale * 100.0f;
-                            const char* uniformScaleLabel = grp.output.useRelativeSize
-                                                               ? "Size % of container##grpout_size"
-                                                               : "Scale %##grpout_size";
-                            if (ImGui::SliderFloat(uniformScaleLabel, &scalePercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                setGroupUniformScale(grp, scalePercent / 100.0f);
-                                AutoSaveConfig(config);
-                            }
-
-                            if (grp.output.useRelativeSize) {
-                                ImGui::TextDisabled("Stored size: %.1f%% width, %.1f%% height",
-                                                    std::clamp(grp.output.relativeWidth, 0.01f, 20.0f) * 100.0f,
-                                                    std::clamp(grp.output.relativeHeight, 0.01f, 20.0f) * 100.0f);
-                            }
-                        } else {
-                            if (grp.output.useRelativeSize) {
-                                float widthPercent = std::clamp(grp.output.relativeWidth, 0.01f, 20.0f) * 100.0f;
-                                if (ImGui::SliderFloat("Width % of container##grpout_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                    grp.output.relativeWidth = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
-                                    AutoSaveConfig(config);
-                                }
-
-                                float heightPercent = std::clamp(grp.output.relativeHeight, 0.01f, 20.0f) * 100.0f;
-                                if (ImGui::SliderFloat("Height % of container##grpout_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                    grp.output.relativeHeight = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
-                                    AutoSaveConfig(config);
-                                }
-                            } else {
-                                const float currentScaleX = std::clamp(grp.output.separateScale ? grp.output.scaleX : grp.output.scale, 0.01f, 20.0f);
-                                const float currentScaleY = std::clamp(grp.output.separateScale ? grp.output.scaleY : grp.output.scale, 0.01f, 20.0f);
-                                float widthPercent = currentScaleX * 100.0f;
-                                if (ImGui::SliderFloat("Width %##grpout_size", &widthPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                    grp.output.separateScale = true;
-                                    grp.output.scaleX = std::clamp(widthPercent / 100.0f, 0.01f, 20.0f);
-                                    grp.output.scale = grp.output.scaleX;
-                                    AutoSaveConfig(config);
-                                }
-
-                                float heightPercent = currentScaleY * 100.0f;
-                                if (ImGui::SliderFloat("Height %##grpout_size", &heightPercent, 1.0f, 2000.0f, "%.1f%%")) {
-                                    grp.output.separateScale = true;
-                                    grp.output.scaleY = std::clamp(heightPercent / 100.0f, 0.01f, 20.0f);
-                                    AutoSaveConfig(config);
-                                }
-                            }
-                        }
-                        ImGui::Unindent();
-                    }
-
-                    if (AnimatedCollapsingHeader("Group Position")) {
-
-
-                        HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
-                        ImGui::Indent();
-                        if (ImGui::Checkbox("Relative to screen##grpout", &grp.output.useRelativePosition)) {
-                            if (grp.output.useRelativePosition) {
-                                updateRelativeFromPixels(grp.output);
-                            } else {
-                                updatePixelsFromRelative(grp.output);
-                            }
-                            AutoSaveConfig(config);
-                        }
-
-                        ImGui::SameLine();
-                        HelpMarker("When enabled, position is stored as percentages of screen size.\n"
-                                   "This makes configs portable across different screen resolutions.");
-
-                        if (drawRelativeToCombo("Relative To##grpout", grp.output.relativeTo)) {
-                            AutoSaveConfig(config);
-                        }
-
-                        if (grp.output.useRelativePosition) {
-                            float xPercent = grp.output.relativeX * 100.0f;
-                            if (ImGui::SliderFloat("X %##grpout", &xPercent, -100.0f, 200.0f, "%.1f%%")) {
-                                grp.output.relativeX = xPercent / 100.0f;
-                                updatePixelsFromRelative(grp.output);
-                                AutoSaveConfig(config);
-                            }
-
-                            float yPercent = grp.output.relativeY * 100.0f;
-                            if (ImGui::SliderFloat("Y %##grpout", &yPercent, -100.0f, 200.0f, "%.1f%%")) {
-                                grp.output.relativeY = yPercent / 100.0f;
-                                updatePixelsFromRelative(grp.output);
-                                AutoSaveConfig(config);
-                            }
-                        } else {
-                            if (ImGui::DragInt("X Offset##grpout", &grp.output.x, 1)) {
-                                AutoSaveConfig(config);
-                            }
-                            if (ImGui::DragInt("Y Offset##grpout", &grp.output.y, 1)) {
-                                AutoSaveConfig(config);
-                            }
-                        }
-                        ImGui::Unindent();
-                    }
-
-                    if (AnimatedCollapsingHeader("Group Mirrors")) {
-
-
-                        HeaderRevealScope headerRevealScope = BeginAnimatedHeaderContentReveal();
-                        ImGui::Indent();
-                        int gm_remove = -1;
-                        int gm_drag_source = -1;
-                        int gm_drag_target = -1;
-                        bool gm_drop_after = false;
-                        int gm_preview_row = -1;
-                        bool gm_preview_after = false;
-                        ImGui::TextDisabled("Drag to reorder z-index (bottom -> top).");
-                        if (ImGui::BeginTable("group_mirror_items",
-                                              8,
-                                              ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
-                            ImGuiTable* groupMirrorTable = ImGui::GetCurrentTable();
-                            ImGui::TableSetupColumn("###grp_mir_col_drag",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    ImGui::GetFrameHeight() + 6.0f);
-                            ImGui::TableSetupColumn("###grp_mir_col_on",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    44.0f);
-                            ImGui::TableSetupColumn("Mirror###grp_mir_col_mirror",
-                                                    ImGuiTableColumnFlags_WidthStretch,
-                                                    1.6f);
-                            ImGui::TableSetupColumn("W%###grp_mir_col_w",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    80.0f);
-                            ImGui::TableSetupColumn("H%###grp_mir_col_h",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    80.0f);
-                            ImGui::TableSetupColumn("OX###grp_mir_col_ox",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    72.0f);
-                            ImGui::TableSetupColumn("OY###grp_mir_col_oy",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    72.0f);
-                            ImGui::TableSetupColumn("###grp_mir_col_delete",
-                                                    ImGuiTableColumnFlags_WidthFixed,
-                                                    ImGui::GetFrameHeight() + 6.0f);
-                            ImGui::TableHeadersRow();
-
-                            for (int j = 0; j < static_cast<int>(grp.mirrors.size()); ++j) {
-                                auto& gi = grp.mirrors[j];
-                                ImGui::PushID(j);
-                                ImGui::TableNextRow();
-
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::SetNextItemWidth(-1.0f);
-                                (void)ImGui::SmallButton("::##gm_drag");
-                                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover)) {
-                                    const int payloadIndex = j;
-                                    ImGui::SetDragDropPayload("LINUXSCREEN_GROUP_MIRROR_REORDER", &payloadIndex, sizeof(payloadIndex));
-                                    ImGui::TextUnformatted(gi.mirrorId.empty() ? "[unnamed]" : gi.mirrorId.c_str());
-                                    ImGui::EndDragDropSource();
-                                }
-
-                                ImGui::TableSetColumnIndex(1);
-                                if (ImGui::Checkbox("##gmen", &gi.enabled)) {
-                                    AutoSaveConfig(config);
-                                }
-
-                                ImGui::TableSetColumnIndex(2);
-                                const std::string mirrorPreview = gi.mirrorId.empty() ? "[Select Mirror]" : gi.mirrorId;
-                                ImGui::SetNextItemWidth(-1.0f);
-                                if (ImGui::BeginCombo("##gmid", mirrorPreview.c_str())) {
-                                    for (const auto& mirrorConf : config.mirrors) {
-                                        const bool selected = (mirrorConf.name == gi.mirrorId);
-                                        if (ImGui::Selectable(mirrorConf.name.c_str(), selected)) {
-                                            gi.mirrorId = mirrorConf.name;
-                                            AutoSaveConfig(config);
-                                        }
-                                        if (selected) {
-                                            ImGui::SetItemDefaultFocus();
-                                        }
-                                    }
-                                    ImGui::EndCombo();
-                                }
-
-                                bool mirrorExists = false;
-                                for (const auto& mirrorConf : config.mirrors) {
-                                    if (mirrorConf.name == gi.mirrorId) {
-                                        mirrorExists = true;
-                                        break;
-                                    }
-                                }
-                                if (!mirrorExists && !gi.mirrorId.empty()) {
-                                    ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "Missing");
-                                }
-
-                                ImGui::TableSetColumnIndex(3);
-                                ImGui::SetNextItemWidth(-1.0f);
-                                float widthPct = gi.widthPercent * 100.0f;
-                                if (ImGui::SliderFloat("##gm_w", &widthPct, 10.0f, 200.0f, "%.0f%%")) {
-                                    gi.widthPercent = widthPct / 100.0f;
-                                    AutoSaveConfig(config);
-                                }
-
-                                ImGui::TableSetColumnIndex(4);
-                                ImGui::SetNextItemWidth(-1.0f);
-                                float heightPct = gi.heightPercent * 100.0f;
-                                if (ImGui::SliderFloat("##gm_h", &heightPct, 10.0f, 200.0f, "%.0f%%")) {
-                                    gi.heightPercent = heightPct / 100.0f;
-                                    AutoSaveConfig(config);
-                                }
-
-                                ImGui::TableSetColumnIndex(5);
-                                ImGui::SetNextItemWidth(-1.0f);
-                                if (ImGui::DragInt("##gm_ox", &gi.offsetX, 1)) {
-                                    AutoSaveConfig(config);
-                                }
-
-                                ImGui::TableSetColumnIndex(6);
-                                ImGui::SetNextItemWidth(-1.0f);
-                                if (ImGui::DragInt("##gm_oy", &gi.offsetY, 1)) {
-                                    AutoSaveConfig(config);
-                                }
-
-                                ImGui::TableSetColumnIndex(7);
-                                if (ImGui::SmallButton("X##gm")) {
-                                    gm_remove = j;
-                                }
-                                ImRect rowRect = ImGui::TableGetCellBgRect(groupMirrorTable, 0);
-                                const ImRect rightRect = ImGui::TableGetCellBgRect(groupMirrorTable, 7);
-                                rowRect.Max.x = rightRect.Max.x;
-                                const float midY = (rowRect.Min.y + rowRect.Max.y) * 0.5f;
-                                constexpr int kGroupMirrorTableColumnCount = 8;
-                                for (int col = 0; col < kGroupMirrorTableColumnCount; ++col) {
-                                    ImGui::TableSetColumnIndex(col);
-                                    const ImRect cellRect = ImGui::TableGetCellBgRect(groupMirrorTable, col);
-                                    ImGui::PushID(col);
-                                    if (ImGui::BeginDragDropTargetCustom(cellRect, ImGui::GetID("##gm_row_drop_target"))) {
-                                        const bool dropAfter = ImGui::GetIO().MousePos.y > midY;
-                                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LINUXSCREEN_GROUP_MIRROR_REORDER",
-                                                                                                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-                                            if (payload->DataSize == sizeof(int)) {
-                                                gm_preview_row = j;
-                                                gm_preview_after = dropAfter;
-                                                if (payload->IsDelivery()) {
-                                                    gm_drag_source = *static_cast<const int*>(payload->Data);
-                                                    gm_drag_target = j;
-                                                    gm_drop_after = dropAfter;
-                                                }
-                                            }
-                                        }
-                                        ImGui::EndDragDropTarget();
-                                    }
-                                    ImGui::PopID();
-                                }
-                                ImGui::TableSetColumnIndex(7);
-                                if (gm_preview_row == j && ImGui::GetDragDropPayload() != nullptr) {
-                                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                                    dl->AddRectFilled(rowRect.Min, rowRect.Max, IM_COL32(88, 166, 236, 34));
-                                    const float lineY = gm_preview_after ? rowRect.Max.y : rowRect.Min.y;
-                                    dl->AddLine(ImVec2(rowRect.Min.x, lineY),
-                                                ImVec2(rowRect.Max.x, lineY),
-                                                IM_COL32(72, 190, 255, 255),
-                                                2.0f);
-                                }
-
-                                ImGui::PopID();
-                            }
-                            ImGui::EndTable();
-                        }
-                        if (gm_drag_source >= 0 &&
-                            gm_drag_target >= 0 &&
-                            gm_drag_source < static_cast<int>(grp.mirrors.size()) &&
-                            gm_drag_target < static_cast<int>(grp.mirrors.size()) &&
-                            gm_drag_source != gm_drag_target) {
-                            const int source = gm_drag_source;
-                            const int target = gm_drag_target;
-                            int insertIndex = target + (gm_drop_after ? 1 : 0);
-                            if (source < insertIndex) {
-                                insertIndex -= 1;
-                            }
-                            auto movedItem = std::move(grp.mirrors[static_cast<size_t>(source)]);
-                            grp.mirrors.erase(grp.mirrors.begin() + source);
-                            grp.mirrors.insert(grp.mirrors.begin() + insertIndex, std::move(movedItem));
-                            AutoSaveConfig(config);
-                        }
-                        if (gm_remove >= 0) {
-                            grp.mirrors.erase(grp.mirrors.begin() + gm_remove);
-                            AutoSaveConfig(config);
-                        }
-
-                        if (ImGui::BeginCombo("Add Mirror##add_mirror_to_group", "[Select Mirror]")) {
-                            for (const auto& mir : config.mirrors) {
-                                bool already = false;
-                                for (const auto& gmi : grp.mirrors) {
-                                    if (gmi.mirrorId == mir.name) { already = true; break; }
-                                }
-                                if (!already && ImGui::Selectable(mir.name.c_str())) {
-                                    platform::config::MirrorGroupItem item;
-                                    item.mirrorId = mir.name;
-                                    grp.mirrors.push_back(item);
-                                    AutoSaveConfig(config);
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-                        ImGui::Unindent();
-                    }
-
-                    ImGui::Separator();
-                    {
-                        std::vector<std::string> containingModes;
-                        containingModes.reserve(config.modes.size());
-                        for (const auto& modeEntry : config.modes) {
-                            if (modeEntry.name.empty()) {
-                                continue;
-                            }
-                            if (platform::config::IsGroupInMode(modeEntry, grp.name)) {
-                                containingModes.push_back(modeEntry.name);
-                            }
-                        }
-
-                        std::string addToModesPreview = "[Select modes]";
-                        if (containingModes.size() == 1) {
-                            addToModesPreview = containingModes.front();
-                        } else if (!containingModes.empty()) {
-                            addToModesPreview = std::to_string(containingModes.size()) + " modes selected";
-                        }
-
-                        if (ImGui::BeginCombo("Add to Modes##group_refs_add_to_modes", addToModesPreview.c_str())) {
-                            for (auto& candidateMode : config.modes) {
-                                if (candidateMode.name.empty()) {
-                                    continue;
-                                }
-
-                                const bool isInMode = platform::config::IsGroupInMode(candidateMode, grp.name);
-                                if (ImGui::Selectable(candidateMode.name.c_str(),
-                                                      isInMode,
-                                                      ImGuiSelectableFlags_DontClosePopups)) {
-                                    if (isInMode) {
-                                        platform::config::RemoveGroupFromMode(candidateMode, grp.name);
-                                    } else {
-                                        platform::config::AddGroupToMode(candidateMode, grp.name);
-                                    }
-                                    AutoSaveConfig(config);
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-
-                        containingModes.clear();
-                        for (const auto& modeEntry : config.modes) {
-                            if (modeEntry.name.empty()) {
-                                continue;
-                            }
-                            if (platform::config::IsGroupInMode(modeEntry, grp.name)) {
-                                containingModes.push_back(modeEntry.name);
-                            }
-                        }
-
-                        if (!containingModes.empty()) {
-                            ImGui::Text("Used in modes:");
-                            for (const auto& mName : containingModes) {
-                                ImGui::BulletText("%s", mName.c_str());
-                            }
-                        } else {
-                            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Not used in any mode");
-                        }
-                    }
-
-                    ImGui::PopID();
+                    RenderSharedMirrorGroupEditorSections(config, s_selectedGroupIndex, "main_group_editor");
                 }
                 ImGui::EndChild();
                 ImGui::EndTable();

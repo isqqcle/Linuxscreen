@@ -13,6 +13,9 @@ namespace platform::x11 {
 
 namespace {
 
+constexpr float kMirrorModeOutputScaleMin = 0.01f;
+constexpr float kMirrorModeOutputScaleMax = 100.0f;
+
 bool EndsWithSuffix(const std::string& value, const char* suffix) {
     if (!suffix) {
         return false;
@@ -208,8 +211,8 @@ void ApplyRelativeSizeToOutput(config::MirrorRenderConfig& output,
         return;
     }
 
-    const float relativeWidth = std::clamp(output.relativeWidth, 0.01f, 20.0f);
-    const float relativeHeight = std::clamp(output.relativeHeight, 0.01f, 20.0f);
+    const float relativeWidth = std::clamp(output.relativeWidth, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+    const float relativeHeight = std::clamp(output.relativeHeight, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
     output.relativeWidth = relativeWidth;
     output.relativeHeight = relativeHeight;
 
@@ -226,6 +229,35 @@ void ApplyRelativeSizeToOutput(config::MirrorRenderConfig& output,
     } else {
         ApplyAbsoluteTargetSizeToOutput(output, captureWidth, captureHeight, dynamicBorder, targetWidth, targetHeight);
     }
+}
+
+bool ResolveConfiguredMirrorOutputSize(const config::MirrorConfig& mirrorCfg,
+                                       float& outWidth,
+                                       float& outHeight) {
+    outWidth = 0.0f;
+    outHeight = 0.0f;
+    const int dynamicBorder = config::GetMirrorDynamicBorderPadding(mirrorCfg.border);
+    const float baseWidth = static_cast<float>(mirrorCfg.captureWidth + (2 * dynamicBorder));
+    const float baseHeight = static_cast<float>(mirrorCfg.captureHeight + (2 * dynamicBorder));
+    if (!(baseWidth > 0.0f) || !(baseHeight > 0.0f)) {
+        return false;
+    }
+
+    const float rawScaleX = mirrorCfg.output.separateScale ? mirrorCfg.output.scaleX : mirrorCfg.output.scale;
+    const float rawScaleY = mirrorCfg.output.separateScale ? mirrorCfg.output.scaleY : mirrorCfg.output.scale;
+    const float scaleX = std::clamp(rawScaleX, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+    const float scaleY = std::clamp(rawScaleY, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+    if (mirrorCfg.output.preserveAspectRatio) {
+        const float uniformScale = std::clamp(ResolveUniformScaleByFitMode(scaleX, scaleY, mirrorCfg.output.aspectFitMode),
+                                              kMirrorModeOutputScaleMin,
+                                              kMirrorModeOutputScaleMax);
+        outWidth = baseWidth * uniformScale;
+        outHeight = baseHeight * uniformScale;
+    } else {
+        outWidth = baseWidth * scaleX;
+        outHeight = baseHeight * scaleY;
+    }
+    return outWidth > 0.0f && outHeight > 0.0f;
 }
 
 void ApplyKnownSourceSizeOverride(config::MirrorConfig& mirrorCfg, int width, int height) {
@@ -368,6 +400,22 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
     };
 
     auto appendResolvedGroup = [&](const config::MirrorGroupConfig& groupCfg) {
+        struct PreparedGroupItem {
+            ResolvedMirrorRender resolved;
+            float localLeft = 0.0f;
+            float localTop = 0.0f;
+            float localWidth = 0.0f;
+            float localHeight = 0.0f;
+        };
+
+        std::vector<PreparedGroupItem> preparedItems;
+        preparedItems.reserve(groupCfg.mirrors.size());
+        bool haveLocalBounds = false;
+        float localMinX = 0.0f;
+        float localMinY = 0.0f;
+        float localMaxX = 0.0f;
+        float localMaxY = 0.0f;
+
         for (const auto& item : groupCfg.mirrors) {
             if (!item.enabled) continue;
 
@@ -382,103 +430,151 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
             resolved.sourceGroupItemIndex = static_cast<int>(&item - groupCfg.mirrors.data());
             ApplyWindowCaptureSizeOverride(resolved.config);
             ApplyImageSourceSizeOverride(resolved.config);
-            int groupX = groupCfg.output.x;
-            int groupY = groupCfg.output.y;
-            if (groupCfg.output.useRelativePosition && hasScreenSize) {
-                int positionContainerWidth = screenWidth;
-                int positionContainerHeight = screenHeight;
+            if (hasScreenSize) {
+                ResolveOutputPositionFromRelative(*modeConfig,
+                                                 resolved.config.output,
+                                                 screenWidth,
+                                                 screenHeight);
+                int itemContainerWidth = 0;
+                int itemContainerHeight = 0;
                 ResolveOutputContainerSize(*modeConfig,
-                                           groupCfg.output,
+                                           resolved.config.output,
                                            screenWidth,
                                            screenHeight,
-                                           positionContainerWidth,
-                                           positionContainerHeight);
-                if (positionContainerWidth > 0 && positionContainerHeight > 0) {
-                    groupX = static_cast<int>(groupCfg.output.relativeX * static_cast<float>(positionContainerWidth));
-                    groupY = static_cast<int>(groupCfg.output.relativeY * static_cast<float>(positionContainerHeight));
-                }
+                                           itemContainerWidth,
+                                           itemContainerHeight);
+                ApplyRelativeSizeToOutput(resolved.config.output,
+                                          resolved.config.captureWidth,
+                                          resolved.config.captureHeight,
+                                          config::GetMirrorDynamicBorderPadding(resolved.config.border),
+                                          itemContainerWidth,
+                                          itemContainerHeight);
             }
 
-            resolved.config.output.x = groupX + item.offsetX;
-            resolved.config.output.y = groupY + item.offsetY;
-            resolved.config.output.relativeTo = groupCfg.output.relativeTo;
-            resolved.config.output.useRelativePosition = groupCfg.output.useRelativePosition;
-            resolved.config.output.relativeX = groupCfg.output.relativeX;
-            resolved.config.output.relativeY = groupCfg.output.relativeY;
-            resolved.config.output.useRelativeSize = groupCfg.output.useRelativeSize;
-            resolved.config.output.relativeWidth = groupCfg.output.relativeWidth;
-            resolved.config.output.relativeHeight = groupCfg.output.relativeHeight;
-            resolved.config.output.preserveAspectRatio = groupCfg.output.preserveAspectRatio;
-            resolved.config.output.aspectFitMode = groupCfg.output.aspectFitMode;
-
-            bool appliedGroupRelativeSize = false;
-            if (groupCfg.output.useRelativeSize && hasScreenSize) {
-                int containerWidth = 0;
-                int containerHeight = 0;
-                ResolveOutputContainerSize(*modeConfig,
-                                           groupCfg.output,
-                                           screenWidth,
-                                           screenHeight,
-                                           containerWidth,
-                                           containerHeight);
-
-                if (containerWidth > 0 && containerHeight > 0) {
-                    const float groupRelativeWidth = std::clamp(groupCfg.output.relativeWidth, 0.01f, 20.0f);
-                    const float groupRelativeHeight = std::clamp(groupCfg.output.relativeHeight, 0.01f, 20.0f);
-                    int targetWidth = std::max(1, static_cast<int>(static_cast<float>(containerWidth) * groupRelativeWidth));
-                    int targetHeight = std::max(1, static_cast<int>(static_cast<float>(containerHeight) * groupRelativeHeight));
-                    targetWidth = std::max(1, static_cast<int>(static_cast<float>(targetWidth) * item.widthPercent));
-                    targetHeight = std::max(1, static_cast<int>(static_cast<float>(targetHeight) * item.heightPercent));
-
-                    const bool preserveAspect = groupCfg.output.preserveAspectRatio;
-                    if (preserveAspect) {
-                        ApplyAbsoluteTargetSizeToOutputPreserveAspect(resolved.config.output,
-                                                                      resolved.config.captureWidth,
-                                                                      resolved.config.captureHeight,
-                                                                      config::GetMirrorDynamicBorderPadding(resolved.config.border),
-                                                                      targetWidth,
-                                                                      targetHeight,
-                                                                      groupCfg.output.aspectFitMode);
-                    } else {
-                        ApplyAbsoluteTargetSizeToOutput(resolved.config.output,
-                                                        resolved.config.captureWidth,
-                                                        resolved.config.captureHeight,
-                                                        config::GetMirrorDynamicBorderPadding(resolved.config.border),
-                                                        targetWidth,
-                                                        targetHeight);
-                    }
-                    appliedGroupRelativeSize = true;
-                }
+            float nativeWidth = 0.0f;
+            float nativeHeight = 0.0f;
+            if (!ResolveConfiguredMirrorOutputSize(resolved.config, nativeWidth, nativeHeight)) {
+                continue;
             }
 
-            if (!appliedGroupRelativeSize) {
-                // Apply group scale and per-item sizing as multipliers over mirror-native scale.
-                const float baseScaleX = resolved.config.output.separateScale
-                    ? resolved.config.output.scaleX
-                    : resolved.config.output.scale;
-                const float baseScaleY = resolved.config.output.separateScale
-                    ? resolved.config.output.scaleY
-                    : resolved.config.output.scale;
-
-                const float scaledX = baseScaleX * groupCfg.output.scale * item.widthPercent;
-                const float scaledY = baseScaleY * groupCfg.output.scale * item.heightPercent;
-                const bool needsSeparateScale = resolved.config.output.separateScale ||
-                                                item.widthPercent != 1.0f ||
-                                                item.heightPercent != 1.0f;
-
-                if (needsSeparateScale) {
-                    resolved.config.output.separateScale = true;
-                    resolved.config.output.scaleX = scaledX;
-                    resolved.config.output.scaleY = scaledY;
-                    resolved.config.output.scale = scaledX;
-                } else {
-                    resolved.config.output.scale = scaledX;
-                    resolved.config.output.scaleX = scaledX;
-                    resolved.config.output.scaleY = scaledX;
-                }
+            PreparedGroupItem prepared;
+            prepared.resolved = std::move(resolved);
+            prepared.localLeft = static_cast<float>(item.offsetX);
+            prepared.localTop = static_cast<float>(item.offsetY);
+            prepared.localWidth = std::max(1.0f, nativeWidth * item.widthPercent);
+            prepared.localHeight = std::max(1.0f, nativeHeight * item.heightPercent);
+            if (!haveLocalBounds) {
+                localMinX = prepared.localLeft;
+                localMinY = prepared.localTop;
+                localMaxX = prepared.localLeft + prepared.localWidth;
+                localMaxY = prepared.localTop + prepared.localHeight;
+                haveLocalBounds = true;
+            } else {
+                localMinX = std::min(localMinX, prepared.localLeft);
+                localMinY = std::min(localMinY, prepared.localTop);
+                localMaxX = std::max(localMaxX, prepared.localLeft + prepared.localWidth);
+                localMaxY = std::max(localMaxY, prepared.localTop + prepared.localHeight);
             }
+            preparedItems.push_back(std::move(prepared));
+        }
 
-            activeMirrors_.push_back(std::move(resolved));
+        if (preparedItems.empty() || !haveLocalBounds) {
+            return;
+        }
+
+        const float baseGroupWidth = std::max(1.0f, localMaxX - localMinX);
+        const float baseGroupHeight = std::max(1.0f, localMaxY - localMinY);
+
+        int positionContainerWidth = screenWidth;
+        int positionContainerHeight = screenHeight;
+        if (hasScreenSize) {
+            ResolveOutputContainerSize(*modeConfig,
+                                       groupCfg.output,
+                                       screenWidth,
+                                       screenHeight,
+                                       positionContainerWidth,
+                                       positionContainerHeight);
+        }
+
+        float groupScaleX = std::clamp(groupCfg.output.separateScale ? groupCfg.output.scaleX : groupCfg.output.scale,
+                                       kMirrorModeOutputScaleMin,
+                                       kMirrorModeOutputScaleMax);
+        float groupScaleY = std::clamp(groupCfg.output.separateScale ? groupCfg.output.scaleY : groupCfg.output.scale,
+                                       kMirrorModeOutputScaleMin,
+                                       kMirrorModeOutputScaleMax);
+
+        if (groupCfg.output.useRelativeSize && hasScreenSize &&
+            positionContainerWidth > 0 && positionContainerHeight > 0) {
+            const float groupRelativeWidth =
+                std::clamp(groupCfg.output.relativeWidth, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+            const float groupRelativeHeight =
+                std::clamp(groupCfg.output.relativeHeight, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+            const float targetWidth = static_cast<float>(positionContainerWidth) * groupRelativeWidth;
+            const float targetHeight = static_cast<float>(positionContainerHeight) * groupRelativeHeight;
+            groupScaleX = std::clamp(targetWidth / baseGroupWidth, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+            groupScaleY = std::clamp(targetHeight / baseGroupHeight, kMirrorModeOutputScaleMin, kMirrorModeOutputScaleMax);
+        }
+
+        if (groupCfg.output.preserveAspectRatio) {
+            const float uniformScale = std::clamp(ResolveUniformScaleByFitMode(groupScaleX,
+                                                                               groupScaleY,
+                                                                               groupCfg.output.aspectFitMode),
+                                                  kMirrorModeOutputScaleMin,
+                                                  kMirrorModeOutputScaleMax);
+            groupScaleX = uniformScale;
+            groupScaleY = uniformScale;
+        }
+
+        const float resolvedGroupWidth = baseGroupWidth * groupScaleX;
+        const float resolvedGroupHeight = baseGroupHeight * groupScaleY;
+
+        int groupAnchorX = groupCfg.output.x;
+        int groupAnchorY = groupCfg.output.y;
+        if (groupCfg.output.useRelativePosition && hasScreenSize &&
+            positionContainerWidth > 0 && positionContainerHeight > 0) {
+            groupAnchorX = static_cast<int>(groupCfg.output.relativeX * static_cast<float>(positionContainerWidth));
+            groupAnchorY = static_cast<int>(groupCfg.output.relativeY * static_cast<float>(positionContainerHeight));
+        }
+
+        int groupTopLeftX = groupAnchorX;
+        int groupTopLeftY = groupAnchorY;
+        if (hasScreenSize && positionContainerWidth > 0 && positionContainerHeight > 0) {
+            config::GetRelativeCoords(groupCfg.output.relativeTo,
+                                      groupAnchorX,
+                                      groupAnchorY,
+                                      std::max(1, static_cast<int>(std::round(resolvedGroupWidth))),
+                                      std::max(1, static_cast<int>(std::round(resolvedGroupHeight))),
+                                      positionContainerWidth,
+                                      positionContainerHeight,
+                                      groupTopLeftX,
+                                      groupTopLeftY);
+        }
+
+        const std::string childRelativeTo = ShouldUseViewportAnchor(groupCfg.output.relativeTo)
+            ? "topLeftViewport"
+            : "topLeftScreen";
+
+        for (auto& prepared : preparedItems) {
+            const float childLeft = static_cast<float>(groupTopLeftX) + ((prepared.localLeft - localMinX) * groupScaleX);
+            const float childTop = static_cast<float>(groupTopLeftY) + ((prepared.localTop - localMinY) * groupScaleY);
+            const int targetWidth = std::max(1, static_cast<int>(std::round(prepared.localWidth * groupScaleX)));
+            const int targetHeight = std::max(1, static_cast<int>(std::round(prepared.localHeight * groupScaleY)));
+
+            prepared.resolved.config.output.relativeTo = childRelativeTo;
+            prepared.resolved.config.output.useRelativePosition = false;
+            prepared.resolved.config.output.relativeX = 0.0f;
+            prepared.resolved.config.output.relativeY = 0.0f;
+            prepared.resolved.config.output.x = static_cast<int>(std::round(childLeft));
+            prepared.resolved.config.output.y = static_cast<int>(std::round(childTop));
+            prepared.resolved.config.output.useRelativeSize = false;
+            prepared.resolved.config.output.preserveAspectRatio = false;
+            ApplyAbsoluteTargetSizeToOutput(prepared.resolved.config.output,
+                                            prepared.resolved.config.captureWidth,
+                                            prepared.resolved.config.captureHeight,
+                                            config::GetMirrorDynamicBorderPadding(prepared.resolved.config.border),
+                                            targetWidth,
+                                            targetHeight);
+            activeMirrors_.push_back(std::move(prepared.resolved));
         }
     };
 

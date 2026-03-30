@@ -148,6 +148,38 @@ int BuildLetterboxRegions(int viewportWidth,
     return count;
 }
 
+bool ResolveDesiredMirrorOutputSize(const platform::config::MirrorConfig& config,
+                                    int& outW,
+                                    int& outH) {
+    const int dynamicBorder = platform::config::GetMirrorDynamicBorderPadding(config.border);
+    const int baseW = config.captureWidth + (2 * dynamicBorder);
+    const int baseH = config.captureHeight + (2 * dynamicBorder);
+    if (baseW <= 0 || baseH <= 0) {
+        return false;
+    }
+
+    const float scaleX = config.output.separateScale ? config.output.scaleX : config.output.scale;
+    const float scaleY = config.output.separateScale ? config.output.scaleY : config.output.scale;
+    float resolvedW = 0.0f;
+    float resolvedH = 0.0f;
+    if (config.output.preserveAspectRatio) {
+        const float uniformScale = ClampMirrorOutputScale(
+            ResolveUniformScaleByFitMode(scaleX, scaleY, config.output.aspectFitMode));
+        if (!(uniformScale > 0.0f)) {
+            return false;
+        }
+        resolvedW = static_cast<float>(baseW) * uniformScale;
+        resolvedH = static_cast<float>(baseH) * uniformScale;
+    } else {
+        resolvedW = static_cast<float>(baseW) * ClampMirrorOutputScale(scaleX);
+        resolvedH = static_cast<float>(baseH) * ClampMirrorOutputScale(scaleY);
+    }
+
+    outW = std::max(1, static_cast<int>(std::round(resolvedW)));
+    outH = std::max(1, static_cast<int>(std::round(resolvedH)));
+    return true;
+}
+
 void DrawRegionQuad(int viewportWidth,
                     int viewportHeight,
                     const LetterboxRegion& region,
@@ -465,7 +497,6 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
         // Refresh mirror configs from mode state
         g_mirrorConfigs = GetMirrorModeState().GetActiveMirrorRenderList();
-        ResetAllMirrorInstanceCaptureTimers();
         g_currentActiveMode = refreshMode;
 
         if (IsDebugEnabled()) {
@@ -553,7 +584,7 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
     bool anyMirrorHasContent = false;
     for (const auto& mirrorRender : g_mirrorConfigs) {
-        auto it = g_instances.find(mirrorRender.config.name);
+        auto it = g_instances.find(BuildResolvedMirrorInstanceKey(mirrorRender));
         if (it != g_instances.end() && it->second.hasValidContent &&
             it->second.finalFbo[0] && it->second.finalTexture[0]) {
             anyMirrorHasContent = true;
@@ -707,13 +738,14 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
         for (const auto& mirrorRender : g_mirrorConfigs) {
             const auto& config = mirrorRender.config;
-            auto it = g_instances.find(config.name);
+            auto it = g_instances.find(BuildResolvedMirrorInstanceKey(mirrorRender));
             if (it == g_instances.end()) { continue; }
             const X11MirrorInstance& inst = it->second;
             if (!inst.hasValidContent || !inst.finalFbo[0] || !inst.finalTexture[0]) { continue; }
 
-            const int outW = inst.finalW;
-            const int outH = inst.finalH;
+            int outW = inst.finalW;
+            int outH = inst.finalH;
+            (void)ResolveDesiredMirrorOutputSize(config, outW, outH);
             if (outW <= 0 || outH <= 0) { continue; }
 
             int screenX, screenY;

@@ -237,8 +237,8 @@ void ApplyLiveRelativeSizeToOutput(platform::config::MirrorConfig& config,
         return;
     }
 
-    const float relativeWidth = std::clamp(config.output.relativeWidth, 0.01f, 20.0f);
-    const float relativeHeight = std::clamp(config.output.relativeHeight, 0.01f, 20.0f);
+    const float relativeWidth = std::clamp(config.output.relativeWidth, kMirrorOutputScaleMin, kMirrorOutputScaleMax);
+    const float relativeHeight = std::clamp(config.output.relativeHeight, kMirrorOutputScaleMin, kMirrorOutputScaleMax);
     config.output.relativeWidth = relativeWidth;
     config.output.relativeHeight = relativeHeight;
 
@@ -251,7 +251,8 @@ void ApplyLiveRelativeSizeToOutput(platform::config::MirrorConfig& config,
     }
 
     if (config.output.preserveAspectRatio) {
-        const float uniformScale = ResolveUniformScaleByFitMode(scaleX, scaleY, config.output.aspectFitMode);
+        const float uniformScale = ClampMirrorOutputScale(
+            ResolveUniformScaleByFitMode(scaleX, scaleY, config.output.aspectFitMode));
         if (!(uniformScale > 0.0f)) {
             return;
         }
@@ -486,8 +487,8 @@ void EnsureMirrorResources(const ResolvedMirrorRender& resolved, X11MirrorInstan
     const int border = platform::config::GetMirrorDynamicBorderPadding(config.border);
     const int fboW = config.captureWidth + 2 * border;
     const int fboH = config.captureHeight + 2 * border;
-    const float scaleX = config.output.separateScale ? config.output.scaleX : config.output.scale;
-    const float scaleY = config.output.separateScale ? config.output.scaleY : config.output.scale;
+    const float scaleX = ClampMirrorOutputScale(config.output.separateScale ? config.output.scaleX : config.output.scale);
+    const float scaleY = ClampMirrorOutputScale(config.output.separateScale ? config.output.scaleY : config.output.scale);
     const int finalW = std::max(1, static_cast<int>(static_cast<float>(fboW) * scaleX));
     const int finalH = std::max(1, static_cast<int>(static_cast<float>(fboH) * scaleY));
 
@@ -819,7 +820,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
                 anyMirrorDue = true;
                 break;
             }
-            auto it = g_instances.find(config.name);
+            auto it = g_instances.find(BuildResolvedMirrorInstanceKey(mirrorRender));
             if (it == g_instances.end()) {
                 anyMirrorDue = true;
                 break;
@@ -869,7 +870,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
             : loopI;
         auto& mirrorRender = localConfigs[idx];
         const auto& config = mirrorRender.config;
-        auto& inst = g_instances[config.name];
+        auto& inst = g_instances[BuildResolvedMirrorInstanceKey(mirrorRender)];
         if (config.fps > 0) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - inst.lastCaptureTime).count();
             if (elapsed < (1000 / config.fps)) {

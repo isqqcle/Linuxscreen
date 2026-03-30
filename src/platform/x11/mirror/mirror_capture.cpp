@@ -85,7 +85,7 @@ void RestorePublishedContentForPieMirrors() {
             continue;
         }
 
-        auto it = g_instances.find(mirrorRender.config.name);
+        auto it = g_instances.find(BuildResolvedMirrorInstanceKey(mirrorRender));
         if (it == g_instances.end()) {
             continue;
         }

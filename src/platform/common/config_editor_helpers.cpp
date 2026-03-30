@@ -127,6 +127,10 @@ void RemoveGroupFromMode(ModeConfig& mode, const std::string& groupId) {
 }
 
 std::vector<std::string> GetModesContainingMirror(const LinuxscreenConfig& config, const std::string& mirrorId) {
+    return GetModesContainingMirrorDirect(config, mirrorId);
+}
+
+std::vector<std::string> GetModesContainingMirrorDirect(const LinuxscreenConfig& config, const std::string& mirrorId) {
     std::vector<std::string> modes;
     for (const auto& mode : config.modes) {
         if (IsMirrorInMode(mode, mirrorId)) {
@@ -134,6 +138,31 @@ std::vector<std::string> GetModesContainingMirror(const LinuxscreenConfig& confi
         }
     }
     return modes;
+}
+
+std::vector<std::string> GetModesContainingGroup(const LinuxscreenConfig& config, const std::string& groupId) {
+    std::vector<std::string> modes;
+    for (const auto& mode : config.modes) {
+        if (IsGroupInMode(mode, groupId)) {
+            modes.push_back(mode.name);
+        }
+    }
+    return modes;
+}
+
+std::vector<std::string> GetGroupsContainingMirror(const LinuxscreenConfig& config, const std::string& mirrorId) {
+    std::vector<std::string> groups;
+    for (const auto& group : config.mirrorGroups) {
+        const bool containsMirror = std::any_of(group.mirrors.begin(),
+                                                group.mirrors.end(),
+                                                [&](const MirrorGroupItem& item) {
+                                                    return item.mirrorId == mirrorId;
+                                                });
+        if (containsMirror) {
+            groups.push_back(group.name);
+        }
+    }
+    return groups;
 }
 
 ModeConfig CreateNewMode(const std::string& name) {
