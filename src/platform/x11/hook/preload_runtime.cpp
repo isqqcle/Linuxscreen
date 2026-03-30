@@ -309,6 +309,7 @@ struct SyntheticRebindKeyState {
     std::map<int, bool> physicalKeyDown;
     std::map<int, std::set<int>> targetSuppressedKeys;
     std::map<int, int> suppressedKeyRefCount;
+    std::set<int> f3SuppressedSourceKeys;
 };
 
 std::mutex g_syntheticRebindKeyMutex;

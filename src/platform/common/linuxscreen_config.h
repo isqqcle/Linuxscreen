@@ -276,6 +276,7 @@ struct KeyRebind {
     input::VkCode toVkHint = input::VK_NONE;
     bool enabled = true;
     bool consumeSourceInput = false;
+    bool suppressWithF3 = false;
     std::string name;
 
     bool useCustomOutput = false;

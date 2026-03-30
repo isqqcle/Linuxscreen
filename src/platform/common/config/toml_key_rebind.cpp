@@ -49,6 +49,7 @@ void KeyRebindToToml(const KeyRebind& cfg, toml::table& out) {
     }
     out.insert("enabled", cfg.enabled);
     out.insert("consumeSourceInput", cfg.consumeSourceInput);
+    out.insert("suppressWithF3", cfg.suppressWithF3);
     out.insert("name", cfg.name);
     out.insert("useCustomOutput", cfg.useCustomOutput);
     if (input::IsValidBindingKey(cfg.customOutputKey)) {
@@ -76,6 +77,7 @@ KeyRebind KeyRebindFromToml(const toml::table& tbl) {
     ParseKeyRebindVkHintField(tbl, "toVkHint", cfg.toVkHint);
     cfg.enabled = GetOr(tbl, "enabled", true);
     cfg.consumeSourceInput = GetOr(tbl, "consumeSourceInput", false);
+    cfg.suppressWithF3 = GetOr(tbl, "suppressWithF3", false);
     cfg.name = GetStringOr(tbl, "name", "");
     cfg.useCustomOutput = GetOr(tbl, "useCustomOutput", false);
     if (const toml::node* customOutputNode = tbl.get("customOutputKey")) {

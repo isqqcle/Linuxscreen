@@ -906,6 +906,9 @@ bool IsIdentityRebindForKey(const platform::config::KeyRebind& rebind, const pla
     if (rebind.fromInput != originalBinding) {
         return false;
     }
+    if (rebind.suppressWithF3) {
+        return false;
+    }
     if (rebind.toInput != originalBinding) {
         return false;
     }
@@ -924,6 +927,9 @@ bool IsIdentityRebindForKey(const platform::config::KeyRebind& rebind, const pla
 bool IsNoOpRebindForKey(const platform::config::KeyRebind& rebind, const platform::input::BindingKey& originalBinding) {
     const bool repeatBlacklistedMouseSource = IsPrimaryMouseBinding(originalBinding);
     if (rebind.consumeSourceInput) {
+        return false;
+    }
+    if (rebind.suppressWithF3) {
         return false;
     }
     if (!repeatBlacklistedMouseSource && rebind.keyRepeatDisabled) {

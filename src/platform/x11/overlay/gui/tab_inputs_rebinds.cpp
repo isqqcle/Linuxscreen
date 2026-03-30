@@ -855,6 +855,44 @@ void RenderRebindsTab(platform::config::LinuxscreenConfig& config, bool isCaptur
                         }
                     }
 
+                    bool suppressWithF3 = false;
+                    if (hasExisting && idx >= 0 && idx < static_cast<int>(config.keyRebinds.rebinds.size())) {
+                        suppressWithF3 = config.keyRebinds.rebinds[static_cast<std::size_t>(idx)].suppressWithF3;
+                    }
+                    const bool supportsF3Suppress = !platform::input::IsMouseVk(g_rebindLayoutState.contextVk);
+                    if (!supportsF3Suppress) {
+                        ImGui::BeginDisabled();
+                    }
+                    if (ImGui::Checkbox("Suppress while F3 held##layout_rebind_f3", &suppressWithF3)) {
+                        const std::size_t previousSize = config.keyRebinds.rebinds.size();
+                        if (!hasExisting) {
+                            idx = EnsureRebindForKey(config, g_rebindLayoutState.contextVk);
+                            g_rebindLayoutState.contextPreferredIndex = idx;
+                            hasExisting = idx >= 0 && idx < static_cast<int>(config.keyRebinds.rebinds.size());
+                        }
+
+                        if (hasExisting) {
+                            auto& edit = config.keyRebinds.rebinds[static_cast<std::size_t>(idx)];
+                            edit.suppressWithF3 = suppressWithF3;
+                            if (IsNoOpRebindForKey(edit, edit.fromInput)) {
+                                EraseRebindAdjustingLayoutState(config, idx);
+                            }
+                        }
+
+                        AutoSaveConfig(config);
+                        if (config.keyRebinds.rebinds.size() != previousSize &&
+                            g_rebindLayoutState.contextPreferredIndex >= 0 &&
+                            g_rebindLayoutState.contextPreferredIndex < static_cast<int>(config.keyRebinds.rebinds.size())) {
+                            idx = g_rebindLayoutState.contextPreferredIndex;
+                        }
+                    }
+                    if (!supportsF3Suppress) {
+                        ImGui::EndDisabled();
+                        ImGui::TextDisabled("F3 suppression only applies to keyboard rebinds.");
+                    } else {
+                        ImGui::TextDisabled("Prevents this rebind from outputting while F3 is held.");
+                    }
+
                     if (platform::input::IsMouseVk(g_rebindLayoutState.contextVk) && !repeatControlsLocked) {
                         ImGui::TextDisabled("Mouse note: per-key repeat overrides apply even when global mouse repeat is off.");
                     }
