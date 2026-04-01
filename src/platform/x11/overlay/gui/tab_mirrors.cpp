@@ -280,6 +280,120 @@ void CaptureDirectEditGroupStartState(MirrorEditorState::VisualDragState& dragSt
     }
 }
 
+bool ResolveDragStartGroupUnionRect(const MirrorEditorState::VisualDragState& dragState,
+                                    int selectedGroupItemIndex,
+                                    const ImRect& selectedRect,
+                                    ImRect& outRect) {
+    bool found = false;
+    for (int i = 0; i < static_cast<int>(dragState.startGroupRects.size()); ++i) {
+        ImRect rect;
+        if (i == selectedGroupItemIndex) {
+            rect = selectedRect;
+        } else {
+            const ImVec4& rawRect = dragState.startGroupRects[static_cast<std::size_t>(i)];
+            const float width = rawRect.z - rawRect.x;
+            const float height = rawRect.w - rawRect.y;
+            if (!(width > 0.0f) || !(height > 0.0f)) {
+                continue;
+            }
+            rect = ImRect(ImVec2(rawRect.x, rawRect.y), ImVec2(rawRect.z, rawRect.w));
+        }
+
+        if (!found) {
+            outRect = rect;
+            found = true;
+            continue;
+        }
+        outRect.Add(rect.Min);
+        outRect.Add(rect.Max);
+    }
+    return found;
+}
+
+ImRect ApplyDirectEditResizeDelta(const ImRect& startRect,
+                                  int edgeMask,
+                                  const ImVec2& delta,
+                                  bool preserveAspectRatio);
+ImRect ClampDirectEditRectToSizeLimits(const ImRect& startRect,
+                                       int edgeMask,
+                                       const ImRect& updatedRect,
+                                       float minWidth,
+                                       float minHeight,
+                                       float maxWidth,
+                                       float maxHeight,
+                                       bool preserveAspectRatio);
+
+bool ResolveActiveDirectEditLayoutPreviewRect(const platform::config::LinuxscreenConfig& config,
+                                              const DirectEditResolvedItem& selectedResolvedItem,
+                                              const MirrorEditorState::DirectEditSelection& selection,
+                                              const MirrorEditorState::VisualDragState& dragState,
+                                              const MirrorDirectEditViewportContext& viewportContext,
+                                              bool preserveAspectRatio,
+                                              const ImVec2& mousePos,
+                                              ImRect& outRect) {
+    if (!dragState.active || dragState.crop) {
+        return false;
+    }
+
+    const ImVec2 delta = mousePos - dragState.dragStartMouse;
+    const float dragDistanceSq = (delta.x * delta.x) + (delta.y * delta.y);
+    if (!dragState.moved && dragDistanceSq < (kDirectEditDragThreshold * kDirectEditDragThreshold)) {
+        return false;
+    }
+
+    ImRect updatedRect(ImVec2(dragState.startRect.x, dragState.startRect.y),
+                       ImVec2(dragState.startRect.z, dragState.startRect.w));
+    updatedRect = ApplyDirectEditResizeDelta(updatedRect, dragState.edgeMask, delta, preserveAspectRatio);
+
+    float maxWidth = 40000.0f;
+    float maxHeight = 40000.0f;
+    if (selection.kind == MirrorDirectEditSelectionKind::Mirror) {
+        const int dynamicBorder =
+            platform::config::GetMirrorDynamicBorderPadding(selectedResolvedItem.resolved.config.border);
+        maxWidth = static_cast<float>(selectedResolvedItem.resolved.config.captureWidth + (2 * dynamicBorder)) *
+                   kDirectEditOutputScaleMax;
+        maxHeight = static_cast<float>(selectedResolvedItem.resolved.config.captureHeight + (2 * dynamicBorder)) *
+                    kDirectEditOutputScaleMax;
+    } else if (selection.kind == MirrorDirectEditSelectionKind::Group) {
+        const float startWidth = std::max(1.0f, dragState.startRect.z - dragState.startRect.x);
+        const float startHeight = std::max(1.0f, dragState.startRect.w - dragState.startRect.y);
+        float maxWidthRatio = kDirectEditOutputScaleMax;
+        float maxHeightRatio = kDirectEditOutputScaleMax;
+        if (dragState.startGroupUseRelativeSize) {
+            maxWidthRatio = kDirectEditOutputScaleMax /
+                            std::max(kDirectEditOutputScaleMin, dragState.startGroupRelativeWidth);
+            maxHeightRatio = kDirectEditOutputScaleMax /
+                             std::max(kDirectEditOutputScaleMin, dragState.startGroupRelativeHeight);
+        } else {
+            maxWidthRatio = kDirectEditOutputScaleMax /
+                            std::max(kDirectEditOutputScaleMin, dragState.startGroupScaleX);
+            maxHeightRatio = kDirectEditOutputScaleMax /
+                             std::max(kDirectEditOutputScaleMin, dragState.startGroupScaleY);
+        }
+        maxWidth = startWidth * std::max(1.0f, maxWidthRatio);
+        maxHeight = startHeight * std::max(1.0f, maxHeightRatio);
+    } else if (selection.kind == MirrorDirectEditSelectionKind::GroupItem) {
+        const float startWidth = std::max(1.0f, dragState.startRect.z - dragState.startRect.x);
+        const float startHeight = std::max(1.0f, dragState.startRect.w - dragState.startRect.y);
+        maxWidth = startWidth * (kGroupItemPercentMax /
+                                 std::max(kGroupItemPercentMin, dragState.startGroupItemWidthPercent));
+        maxHeight = startHeight * (kGroupItemPercentMax /
+                                   std::max(kGroupItemPercentMin, dragState.startGroupItemHeightPercent));
+    }
+
+    outRect = ClampDirectEditRectToSizeLimits(
+        ImRect(ImVec2(dragState.startRect.x, dragState.startRect.y),
+               ImVec2(dragState.startRect.z, dragState.startRect.w)),
+        dragState.edgeMask,
+        updatedRect,
+        12.0f,
+        12.0f,
+        std::max(12.0f, maxWidth),
+        std::max(12.0f, maxHeight),
+        preserveAspectRatio);
+    return true;
+}
+
 bool ResolveMirrorSourceSizeForDirectEdit(const platform::config::MirrorConfig& mirror,
                                           const MirrorDirectEditViewportContext& ctx,
                                           float& outWidth,
@@ -290,6 +404,18 @@ bool ResolveCropRectInSourceForDirectEdit(const platform::config::MirrorConfig& 
                                           float sourceWidth,
                                           float sourceHeight,
                                           ImRect& outRect);
+ImRect ApplyDirectEditResizeDelta(const ImRect& startRect,
+                                  int edgeMask,
+                                  const ImVec2& delta,
+                                  bool preserveAspectRatio);
+ImRect ClampDirectEditRectToSizeLimits(const ImRect& startRect,
+                                       int edgeMask,
+                                       const ImRect& updatedRect,
+                                       float minWidth,
+                                       float minHeight,
+                                       float maxWidth,
+                                       float maxHeight,
+                                       bool preserveAspectRatio);
 
 MirrorDirectEditViewportContext BuildMirrorDirectEditViewportContext(const platform::config::LinuxscreenConfig& config,
                                                                      float displayWidth,
@@ -2481,6 +2607,62 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
             }
         }
 
+        ImRect activePreviewRect;
+        const bool hasActiveLayoutPreview =
+            selectedItemIndex >= 0 &&
+            ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+            ResolveActiveDirectEditLayoutPreviewRect(config,
+                                                     items[static_cast<std::size_t>(selectedItemIndex)],
+                                                     g_mirrorEditorState.directEditSelection,
+                                                     g_mirrorEditorState.visualDrag,
+                                                     viewportContext,
+                                                     !shiftHeld,
+                                                     mousePos,
+                                                     activePreviewRect);
+        if (hasActiveLayoutPreview) {
+            if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::GroupItem) {
+                for (auto& item : items) {
+                    if (item.resolved.sourceGroupId != g_mirrorEditorState.directEditSelection.groupId ||
+                        item.resolved.sourceGroupItemIndex < 0 ||
+                        item.resolved.sourceGroupItemIndex >= static_cast<int>(g_mirrorEditorState.visualDrag.startGroupRects.size())) {
+                        continue;
+                    }
+
+                    if (item.resolved.sourceGroupItemIndex == g_mirrorEditorState.directEditSelection.groupItemIndex) {
+                        item.rect = activePreviewRect;
+                        continue;
+                    }
+
+                    const ImVec4& rawRect = g_mirrorEditorState.visualDrag.startGroupRects[static_cast<std::size_t>(item.resolved.sourceGroupItemIndex)];
+                    const float width = rawRect.z - rawRect.x;
+                    const float height = rawRect.w - rawRect.y;
+                    if (!(width > 0.0f) || !(height > 0.0f)) {
+                        continue;
+                    }
+                    item.rect = ImRect(ImVec2(rawRect.x, rawRect.y), ImVec2(rawRect.z, rawRect.w));
+                }
+                groupTargets.clear();
+                for (const auto& group : config.mirrorGroups) {
+                    if (group.name.empty()) {
+                        continue;
+                    }
+                    ImRect groupRect;
+                    if (ResolveDirectEditGroupRect(items, group.name, groupRect)) {
+                        groupTargets.push_back(DirectEditGroupTarget{group.name, groupRect});
+                    }
+                }
+            } else if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::Mirror) {
+                items[static_cast<std::size_t>(selectedItemIndex)].rect = activePreviewRect;
+            } else if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::Group) {
+                for (auto& groupTarget : groupTargets) {
+                    if (groupTarget.groupId == g_mirrorEditorState.directEditSelection.groupId) {
+                        groupTarget.rect = activePreviewRect;
+                        break;
+                    }
+                }
+            }
+        }
+
         int hoveredEdgeMask = kMirrorVisualEdgeNone;
         std::vector<DirectEditHitTarget> clickCandidates;
         ImRect selectedInteractionRect;
@@ -2814,75 +2996,19 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
             const auto& selectedResolvedItem = items[static_cast<std::size_t>(selectedItemIndex)];
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 const bool preserveAspectRatio = !shiftHeld;
-                const ImVec2 delta = mousePos - g_mirrorEditorState.visualDrag.dragStartMouse;
-                const float dragDistanceSq = (delta.x * delta.x) + (delta.y * delta.y);
-                if (!g_mirrorEditorState.visualDrag.moved &&
-                    dragDistanceSq < (kDirectEditDragThreshold * kDirectEditDragThreshold)) {
+                ImRect updatedRect;
+                if (!g_mirrorEditorState.visualDrag.crop &&
+                    !ResolveActiveDirectEditLayoutPreviewRect(config,
+                                                              selectedResolvedItem,
+                                                              g_mirrorEditorState.directEditSelection,
+                                                              g_mirrorEditorState.visualDrag,
+                                                              viewportContext,
+                                                              preserveAspectRatio,
+                                                              mousePos,
+                                                              updatedRect)) {
                     // Keep selection but do not quantize/apply until the pointer has actually moved.
                 } else if (!g_mirrorEditorState.visualDrag.crop) {
                     g_mirrorEditorState.visualDrag.moved = true;
-                    ImRect updatedRect(ImVec2(g_mirrorEditorState.visualDrag.startRect.x,
-                                              g_mirrorEditorState.visualDrag.startRect.y),
-                                       ImVec2(g_mirrorEditorState.visualDrag.startRect.z,
-                                              g_mirrorEditorState.visualDrag.startRect.w));
-                    updatedRect = ApplyDirectEditResizeDelta(updatedRect,
-                                                             g_mirrorEditorState.visualDrag.edgeMask,
-                                                             delta,
-                                                             preserveAspectRatio);
-                    float maxWidth = 40000.0f;
-                    float maxHeight = 40000.0f;
-                    if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::Mirror) {
-                        const int dynamicBorder =
-                            platform::config::GetMirrorDynamicBorderPadding(selectedResolvedItem.resolved.config.border);
-                        maxWidth = static_cast<float>(selectedResolvedItem.resolved.config.captureWidth + (2 * dynamicBorder)) *
-                                   kDirectEditOutputScaleMax;
-                        maxHeight = static_cast<float>(selectedResolvedItem.resolved.config.captureHeight + (2 * dynamicBorder)) *
-                                    kDirectEditOutputScaleMax;
-                    } else if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::Group) {
-                        const float startWidth =
-                            std::max(1.0f, g_mirrorEditorState.visualDrag.startRect.z - g_mirrorEditorState.visualDrag.startRect.x);
-                        const float startHeight =
-                            std::max(1.0f, g_mirrorEditorState.visualDrag.startRect.w - g_mirrorEditorState.visualDrag.startRect.y);
-                        float maxWidthRatio = kDirectEditOutputScaleMax;
-                        float maxHeightRatio = kDirectEditOutputScaleMax;
-                        if (g_mirrorEditorState.visualDrag.startGroupUseRelativeSize) {
-                            maxWidthRatio = kDirectEditOutputScaleMax /
-                                            std::max(kDirectEditOutputScaleMin,
-                                                     g_mirrorEditorState.visualDrag.startGroupRelativeWidth);
-                            maxHeightRatio = kDirectEditOutputScaleMax /
-                                             std::max(kDirectEditOutputScaleMin,
-                                                      g_mirrorEditorState.visualDrag.startGroupRelativeHeight);
-                        } else {
-                            maxWidthRatio = kDirectEditOutputScaleMax /
-                                            std::max(kDirectEditOutputScaleMin,
-                                                     g_mirrorEditorState.visualDrag.startGroupScaleX);
-                            maxHeightRatio = kDirectEditOutputScaleMax /
-                                             std::max(kDirectEditOutputScaleMin,
-                                                      g_mirrorEditorState.visualDrag.startGroupScaleY);
-                        }
-                        maxWidth = startWidth * std::max(1.0f, maxWidthRatio);
-                        maxHeight = startHeight * std::max(1.0f, maxHeightRatio);
-                    } else if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::GroupItem) {
-                        const float startWidth =
-                            std::max(1.0f, g_mirrorEditorState.visualDrag.startRect.z - g_mirrorEditorState.visualDrag.startRect.x);
-                        const float startHeight =
-                            std::max(1.0f, g_mirrorEditorState.visualDrag.startRect.w - g_mirrorEditorState.visualDrag.startRect.y);
-                        maxWidth = startWidth * (kGroupItemPercentMax / std::max(kGroupItemPercentMin, g_mirrorEditorState.visualDrag.startGroupItemWidthPercent));
-                        maxHeight = startHeight * (kGroupItemPercentMax / std::max(kGroupItemPercentMin, g_mirrorEditorState.visualDrag.startGroupItemHeightPercent));
-                    }
-                    updatedRect = ClampDirectEditRectToSizeLimits(
-                        ImRect(ImVec2(g_mirrorEditorState.visualDrag.startRect.x,
-                                      g_mirrorEditorState.visualDrag.startRect.y),
-                               ImVec2(g_mirrorEditorState.visualDrag.startRect.z,
-                                      g_mirrorEditorState.visualDrag.startRect.w)),
-                        g_mirrorEditorState.visualDrag.edgeMask,
-                        updatedRect,
-                        12.0f,
-                        12.0f,
-                        std::max(12.0f, maxWidth),
-                        std::max(12.0f, maxHeight),
-                        preserveAspectRatio);
-
                     bool changed = false;
                     if (g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::Mirror) {
                         changed = applySelectionMutation([&](platform::config::MirrorConfig& mirror) {
@@ -3025,6 +3151,13 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                                                                 kGroupItemPercentMin,
                                                                 kGroupItemPercentMax);
                             }
+                            ImRect desiredGroupRect;
+                            if (ResolveDragStartGroupUnionRect(g_mirrorEditorState.visualDrag,
+                                                               g_mirrorEditorState.directEditSelection.groupItemIndex,
+                                                               updatedRect,
+                                                               desiredGroupRect)) {
+                                ApplyOutputRectPositionToRenderConfig(group->output, desiredGroupRect, viewportContext);
+                            }
                             changed = true;
                         }
                     }
@@ -3033,6 +3166,7 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                         platform::config::PublishConfigSnapshot(config);
                     }
                 } else {
+                    const ImVec2 delta = mousePos - g_mirrorEditorState.visualDrag.dragStartMouse;
                     g_mirrorEditorState.visualDrag.moved = true;
                     platform::config::MirrorConfig* mirror = FindMirrorConfigByName(config, g_mirrorEditorState.directEditSelection.mirrorId);
                     if (mirror) {
