@@ -391,9 +391,13 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
 
     if (ImGui::BeginTabBar("##mirrors_split_panes")) {
         const ImGuiTabItemFlags mirrorsTabFlags =
-            g_mirrorEditorState.mainEditorTab == MirrorsMainEditorTab::Mirrors ? ImGuiTabItemFlags_SetSelected : 0;
+            (g_mirrorEditorState.mainEditorTabSelectionPending &&
+             g_mirrorEditorState.mainEditorTab == MirrorsMainEditorTab::Mirrors)
+                ? ImGuiTabItemFlags_SetSelected
+                : 0;
         if (ImGui::BeginTabItem("Mirrors", nullptr, mirrorsTabFlags)) {
             g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Mirrors;
+            g_mirrorEditorState.mainEditorTabSelectionPending = false;
             ImGui::Separator();
 
             if (!config.mirrors.empty()) {
@@ -497,6 +501,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                     s_selectedMirrorIndex = importedMirrorIndex;
                                     resetMirrorEditorState();
                                     g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Mirrors;
+                                    g_mirrorEditorState.mainEditorTabSelectionPending = true;
                                     g_mirrorEditorState.mirrorPresetStatusMessage.clear();
                                     AutoSaveConfig(config);
                                     ImGui::CloseCurrentPopup();
@@ -529,6 +534,7 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
                                     s_selectedGroupIndex = importedGroupIndex;
                                     resetGroupEditorState();
                                     g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Groups;
+                                    g_mirrorEditorState.mainEditorTabSelectionPending = true;
                                     g_mirrorEditorState.mirrorPresetStatusMessage.clear();
                                     AutoSaveConfig(config);
                                     ImGui::CloseCurrentPopup();
@@ -1234,9 +1240,13 @@ void RenderMirrorsTab(platform::config::LinuxscreenConfig& config) {
         }
 
         const ImGuiTabItemFlags groupsTabFlags =
-            g_mirrorEditorState.mainEditorTab == MirrorsMainEditorTab::Groups ? ImGuiTabItemFlags_SetSelected : 0;
+            (g_mirrorEditorState.mainEditorTabSelectionPending &&
+             g_mirrorEditorState.mainEditorTab == MirrorsMainEditorTab::Groups)
+                ? ImGuiTabItemFlags_SetSelected
+                : 0;
         if (ImGui::BeginTabItem("Mirror Groups", nullptr, groupsTabFlags)) {
             g_mirrorEditorState.mainEditorTab = MirrorsMainEditorTab::Groups;
+            g_mirrorEditorState.mainEditorTabSelectionPending = false;
             ImGui::Separator();
 
             if (!config.mirrorGroups.empty()) {

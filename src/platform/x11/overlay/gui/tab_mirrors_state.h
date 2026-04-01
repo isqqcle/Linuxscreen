@@ -100,6 +100,7 @@ struct MirrorEditorState {
     int directEditSelectedCaptureZoneIndex = 0;
     bool directEditShowGroupInspector = false;
     MirrorsMainEditorTab mainEditorTab = MirrorsMainEditorTab::Mirrors;
+    bool mainEditorTabSelectionPending = false;
     bool openMirrorPresetPopup = false;
     std::string mirrorPresetStatusMessage;
     int groupListSelectionIndex = 0;
