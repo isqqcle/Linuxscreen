@@ -418,7 +418,14 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
             RenderHotkeyCaptureModal();
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !isCapturing && !g_rebindLayoutState.keyboardLayoutOpen) {
+        if (g_mirrorEditorState.suppressNextGuiEscape && !ImGui::IsKeyDown(ImGuiKey_Escape)) {
+            g_mirrorEditorState.suppressNextGuiEscape = false;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+            !g_mirrorEditorState.suppressNextGuiEscape &&
+            !isCapturing &&
+            !g_rebindLayoutState.keyboardLayoutOpen) {
             guiVisible = false;
             platform::x11::SetGuiVisible(false);
         }

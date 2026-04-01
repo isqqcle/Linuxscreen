@@ -99,6 +99,7 @@ struct MirrorEditorState {
     bool directEditShowCaptureGuides = true;
     int directEditSelectedCaptureZoneIndex = 0;
     bool directEditShowGroupInspector = false;
+    bool suppressNextGuiEscape = false;
     MirrorsMainEditorTab mainEditorTab = MirrorsMainEditorTab::Mirrors;
     bool mainEditorTabSelectionPending = false;
     bool openMirrorPresetPopup = false;

@@ -2503,6 +2503,7 @@ void SetMirrorDirectEditActive(bool active, bool hideMainWindow) {
 void ExitMirrorDirectEditToSettings(bool* inOutGuiVisible) {
     SetMirrorDirectEditActive(false, false);
     g_mirrorEditorState.directEditHideMainWindow = false;
+    g_mirrorEditorState.suppressNextGuiEscape = true;
     SetGuiVisible(true);
     if (inOutGuiVisible) {
         *inOutGuiVisible = true;
