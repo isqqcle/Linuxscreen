@@ -2860,9 +2860,12 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                                                  kDirectEditHandleRadius,
                                                  mousePos,
                                                  clickedTargetMode);
+                const bool preserveGroupInspector = g_mirrorEditorState.directEditShowGroupInspector;
                 g_mirrorEditorState.directEditSelection = clickedTarget.selection;
                 g_mirrorEditorState.directEditShowGroupInspector =
-                    clickedTarget.selection.kind == MirrorDirectEditSelectionKind::Group;
+                    clickedTarget.selection.kind == MirrorDirectEditSelectionKind::Group ||
+                    (clickedTarget.selection.kind == MirrorDirectEditSelectionKind::GroupItem &&
+                     preserveGroupInspector);
                 SyncMirrorDirectEditSelectionToSidebar(config);
 
                 const bool cropModeActive =
@@ -3490,6 +3493,7 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                     std::to_string(item.resolved.sourceGroupItemIndex) + "_" +
                     std::to_string(static_cast<int>(item.resolved.sourceKind));
                 if (ImGui::Selectable(itemId.c_str(), selected)) {
+                    const bool preserveGroupInspector = g_mirrorEditorState.directEditShowGroupInspector;
                     g_mirrorEditorState.directEditSelection.kind =
                         (item.resolved.sourceKind == ResolvedMirrorSourceKind::GroupItem)
                             ? MirrorDirectEditSelectionKind::GroupItem
@@ -3497,7 +3501,9 @@ void RenderMirrorDirectEditOverlay(platform::config::LinuxscreenConfig& config,
                     g_mirrorEditorState.directEditSelection.mirrorId = item.resolved.sourceMirrorId;
                     g_mirrorEditorState.directEditSelection.groupId = item.resolved.sourceGroupId;
                     g_mirrorEditorState.directEditSelection.groupItemIndex = item.resolved.sourceGroupItemIndex;
-                    g_mirrorEditorState.directEditShowGroupInspector = false;
+                    g_mirrorEditorState.directEditShowGroupInspector =
+                        g_mirrorEditorState.directEditSelection.kind == MirrorDirectEditSelectionKind::GroupItem &&
+                        preserveGroupInspector;
                     SyncMirrorDirectEditSelectionToSidebar(config);
                 }
             }
