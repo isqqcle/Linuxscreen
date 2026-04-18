@@ -65,11 +65,17 @@ struct MirrorEditorState {
         float startGroupScale = 1.0f;
         float startGroupScaleX = 1.0f;
         float startGroupScaleY = 1.0f;
+        bool startGroupUsesLegacyBoundsAnchor = false;
+        float startGroupLegacyAnchorLocalX = 0.0f;
+        float startGroupLegacyAnchorLocalY = 0.0f;
+        float startGroupAnchorPhysicalX = 0.0f;
+        float startGroupAnchorPhysicalY = 0.0f;
         std::vector<float> startGroupWidthsPercent;
         std::vector<float> startGroupHeightsPercent;
         std::vector<int> startGroupOffsetsX;
         std::vector<int> startGroupOffsetsY;
         std::vector<ImVec4> startGroupRects;
+        std::vector<ImVec4> startCaptureZoneRects;
     };
 
     struct DirectEditSelection {

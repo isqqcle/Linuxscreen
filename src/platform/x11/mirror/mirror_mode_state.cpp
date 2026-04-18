@@ -43,6 +43,48 @@ bool ShouldUseViewportAnchor(const std::string& relativeTo) {
     return EndsWithSuffix(relativeTo, "Viewport") || IsPieAnchor(relativeTo);
 }
 
+std::string GetAnchorBase(const std::string& relativeTo) {
+    std::string anchor = relativeTo;
+    if (EndsWithSuffix(anchor, "Viewport")) {
+        anchor = anchor.substr(0, anchor.size() - 8);
+    } else if (EndsWithSuffix(anchor, "Screen")) {
+        anchor = anchor.substr(0, anchor.size() - 6);
+    }
+    return anchor;
+}
+
+bool ResolveLegacyGroupAnchorLocalPoint(const std::string& relativeTo,
+                                        float localMinX,
+                                        float localMinY,
+                                        float localMaxX,
+                                        float localMaxY,
+                                        float& outLocalAnchorX,
+                                        float& outLocalAnchorY) {
+    outLocalAnchorX = 0.0f;
+    outLocalAnchorY = 0.0f;
+
+    const std::string anchorBase = GetAnchorBase(relativeTo);
+    if (anchorBase == "custom" || anchorBase == "pieLeft" || anchorBase == "pieRight") {
+        return false;
+    }
+
+    outLocalAnchorX = localMinX;
+    if (anchorBase == "topRight" || anchorBase == "middleRight" || anchorBase == "bottomRight") {
+        outLocalAnchorX = localMaxX;
+    } else if (anchorBase == "topCenter" || anchorBase == "center" || anchorBase == "bottomCenter") {
+        outLocalAnchorX = (localMinX + localMaxX) * 0.5f;
+    }
+
+    outLocalAnchorY = localMinY;
+    if (anchorBase == "bottomLeft" || anchorBase == "bottomCenter" || anchorBase == "bottomRight") {
+        outLocalAnchorY = localMaxY;
+    } else if (anchorBase == "middleLeft" || anchorBase == "center" || anchorBase == "middleRight") {
+        outLocalAnchorY = (localMinY + localMaxY) * 0.5f;
+    }
+
+    return true;
+}
+
 struct ModeViewportRect {
     int x = 0;
     int y = 0;
@@ -525,9 +567,6 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
             groupScaleY = uniformScale;
         }
 
-        const float resolvedGroupWidth = baseGroupWidth * groupScaleX;
-        const float resolvedGroupHeight = baseGroupHeight * groupScaleY;
-
         int groupAnchorX = groupCfg.output.x;
         int groupAnchorY = groupCfg.output.y;
         if (groupCfg.output.useRelativePosition && hasScreenSize &&
@@ -536,18 +575,30 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
             groupAnchorY = static_cast<int>(groupCfg.output.relativeY * static_cast<float>(positionContainerHeight));
         }
 
-        int groupTopLeftX = groupAnchorX;
-        int groupTopLeftY = groupAnchorY;
+        int groupOriginX = groupAnchorX;
+        int groupOriginY = groupAnchorY;
         if (hasScreenSize && positionContainerWidth > 0 && positionContainerHeight > 0) {
             config::GetRelativeCoords(groupCfg.output.relativeTo,
                                       groupAnchorX,
                                       groupAnchorY,
-                                      std::max(1, static_cast<int>(std::round(resolvedGroupWidth))),
-                                      std::max(1, static_cast<int>(std::round(resolvedGroupHeight))),
+                                      0,
+                                      0,
                                       positionContainerWidth,
                                       positionContainerHeight,
-                                      groupTopLeftX,
-                                      groupTopLeftY);
+                                      groupOriginX,
+                                      groupOriginY);
+            float localAnchorX = 0.0f;
+            float localAnchorY = 0.0f;
+            if (ResolveLegacyGroupAnchorLocalPoint(groupCfg.output.relativeTo,
+                                                   localMinX,
+                                                   localMinY,
+                                                   localMaxX,
+                                                   localMaxY,
+                                                   localAnchorX,
+                                                   localAnchorY)) {
+                groupOriginX -= static_cast<int>(std::round(localAnchorX * groupScaleX));
+                groupOriginY -= static_cast<int>(std::round(localAnchorY * groupScaleY));
+            }
         }
 
         const std::string childRelativeTo = ShouldUseViewportAnchor(groupCfg.output.relativeTo)
@@ -555,8 +606,8 @@ void MirrorModeState::ApplyModeSwitchLocked(const std::string& modeName,
             : "topLeftScreen";
 
         for (auto& prepared : preparedItems) {
-            const float childLeft = static_cast<float>(groupTopLeftX) + ((prepared.localLeft - localMinX) * groupScaleX);
-            const float childTop = static_cast<float>(groupTopLeftY) + ((prepared.localTop - localMinY) * groupScaleY);
+            const float childLeft = static_cast<float>(groupOriginX) + (prepared.localLeft * groupScaleX);
+            const float childTop = static_cast<float>(groupOriginY) + (prepared.localTop * groupScaleY);
             const int targetWidth = std::max(1, static_cast<int>(std::round(prepared.localWidth * groupScaleX)));
             const int targetHeight = std::max(1, static_cast<int>(std::round(prepared.localHeight * groupScaleY)));
 
