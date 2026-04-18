@@ -73,10 +73,27 @@ bool ActiveModeViewportMatchesLiveViewport(int containerWidth,
                                         expectedY);
 
     constexpr int kViewportTolerancePx = 1;
-    return std::abs(viewportTopLeftX - expectedX) <= kViewportTolerancePx &&
-           std::abs(viewportTopLeftY - expectedY) <= kViewportTolerancePx &&
-           std::abs(viewportWidth - expectedWidth) <= kViewportTolerancePx &&
-           std::abs(viewportHeight - expectedHeight) <= kViewportTolerancePx;
+    if (std::abs(viewportTopLeftX - expectedX) <= kViewportTolerancePx &&
+        std::abs(viewportTopLeftY - expectedY) <= kViewportTolerancePx &&
+        std::abs(viewportWidth - expectedWidth) <= kViewportTolerancePx &&
+        std::abs(viewportHeight - expectedHeight) <= kViewportTolerancePx) {
+        return true;
+    }
+
+    if (IsOverscanActiveInternal() &&
+        std::abs(viewportTopLeftX) <= kViewportTolerancePx &&
+        std::abs(viewportTopLeftY) <= kViewportTolerancePx &&
+        std::abs(viewportWidth - containerWidth) <= kViewportTolerancePx &&
+        std::abs(viewportHeight - containerHeight) <= kViewportTolerancePx) {
+        return true;
+    }
+
+    return IsLiveViewportPhysicalModeResizeTarget(containerWidth,
+                                                  containerHeight,
+                                                  viewportTopLeftX,
+                                                  viewportTopLeftY,
+                                                  viewportWidth,
+                                                  viewportHeight);
 }
 
 void RestorePublishedContentForPieMirrors() {
@@ -197,6 +214,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
             }
         }
     }
+
     const std::uint64_t generation = GetSharedGlxContextGeneration();
     if (generation != 0 && generation != g_lastGeneration.load(std::memory_order_acquire)) {
 #ifdef __APPLE__
@@ -209,6 +227,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
                       height,
                       nullptr,
                       generation,
+                      false,
                       false,
                       OverscanDimensions{},
                       width,
@@ -226,6 +245,8 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
             glDeleteTextures(1, &g_gameFrameTexture);
             g_gameFrameTexture = 0;
         }
+        RecordPresentedGameTextureInternal(0, 0, 0);
+        RecordPresentedGameFramebufferInternal(0, 0, 0, GL_COLOR_ATTACHMENT0);
         g_gameFrameW = 0;
         g_gameFrameH = 0;
         g_inlineRoundRobinIdx = 0;
@@ -309,62 +330,99 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
     int copySrcY = 0;
     int copiedH = copyH;
 
+    bool copiedFromPresentedTexture = false;
+
     if (requiresGameFramebuffer) {
-        // Ensure game frame texture sized to capture dimensions
-        EnsureGameFrameTexture(captureW, captureH);
-
-        copyW = std::min(captureW, g_gameFrameW);
-        copyH = std::min(captureH, g_gameFrameH);
-        if (copyW != captureW || copyH != captureH) {
-            fprintf(stderr, "[Linuxscreen][mirror] WARNING: Capture copy %dx%d exceeds game frame texture %dx%d, clamping to %dx%d\n",
-                    captureW, captureH, g_gameFrameW, g_gameFrameH, copyW, copyH);
-        }
-        if (copyW <= 0 || copyH <= 0) { return; }
-
-        // Capture game frame on the game context
-        GLint prevActiveUnit = 0;
-        GLint prevReadFbo = 0;
-        glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveUnit);
-        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
-        // Switch to TEXTURE0 and save whatever the game had bound there, then restore it exactly.
-        glActiveTexture(GL_TEXTURE0);
-        GLint prevTex0Binding = 0;
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
-        glBindTexture(GL_TEXTURE_2D, g_gameFrameTexture);
-
-        // Read from overscan, redirect, or the default framebuffer.
-        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER,
-                             overscan ? g_overscanFbo :
-                             (macRedirect ? g_macMirrorRedirect.fbo : 0));
-
-        if (overscan) {
-            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
-        } else if (macRedirect) {
-            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
-        } else {
-            // Mirror capture coordinates are resolved in full-container space. Copy the
-            // whole drawable so the non-overscan path matches the oversized/OOB path and
-            // larger capture rectangles do not sample past the edge of a viewport-sized
-            // texture.
-            const int viewportX = 0;
-            const int viewportY = 0;
-            int safeW = copyW;
-            int safeH = copyH;
-            if (containerWidth > 0 && containerHeight > 0) {
-                safeW = std::min(safeW, std::max(0, containerWidth - viewportX));
-                safeH = std::min(safeH, std::max(0, containerHeight - viewportY));
-            }
-            copySrcX = viewportX;
-            copySrcY = viewportY;
-            copiedH = safeH;
-            if (safeW > 0 && safeH > 0) {
-                glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewportX, viewportY, safeW, safeH);
-            }
+        const bool allowPresentedTextureCopy = !overscan && !macRedirect;
+        if (allowPresentedTextureCopy) {
+            copiedFromPresentedTexture = CopyPresentedGameTextureToCaptureTexture(copyW, copyH);
+            copiedH = copyH;
         }
 
-        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
-        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
-        glActiveTexture(prevActiveUnit);
+        if (!copiedFromPresentedTexture) {
+            EnsureGameFrameTexture(captureW, captureH);
+
+            copyW = std::min(captureW, g_gameFrameW);
+            copyH = std::min(captureH, g_gameFrameH);
+            if (copyW != captureW || copyH != captureH) {
+                fprintf(stderr, "[Linuxscreen][mirror] WARNING: Capture copy %dx%d exceeds game frame texture %dx%d, clamping to %dx%d\n",
+                        captureW, captureH, g_gameFrameW, g_gameFrameH, copyW, copyH);
+            }
+            if (copyW <= 0 || copyH <= 0) { return; }
+
+            GLint prevActiveUnit = 0;
+            GLint prevReadFbo = 0;
+            GLint prevReadBuffer = GL_BACK;
+            glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveUnit);
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+            glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
+            glActiveTexture(GL_TEXTURE0);
+            GLint prevTex0Binding = 0;
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
+            glBindTexture(GL_TEXTURE_2D, g_gameFrameTexture);
+
+            g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER,
+                                 overscan ? g_overscanFbo :
+                                 (macRedirect ? g_macMirrorRedirect.fbo : 0));
+
+            if (overscan) {
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
+            } else if (macRedirect) {
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, copyW, copyH);
+            } else {
+                glReadBuffer(GL_BACK);
+                const int viewportX = std::max(0, currentViewport[0]);
+                const int viewportY = std::max(0, currentViewport[1]);
+                int safeW = copyW;
+                int safeH = copyH;
+                if (containerWidth > 0 && containerHeight > 0) {
+                    safeW = std::min(safeW, std::max(0, containerWidth - viewportX));
+                    safeH = std::min(safeH, std::max(0, containerHeight - viewportY));
+                }
+                copySrcX = viewportX;
+                copySrcY = viewportY;
+                copiedH = safeH;
+                if (safeW > 0 && safeH > 0) {
+                    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewportX, viewportY, safeW, safeH);
+                }
+            }
+
+            g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
+            glReadBuffer(static_cast<GLenum>(prevReadBuffer));
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
+            glActiveTexture(prevActiveUnit);
+        }
+
+        if (IsDebugEnabled() && g_currentActiveMode == "EyeZoom") {
+            static int debugFrame = 0;
+            if ((++debugFrame % 60) == 0) {
+                fprintf(stderr,
+                        "[Linuxscreen][mirror][debug] eyezoom-capture viewport=(%d,%d %dx%d) input=%dx%d "
+                        "container=%dx%d overscan=%d macRedirect=%d copiedPresented=%d copy=%dx%d src=(%d,%d) "
+                        "gameTex=%u %dx%d overscanRendered=%d\n",
+                        currentViewport[0],
+                        currentViewport[1],
+                        currentViewport[2],
+                        currentViewport[3],
+                        width,
+                        height,
+                        containerWidth,
+                        containerHeight,
+                        overscan ? 1 : 0,
+                        macRedirect ? 1 : 0,
+                        copiedFromPresentedTexture ? 1 : 0,
+                        copyW,
+                        copyH,
+                        copySrcX,
+                        copySrcY,
+                        g_gameFrameTexture,
+                        g_gameFrameW,
+                        g_gameFrameH,
+                        g_overscanFboRendered ? 1 : 0);
+            }
+        }
     }
 
     GLsync fence = nullptr;
@@ -388,6 +446,13 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
             break;
         }
     }
+
+    static bool s_loggedPieAnchorViewportMismatch = false;
+    static std::string s_loggedPieAnchorViewportMismatchMode;
+    static int s_loggedPieAnchorViewportMismatchX = 0;
+    static int s_loggedPieAnchorViewportMismatchY = 0;
+    static int s_loggedPieAnchorViewportMismatchW = 0;
+    static int s_loggedPieAnchorViewportMismatchH = 0;
     if (anyMirrorUsesPieAnchors &&
         !ActiveModeViewportMatchesLiveViewport(containerWidth,
                                               containerHeight,
@@ -397,21 +462,41 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
                                               currentViewport[3])) {
         RestorePublishedContentForPieMirrors();
         if (IsDebugEnabled()) {
-            fprintf(stderr,
-                    "[Linuxscreen][mirror] Skipping pie-anchor capture while live viewport (%d,%d %dx%d) differs from active mode viewport\n",
-                    viewportTopLeftX,
-                    viewportTopLeftY,
-                    currentViewport[2],
-                    currentViewport[3]);
+            const std::string activeMode = GetMirrorModeState().GetActiveModeName();
+            const bool sameMismatch =
+                s_loggedPieAnchorViewportMismatch &&
+                s_loggedPieAnchorViewportMismatchMode == activeMode &&
+                s_loggedPieAnchorViewportMismatchX == viewportTopLeftX &&
+                s_loggedPieAnchorViewportMismatchY == viewportTopLeftY &&
+                s_loggedPieAnchorViewportMismatchW == currentViewport[2] &&
+                s_loggedPieAnchorViewportMismatchH == currentViewport[3];
+            if (!sameMismatch) {
+                fprintf(stderr,
+                        "[Linuxscreen][mirror] Skipping pie-anchor capture while live viewport (%d,%d %dx%d) differs from active mode viewport\n",
+                        viewportTopLeftX,
+                        viewportTopLeftY,
+                        currentViewport[2],
+                        currentViewport[3]);
+                s_loggedPieAnchorViewportMismatch = true;
+                s_loggedPieAnchorViewportMismatchMode = activeMode;
+                s_loggedPieAnchorViewportMismatchX = viewportTopLeftX;
+                s_loggedPieAnchorViewportMismatchY = viewportTopLeftY;
+                s_loggedPieAnchorViewportMismatchW = currentViewport[2];
+                s_loggedPieAnchorViewportMismatchH = currentViewport[3];
+            }
         }
         return;
     }
+    s_loggedPieAnchorViewportMismatch = false;
 
     int textureOriginTopLeftX = 0;
     int textureOriginTopLeftY = 0;
     if (overscan) {
         textureOriginTopLeftX = -overscanSnap.marginLeft;
         textureOriginTopLeftY = -overscanSnap.marginTop;
+    } else if (copiedFromPresentedTexture && (copyW != containerWidth || copyH != containerHeight)) {
+        textureOriginTopLeftX = viewportTopLeftX;
+        textureOriginTopLeftY = viewportTopLeftY;
     } else {
         textureOriginTopLeftX = requiresGameFramebuffer ? copySrcX : 0;
         textureOriginTopLeftY = requiresGameFramebuffer ? (containerHeight - (copySrcY + copiedH)) : 0;
@@ -430,6 +515,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
         slot.viewportHeight = currentViewport[3];
         slot.textureOriginTopLeftX = textureOriginTopLeftX;
         slot.textureOriginTopLeftY = textureOriginTopLeftY;
+        slot.gameCaptureFromPresentedTexture = copiedFromPresentedTexture;
         slot.overscanActive = overscan;
         slot.overscanWindowWidth = overscanSnap.windowWidth;
         slot.overscanWindowHeight = overscanSnap.windowHeight;
@@ -449,6 +535,7 @@ void SubmitGlxMirrorCaptureInternal(int width, int height) {
                   copyH,
                   fence,
                   generation,
+                  copiedFromPresentedTexture,
                   overscan,
                   overscanSnap,
                   containerWidth,

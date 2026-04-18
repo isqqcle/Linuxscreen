@@ -21,7 +21,7 @@ static bool ResolveOverscanTargetForActiveMode(int containerWidth,
         return false;
     }
 
-    return outTargetWidth > containerWidth || outTargetHeight > containerHeight;
+    return outTargetWidth != containerWidth || outTargetHeight != containerHeight;
 }
 
 static void DestroyOverscanFbo() {
@@ -177,16 +177,25 @@ bool UpdateOverscanStateInternal(int windowWidth, int windowHeight) {
 
     int targetWidth = 0;
     int targetHeight = 0;
-    const bool needsOverscan = ResolveOverscanTargetForActiveMode(windowWidth,
-                                                                  windowHeight,
-                                                                  targetWidth,
-                                                                  targetHeight);
+    int resizeBasisWidth = 0;
+    int resizeBasisHeight = 0;
+    bool needsOverscan = false;
+    if (GetRecordedPhysicalModeResizeBasis(windowWidth, windowHeight, resizeBasisWidth, resizeBasisHeight)) {
+        targetWidth = windowWidth;
+        targetHeight = windowHeight;
+        needsOverscan = true;
+    } else {
+        needsOverscan = ResolveOverscanTargetForActiveMode(windowWidth,
+                                                           windowHeight,
+                                                           targetWidth,
+                                                           targetHeight);
+    }
 
     if (!needsOverscan) {
         if (g_overscanActive.load(std::memory_order_acquire)) {
             DestroyOverscanFbo();
             if (IsDebugEnabled()) {
-                fprintf(stderr, "[Linuxscreen][overscan] Overscan disabled (active mode fits window)\n");
+                fprintf(stderr, "[Linuxscreen][overscan] Offscreen mode target disabled (active mode matches window)\n");
             }
         }
         return false;

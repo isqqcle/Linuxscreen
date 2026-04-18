@@ -1,3 +1,34 @@
+const char* ResolveImGuiGlSlVersionForCurrentContext() {
+#ifdef __APPLE__
+    static thread_local std::string versionDirective;
+    const GLubyte* versionBytes = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    const char* version = reinterpret_cast<const char*>(versionBytes);
+    int major = 0;
+    int minor = 0;
+    if (version) {
+        const char* numeric = version;
+        while (*numeric && !std::isdigit(static_cast<unsigned char>(*numeric))) {
+            ++numeric;
+        }
+        if (std::sscanf(numeric, "%d.%d", &major, &minor) == 2) {
+            const int glslVersion = major * 100 + (minor < 10 ? minor * 10 : minor);
+            if (glslVersion >= 130) {
+                const int targetVersion = std::min(glslVersion, 330);
+                versionDirective = "#version " + std::to_string(targetVersion);
+                if (targetVersion >= 330) {
+                    versionDirective += " core";
+                }
+                return versionDirective.c_str();
+            }
+        }
+    }
+
+    return "#version 120";
+#else
+    return nullptr;
+#endif
+}
+
 void ShutdownImGuiOverlayLocked(bool processExit) {
     if (!processExit) {
         FlushPendingConfigSave(true);
@@ -133,11 +164,7 @@ bool EnsureImGuiOverlayInitializedLocked(void* glContext) {
         io.Fonts->AddFontDefault(&fontConfig);
     }
 
-#ifdef __APPLE__
-    if (!ImGui_ImplOpenGL3_Init("#version 120")) {
-#else
-    if (!ImGui_ImplOpenGL3_Init(nullptr)) {
-#endif
+    if (!ImGui_ImplOpenGL3_Init(ResolveImGuiGlSlVersionForCurrentContext())) {
         ImGui::DestroyContext(context);
         ImGui::SetCurrentContext(previousContext);
         return false;

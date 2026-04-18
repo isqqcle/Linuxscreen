@@ -106,6 +106,8 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
     (void)GetRealGlXSwapBuffersMscOML();
     (void)GetRealGlXGetProcAddress();
     (void)GetRealGlXGetProcAddressARB();
+    (void)GetRealGlBlitFramebuffer();
+    (void)GetRealGlBlitNamedFramebuffer();
 #endif
     (void)GetRealDlSym();
 }

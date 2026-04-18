@@ -620,12 +620,50 @@ void ResolveRealGlBindFramebuffer() {
     if (symbol) { LogDebug("resolved real glBindFramebuffer symbol at %p", symbol); }
 }
 
+void ResolveRealGlBlitFramebuffer() {
+#ifdef __APPLE__
+    void* symbol = ResolveSymbol("glBlitFramebuffer", nullptr, nullptr);
+#else
+    EnsureLibGlHandle();
+    void* symbol = ResolveSymbol("glBlitFramebuffer", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
+    if (!symbol) {
+        auto getProc = g_realGlXGetProcAddress.load(std::memory_order_acquire);
+        if (getProc) { symbol = reinterpret_cast<void*>(getProc(reinterpret_cast<const GLubyte*>("glBlitFramebuffer"))); }
+    }
+#endif
+    g_realGlBlitFramebuffer.store(reinterpret_cast<GlBlitFramebufferFn>(symbol), std::memory_order_release);
+}
+
+void ResolveRealGlBlitNamedFramebuffer() {
+#ifdef __APPLE__
+    void* symbol = ResolveSymbol("glBlitNamedFramebuffer", nullptr, nullptr);
+#else
+    EnsureLibGlHandle();
+    void* symbol = ResolveSymbol("glBlitNamedFramebuffer", g_libGlHandle.load(std::memory_order_acquire), "libGL.so.1");
+    if (!symbol) {
+        auto getProc = g_realGlXGetProcAddress.load(std::memory_order_acquire);
+        if (getProc) { symbol = reinterpret_cast<void*>(getProc(reinterpret_cast<const GLubyte*>("glBlitNamedFramebuffer"))); }
+    }
+#endif
+    g_realGlBlitNamedFramebuffer.store(reinterpret_cast<GlBlitNamedFramebufferFn>(symbol), std::memory_order_release);
+}
+
 #ifndef __APPLE__
 GlXSwapBuffersFn GetRealGlXSwapBuffers() {
     if (!g_realGlXSwapBuffers.load(std::memory_order_acquire)) { ResolveRealGlXSwapBuffers(); }
     return g_realGlXSwapBuffers.load(std::memory_order_acquire);
 }
 #endif
+
+GlBlitFramebufferFn GetRealGlBlitFramebuffer() {
+    if (!g_realGlBlitFramebuffer.load(std::memory_order_acquire)) { ResolveRealGlBlitFramebuffer(); }
+    return g_realGlBlitFramebuffer.load(std::memory_order_acquire);
+}
+
+GlBlitNamedFramebufferFn GetRealGlBlitNamedFramebuffer() {
+    if (!g_realGlBlitNamedFramebuffer.load(std::memory_order_acquire)) { ResolveRealGlBlitNamedFramebuffer(); }
+    return g_realGlBlitNamedFramebuffer.load(std::memory_order_acquire);
+}
 
 GlViewportFn GetRealGlViewport() {
     if (!g_realGlViewport.load(std::memory_order_acquire)) { ResolveRealGlViewport(); }
@@ -852,6 +890,14 @@ __GLXextFuncPtr ResolveProcAddressRequest(const GLubyte* procName, GlXGetProcAdd
 
     if (IsRequestedProcName(procName, "glBindFramebuffer")) {
         return reinterpret_cast<__GLXextFuncPtr>(glBindFramebuffer);
+    }
+
+    if (IsRequestedProcName(procName, "glBlitFramebuffer")) {
+        return reinterpret_cast<__GLXextFuncPtr>(glBlitFramebuffer);
+    }
+
+    if (IsRequestedProcName(procName, "glBlitNamedFramebuffer")) {
+        return reinterpret_cast<__GLXextFuncPtr>(glBlitNamedFramebuffer);
     }
 
     return resolver ? resolver(procName) : nullptr;

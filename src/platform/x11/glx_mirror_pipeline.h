@@ -19,6 +19,14 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight);
 void ShutdownGlxMirrorPipeline();
 void ShutdownGlxMirrorThreadsForProcessExit();
 void ShutdownGlxMirrorPipelineForProcessExit();
+void RecordPresentedGameTexture(GLuint texture, int width, int height);
+bool GetPresentedGameTexture(GLuint& texture, int& width, int& height);
+void RecordPresentedGameFramebuffer(GLuint framebuffer,
+                                    int width,
+                                    int height,
+                                    GLenum readBuffer = GL_COLOR_ATTACHMENT0);
+bool GetPresentedGameFramebuffer(GLuint& framebuffer, int& width, int& height);
+void RecordPhysicalModeResizeTarget(int targetWidth, int targetHeight, int basisWidth, int basisHeight);
 
 MirrorModeState& GetMirrorModeState();
 
@@ -36,6 +44,7 @@ bool IsMacMirrorRedirectRendered();
 
 void MarkOverscanFboRendered();
 void MarkMacMirrorRedirectRendered();
+void CaptureDefaultFramebufferToMacMirrorRedirectIfNeeded();
 
 struct OverscanDimensions {
     int totalWidth = 0;

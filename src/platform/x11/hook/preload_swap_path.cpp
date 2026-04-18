@@ -42,6 +42,12 @@ void ApplyGlobalFpsLimitBeforeSwap() {
     }
 }
 
+bool IsColorAttachmentEnum(GLint bufferEnum) {
+    constexpr GLint kMaxColorAttachment = static_cast<GLint>(GL_COLOR_ATTACHMENT0) + 31;
+    return bufferEnum >= static_cast<GLint>(GL_COLOR_ATTACHMENT0) &&
+           bufferEnum <= kMaxColorAttachment;
+}
+
 } // namespace
 
 void RenderGuiOverlay(GLFWwindow* preferredWindow, const char* sourceLabel) {
@@ -133,6 +139,9 @@ void SubmitMirrorPipelineCapture() {
 
     platform::x11::UpdateOverscanState(containerW, containerH);
     platform::x11::UpdateMacMirrorRedirectState(containerW, containerH);
+#ifdef __APPLE__
+    platform::x11::CaptureDefaultFramebufferToMacMirrorRedirectIfNeeded();
+#endif
 
     g_lastSwapViewportX.store(viewport[0], std::memory_order_relaxed);
     g_lastSwapViewportY.store(viewport[1], std::memory_order_relaxed);
@@ -213,6 +222,8 @@ namespace platform::x11 {
 void TriggerImmediateModeResizeEnforcement() {
     g_lastResizeRequestWidth.store(0, std::memory_order_relaxed);
     g_lastResizeRequestHeight.store(0, std::memory_order_relaxed);
+    g_lastResizeBasisWidth.store(0, std::memory_order_relaxed);
+    g_lastResizeBasisHeight.store(0, std::memory_order_relaxed);
     TickModeResolutionTransition();
 }
 
@@ -451,7 +462,33 @@ bool IsMainFramebufferDrawTarget() {
     return overscanFbo != 0 && static_cast<GLuint>(drawFramebuffer) == overscanFbo;
 }
 
-extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+bool EnsureOffscreenModeTargetForDefaultFramebuffer() {
+    if (platform::x11::IsOverscanActive()) {
+        return true;
+    }
+
+    int containerW = 0;
+    int containerH = 0;
+    if (!GetCurrentPhysicalContainerSize(containerW, containerH) ||
+        containerW <= 0 ||
+        containerH <= 0) {
+        return false;
+    }
+
+    platform::x11::UpdateOverscanState(containerW, containerH);
+    if (platform::x11::IsOverscanActive()) {
+        return true;
+    }
+
+#ifdef __APPLE__
+    platform::x11::UpdateMacMirrorRedirectState(containerW, containerH);
+    return platform::x11::IsMacMirrorRedirectActive();
+#else
+    return false;
+#endif
+}
+
+void HookedGlViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
     GlViewportFn realFn = GetRealGlViewport();
     if (!realFn) {
         return;
@@ -467,7 +504,7 @@ extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
         return;
     }
 
-    if (!IsCanonicalMainContentRect(x, y, width, height)) {
+    if (!IsMainContentCoordinateRect(x, y, width, height)) {
         realFn(x, y, width, height);
         return;
     }
@@ -482,7 +519,7 @@ extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
     realFn(x, y, width, height);
 }
 
-extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height) {
+void HookedGlScissor(GLint x, GLint y, GLsizei width, GLsizei height) {
     GlScissorFn realFn = GetRealGlScissor();
     if (!realFn) {
         return;
@@ -498,7 +535,7 @@ extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height) {
         return;
     }
 
-    if (!IsCanonicalMainContentRect(x, y, width, height)) {
+    if (!IsMainContentCoordinateRect(x, y, width, height)) {
         realFn(x, y, width, height);
         return;
     }
@@ -513,13 +550,17 @@ extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height) {
     realFn(x, y, width, height);
 }
 
-extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer) {
+void HookedGlBindFramebuffer(GLenum target, GLuint framebuffer) {
     GlBindFramebufferFn realFn = GetRealGlBindFramebuffer();
     if (!realFn) { return; }
 
     if (g_bypassViewportPlacement) {
         realFn(target, framebuffer);
         return;
+    }
+
+    if (framebuffer == 0) {
+        (void)EnsureOffscreenModeTargetForDefaultFramebuffer();
     }
 
     if (framebuffer == 0 && platform::x11::IsOverscanActive()) {
@@ -546,3 +587,488 @@ extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer) {
 
     realFn(target, framebuffer);
 }
+
+bool GetTexture2DLevel0Size(GLuint texture, int& outWidth, int& outHeight) {
+    outWidth = 0;
+    outHeight = 0;
+    if (texture == 0 || glIsTexture(texture) != GL_TRUE) {
+        return false;
+    }
+
+    GLint previousActiveTexture = 0;
+    GLint previousTexture = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &outWidth);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &outHeight);
+
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+    glActiveTexture(static_cast<GLenum>(previousActiveTexture));
+
+    return outWidth > 0 && outHeight > 0;
+}
+
+void TrackCurrentReadFramebufferColorTexture() {
+    GLint readFramebuffer = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+    GLint readBuffer = 0;
+    glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+    if (!IsColorAttachmentEnum(readBuffer)) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+    const GLenum attachment = static_cast<GLenum>(readBuffer);
+
+    using GlGetFramebufferAttachmentParameterivFn = void (*)(GLenum, GLenum, GLenum, GLint*);
+    static GlGetFramebufferAttachmentParameterivFn getFramebufferAttachmentParameteriv =
+        reinterpret_cast<GlGetFramebufferAttachmentParameterivFn>(
+            platform::x11::ResolveCurrentGlProcAddress("glGetFramebufferAttachmentParameteriv"));
+    if (!getFramebufferAttachmentParameteriv) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    GLint attachmentType = GL_NONE;
+    getFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER,
+                                        attachment,
+                                        GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                        &attachmentType);
+    if (attachmentType != GL_TEXTURE) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    GLint attachmentName = 0;
+    getFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER,
+                                        attachment,
+                                        GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                        &attachmentName);
+    int textureWidth = 0;
+    int textureHeight = 0;
+    if (attachmentName <= 0 ||
+        !GetTexture2DLevel0Size(static_cast<GLuint>(attachmentName), textureWidth, textureHeight)) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    platform::x11::RecordPresentedGameTexture(static_cast<GLuint>(attachmentName), textureWidth, textureHeight);
+}
+
+void TrackExplicitFramebufferColorTexture(GLuint fbo) {
+    if (fbo == 0) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    using GlGetNamedFramebufferAttachmentParameterivFn = void (*)(GLuint, GLenum, GLenum, GLint*);
+    static GlGetNamedFramebufferAttachmentParameterivFn getNamedFramebufferAttachmentParameteriv =
+        reinterpret_cast<GlGetNamedFramebufferAttachmentParameterivFn>(
+            platform::x11::ResolveCurrentGlProcAddress("glGetNamedFramebufferAttachmentParameteriv"));
+    if (!getNamedFramebufferAttachmentParameteriv) {
+        TrackCurrentReadFramebufferColorTexture();
+        return;
+    }
+
+    GlBindFramebufferFn bindFramebufferFn = GetRealGlBindFramebuffer();
+    if (!bindFramebufferFn) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    GLint previousReadFramebuffer = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+    bindFramebufferFn(GL_READ_FRAMEBUFFER, fbo);
+    GLint readBuffer = 0;
+    glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+    bindFramebufferFn(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+
+    if (!IsColorAttachmentEnum(readBuffer)) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+    const GLenum attachment = static_cast<GLenum>(readBuffer);
+
+    GLint attachmentType = GL_NONE;
+    getNamedFramebufferAttachmentParameteriv(fbo,
+                                             attachment,
+                                             GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                             &attachmentType);
+    if (attachmentType != GL_TEXTURE) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    GLint attachmentName = 0;
+    getNamedFramebufferAttachmentParameteriv(fbo,
+                                             attachment,
+                                             GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                             &attachmentName);
+    int textureWidth = 0;
+    int textureHeight = 0;
+    if (attachmentName <= 0 ||
+        !GetTexture2DLevel0Size(static_cast<GLuint>(attachmentName), textureWidth, textureHeight)) {
+        platform::x11::RecordPresentedGameTexture(0, 0, 0);
+        return;
+    }
+
+    platform::x11::RecordPresentedGameTexture(static_cast<GLuint>(attachmentName), textureWidth, textureHeight);
+}
+
+bool BlitRectEquals(GLint x0a,
+                    GLint y0a,
+                    GLint x1a,
+                    GLint y1a,
+                    GLint x0b,
+                    GLint y0b,
+                    GLint x1b,
+                    GLint y1b) {
+    const GLint aMinX = std::min(x0a, x1a);
+    const GLint aMaxX = std::max(x0a, x1a);
+    const GLint aMinY = std::min(y0a, y1a);
+    const GLint aMaxY = std::max(y0a, y1a);
+    const GLint bMinX = std::min(x0b, x1b);
+    const GLint bMaxX = std::max(x0b, x1b);
+    const GLint bMinY = std::min(y0b, y1b);
+    const GLint bMaxY = std::max(y0b, y1b);
+    return aMinX == bMinX && aMaxX == bMaxX && aMinY == bMinY && aMaxY == bMaxY;
+}
+
+bool ResolveTranslatedPresentedBlitDestination(GLint dstX0,
+                                               GLint dstY0,
+                                               GLint dstX1,
+                                               GLint dstY1,
+                                               GLint& outDstX0,
+                                               GLint& outDstY0,
+                                               GLint& outDstX1,
+                                               GLint& outDstY1) {
+    outDstX0 = 0;
+    outDstY0 = 0;
+    outDstX1 = 0;
+    outDstY1 = 0;
+
+    PlacementTransform transform;
+    if (!ResolvePlacementTransform(transform) ||
+        transform.physicalWidth <= 0 ||
+        transform.physicalHeight <= 0) {
+        return false;
+    }
+
+    if (!BlitRectEquals(dstX0,
+                        dstY0,
+                        dstX1,
+                        dstY1,
+                        0,
+                        0,
+                        static_cast<GLint>(transform.physicalWidth),
+                        static_cast<GLint>(transform.physicalHeight))) {
+        return false;
+    }
+
+    outDstX0 = static_cast<GLint>(transform.framebufferBottomLeftX);
+    outDstY0 = static_cast<GLint>(transform.framebufferBottomLeftY);
+    outDstX1 = static_cast<GLint>(transform.framebufferBottomLeftX + transform.physicalWidth);
+    outDstY1 = static_cast<GLint>(transform.framebufferBottomLeftY + transform.physicalHeight);
+    return true;
+}
+
+void HookedGlBlitFramebuffer(GLint srcX0,
+                             GLint srcY0,
+                             GLint srcX1,
+                             GLint srcY1,
+                             GLint dstX0,
+                             GLint dstY0,
+                             GLint dstX1,
+                             GLint dstY1,
+                             GLbitfield mask,
+                             GLenum filter) {
+    GlBlitFramebufferFn realFn = GetRealGlBlitFramebuffer();
+    if (!realFn) {
+        return;
+    }
+
+    if (g_bypassViewportPlacement) {
+        realFn(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+        return;
+    }
+
+    GLint readFramebuffer = 0;
+    GLint drawFramebuffer = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
+
+    constexpr GLbitfield kPresentedBlitMask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
+    if (drawFramebuffer == 0 && readFramebuffer != 0 && (mask & kPresentedBlitMask) != 0) {
+        (void)EnsureOffscreenModeTargetForDefaultFramebuffer();
+
+        if ((mask & GL_COLOR_BUFFER_BIT) != 0) {
+            const int presentedWidth = srcX1 >= srcX0 ? (srcX1 - srcX0) : (srcX0 - srcX1);
+            const int presentedHeight = srcY1 >= srcY0 ? (srcY1 - srcY0) : (srcY0 - srcY1);
+            GLint readBuffer = GL_COLOR_ATTACHMENT0;
+            glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+            platform::x11::RecordPresentedGameFramebuffer(static_cast<GLuint>(readFramebuffer),
+                                                          presentedWidth,
+                                                          presentedHeight,
+                                                          static_cast<GLenum>(readBuffer));
+            TrackCurrentReadFramebufferColorTexture();
+        }
+
+        if (platform::x11::IsOverscanActive()) {
+            const GLuint overscanFbo = platform::x11::GetOverscanFboId();
+            if (overscanFbo != 0) {
+                const auto dims = platform::x11::GetOverscanDimensions();
+                GlBindFramebufferFn bindFn = GetRealGlBindFramebuffer();
+                if (bindFn) {
+                    bindFn(GL_DRAW_FRAMEBUFFER, overscanFbo);
+                    realFn(srcX0,
+                           srcY0,
+                           srcX1,
+                           srcY1,
+                           dstX0 + dims.marginLeft,
+                           dstY0 + dims.marginBottom,
+                           dstX1 + dims.marginLeft,
+                           dstY1 + dims.marginBottom,
+                           mask,
+                           filter);
+                    bindFn(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(drawFramebuffer));
+                    platform::x11::MarkOverscanFboRendered();
+                    return;
+                }
+            }
+        }
+
+        GLint resolvedDstX0 = 0;
+        GLint resolvedDstY0 = 0;
+        GLint resolvedDstX1 = 0;
+        GLint resolvedDstY1 = 0;
+        const bool translated = ResolveTranslatedPresentedBlitDestination(dstX0, dstY0, dstX1, dstY1,
+                                                                          resolvedDstX0, resolvedDstY0,
+                                                                          resolvedDstX1, resolvedDstY1);
+        if (IsDebugEnabled()) {
+            static int debugBlitFrame = 0;
+            if ((++debugBlitFrame % 120) == 0) {
+                PlacementTransform transform;
+                const bool hasTransform = ResolvePlacementTransform(transform);
+                LogDebug("glBlitFramebuffer present readFbo=%d mask=0x%x src=(%d,%d)-(%d,%d) dst=(%d,%d)-(%d,%d) "
+                         "translated=%d translatedDst=(%d,%d)-(%d,%d) transform=%d phys=%dx%d fb=%dx%d placed=(%d,%d)",
+                         readFramebuffer,
+                         static_cast<unsigned int>(mask),
+                         srcX0,
+                         srcY0,
+                         srcX1,
+                         srcY1,
+                         dstX0,
+                         dstY0,
+                         dstX1,
+                         dstY1,
+                         translated ? 1 : 0,
+                         resolvedDstX0,
+                         resolvedDstY0,
+                         resolvedDstX1,
+                         resolvedDstY1,
+                         hasTransform ? 1 : 0,
+                         hasTransform ? transform.physicalWidth : 0,
+                         hasTransform ? transform.physicalHeight : 0,
+                         hasTransform ? transform.framebufferWidth : 0,
+                         hasTransform ? transform.framebufferHeight : 0,
+                         hasTransform ? transform.framebufferBottomLeftX : 0,
+                         hasTransform ? transform.framebufferBottomLeftY : 0);
+            }
+        }
+        if (translated) {
+            realFn(srcX0,
+                   srcY0,
+                   srcX1,
+                   srcY1,
+                   resolvedDstX0,
+                   resolvedDstY0,
+                   resolvedDstX1,
+                   resolvedDstY1,
+                   mask,
+                   filter);
+            return;
+        }
+    }
+
+    realFn(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+}
+
+void HookedGlBlitNamedFramebuffer(GLuint readFramebuffer,
+                                  GLuint drawFramebuffer,
+                                  GLint srcX0,
+                                  GLint srcY0,
+                                  GLint srcX1,
+                                  GLint srcY1,
+                                  GLint dstX0,
+                                  GLint dstY0,
+                                  GLint dstX1,
+                                  GLint dstY1,
+                                  GLbitfield mask,
+                                  GLenum filter) {
+    GlBlitNamedFramebufferFn realFn = GetRealGlBlitNamedFramebuffer();
+    if (!realFn) {
+        return;
+    }
+
+    if (g_bypassViewportPlacement) {
+        realFn(readFramebuffer, drawFramebuffer, srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+        return;
+    }
+
+    constexpr GLbitfield kPresentedBlitMask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
+    if (drawFramebuffer == 0 && readFramebuffer != 0 && (mask & kPresentedBlitMask) != 0) {
+        (void)EnsureOffscreenModeTargetForDefaultFramebuffer();
+
+        if ((mask & GL_COLOR_BUFFER_BIT) != 0) {
+            const int presentedWidth = srcX1 >= srcX0 ? (srcX1 - srcX0) : (srcX0 - srcX1);
+            const int presentedHeight = srcY1 >= srcY0 ? (srcY1 - srcY0) : (srcY0 - srcY1);
+            GLenum readBuffer = GL_COLOR_ATTACHMENT0;
+            if (GlBindFramebufferFn bindFramebufferFn = GetRealGlBindFramebuffer()) {
+                GLint previousReadFramebuffer = 0;
+                GLint currentReadBuffer = GL_COLOR_ATTACHMENT0;
+                glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+                bindFramebufferFn(GL_READ_FRAMEBUFFER, readFramebuffer);
+                glGetIntegerv(GL_READ_BUFFER, &currentReadBuffer);
+                bindFramebufferFn(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+                readBuffer = static_cast<GLenum>(currentReadBuffer);
+            }
+            platform::x11::RecordPresentedGameFramebuffer(readFramebuffer,
+                                                          presentedWidth,
+                                                          presentedHeight,
+                                                          readBuffer);
+            TrackExplicitFramebufferColorTexture(readFramebuffer);
+        }
+
+        if (platform::x11::IsOverscanActive()) {
+            const GLuint overscanFbo = platform::x11::GetOverscanFboId();
+            if (overscanFbo != 0) {
+                const auto dims = platform::x11::GetOverscanDimensions();
+                realFn(readFramebuffer,
+                       overscanFbo,
+                       srcX0,
+                       srcY0,
+                       srcX1,
+                       srcY1,
+                       dstX0 + dims.marginLeft,
+                       dstY0 + dims.marginBottom,
+                       dstX1 + dims.marginLeft,
+                       dstY1 + dims.marginBottom,
+                       mask,
+                       filter);
+                platform::x11::MarkOverscanFboRendered();
+                return;
+            }
+        }
+
+        GLint resolvedDstX0 = 0;
+        GLint resolvedDstY0 = 0;
+        GLint resolvedDstX1 = 0;
+        GLint resolvedDstY1 = 0;
+        const bool translated = ResolveTranslatedPresentedBlitDestination(dstX0, dstY0, dstX1, dstY1,
+                                                                          resolvedDstX0, resolvedDstY0,
+                                                                          resolvedDstX1, resolvedDstY1);
+        if (IsDebugEnabled()) {
+            static int debugNamedBlitFrame = 0;
+            if ((++debugNamedBlitFrame % 120) == 0) {
+                PlacementTransform transform;
+                const bool hasTransform = ResolvePlacementTransform(transform);
+                LogDebug("glBlitNamedFramebuffer present readFbo=%u mask=0x%x src=(%d,%d)-(%d,%d) dst=(%d,%d)-(%d,%d) "
+                         "translated=%d translatedDst=(%d,%d)-(%d,%d) transform=%d phys=%dx%d fb=%dx%d placed=(%d,%d)",
+                         readFramebuffer,
+                         static_cast<unsigned int>(mask),
+                         srcX0,
+                         srcY0,
+                         srcX1,
+                         srcY1,
+                         dstX0,
+                         dstY0,
+                         dstX1,
+                         dstY1,
+                         translated ? 1 : 0,
+                         resolvedDstX0,
+                         resolvedDstY0,
+                         resolvedDstX1,
+                         resolvedDstY1,
+                         hasTransform ? 1 : 0,
+                         hasTransform ? transform.physicalWidth : 0,
+                         hasTransform ? transform.physicalHeight : 0,
+                         hasTransform ? transform.framebufferWidth : 0,
+                         hasTransform ? transform.framebufferHeight : 0,
+                         hasTransform ? transform.framebufferBottomLeftX : 0,
+                         hasTransform ? transform.framebufferBottomLeftY : 0);
+            }
+        }
+        if (translated) {
+            realFn(readFramebuffer,
+                   drawFramebuffer,
+                   srcX0,
+                   srcY0,
+                   srcX1,
+                   srcY1,
+                   resolvedDstX0,
+                   resolvedDstY0,
+                   resolvedDstX1,
+                   resolvedDstY1,
+                   mask,
+                   filter);
+            return;
+        }
+    }
+
+    realFn(readFramebuffer, drawFramebuffer, srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+}
+
+#ifndef __APPLE__
+extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+    HookedGlViewport(x, y, width, height);
+}
+
+extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height) {
+    HookedGlScissor(x, y, width, height);
+}
+
+extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer) {
+    HookedGlBindFramebuffer(target, framebuffer);
+}
+
+extern "C" void glBlitFramebuffer(GLint srcX0,
+                                  GLint srcY0,
+                                  GLint srcX1,
+                                  GLint srcY1,
+                                  GLint dstX0,
+                                  GLint dstY0,
+                                  GLint dstX1,
+                                  GLint dstY1,
+                                  GLbitfield mask,
+                                  GLenum filter) {
+    HookedGlBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+}
+
+extern "C" void glBlitNamedFramebuffer(GLuint readFramebuffer,
+                                       GLuint drawFramebuffer,
+                                       GLint srcX0,
+                                       GLint srcY0,
+                                       GLint srcX1,
+                                       GLint srcY1,
+                                       GLint dstX0,
+                                       GLint dstY0,
+                                       GLint dstX1,
+                                       GLint dstY1,
+                                       GLbitfield mask,
+                                       GLenum filter) {
+    HookedGlBlitNamedFramebuffer(readFramebuffer,
+                                 drawFramebuffer,
+                                 srcX0,
+                                 srcY0,
+                                 srcX1,
+                                 srcY1,
+                                 dstX0,
+                                 dstY0,
+                                 dstX1,
+                                 dstY1,
+                                 mask,
+                                 filter);
+}
+#endif

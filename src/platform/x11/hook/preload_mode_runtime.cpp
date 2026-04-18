@@ -133,6 +133,23 @@ void TickModeResolutionTransition() {
         }
     }
 
+    const int lastResizeRequestWidth = g_lastResizeRequestWidth.load(std::memory_order_relaxed);
+    const int lastResizeRequestHeight = g_lastResizeRequestHeight.load(std::memory_order_relaxed);
+    if (lastResizeRequestWidth > 0 &&
+        lastResizeRequestHeight > 0 &&
+        currentWidth == lastResizeRequestWidth &&
+        currentHeight == lastResizeRequestHeight) {
+        const int lastBasisWidth = g_lastResizeBasisWidth.load(std::memory_order_relaxed);
+        const int lastBasisHeight = g_lastResizeBasisHeight.load(std::memory_order_relaxed);
+        if (lastBasisWidth > 0 && lastBasisHeight > 0) {
+            platform::x11::RecordPhysicalModeResizeTarget(currentWidth,
+                                                          currentHeight,
+                                                          lastBasisWidth,
+                                                          lastBasisHeight);
+        }
+        return;
+    }
+
     int basisWidth = 0;
     int basisHeight = 0;
     if (!GetCurrentContainerSizeForModeTarget(basisWidth, basisHeight)) {
@@ -148,9 +165,13 @@ void TickModeResolutionTransition() {
         return;
     }
 
+    platform::x11::RecordPhysicalModeResizeTarget(targetWidth, targetHeight, basisWidth, basisHeight);
+
     if (currentWidth == targetWidth && currentHeight == targetHeight) {
         g_lastResizeRequestWidth.store(targetWidth, std::memory_order_relaxed);
         g_lastResizeRequestHeight.store(targetHeight, std::memory_order_relaxed);
+        g_lastResizeBasisWidth.store(basisWidth, std::memory_order_relaxed);
+        g_lastResizeBasisHeight.store(basisHeight, std::memory_order_relaxed);
         return;
     }
 
@@ -169,6 +190,8 @@ void TickModeResolutionTransition() {
     if (resized) {
         g_lastResizeRequestWidth.store(targetWidth, std::memory_order_relaxed);
         g_lastResizeRequestHeight.store(targetHeight, std::memory_order_relaxed);
+        g_lastResizeBasisWidth.store(basisWidth, std::memory_order_relaxed);
+        g_lastResizeBasisHeight.store(basisHeight, std::memory_order_relaxed);
     } else if (IsDebugEnabled()) {
         LogDebug("Mode resize dispatch failed (%dx%d): no game callback and no physical resize fallback",
                  targetWidth,

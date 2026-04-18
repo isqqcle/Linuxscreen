@@ -108,6 +108,55 @@ extern "C" void glfwSwapBuffers(GLFWwindow* window);
 extern "C" void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 extern "C" void glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
 extern "C" void glBindFramebuffer(GLenum target, GLuint framebuffer);
+extern "C" void glBlitFramebuffer(GLint srcX0,
+                                  GLint srcY0,
+                                  GLint srcX1,
+                                  GLint srcY1,
+                                  GLint dstX0,
+                                  GLint dstY0,
+                                  GLint dstX1,
+                                  GLint dstY1,
+                                  GLbitfield mask,
+                                  GLenum filter);
+extern "C" void glBlitNamedFramebuffer(GLuint readFramebuffer,
+                                        GLuint drawFramebuffer,
+                                        GLint srcX0,
+                                        GLint srcY0,
+                                        GLint srcX1,
+                                        GLint srcY1,
+                                        GLint dstX0,
+                                        GLint dstY0,
+                                        GLint dstX1,
+                                        GLint dstY1,
+                                        GLbitfield mask,
+                                        GLenum filter);
+void HookedGlViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+void HookedGlScissor(GLint x, GLint y, GLsizei width, GLsizei height);
+void HookedGlBindFramebuffer(GLenum target, GLuint framebuffer);
+void HookedGlBlitFramebuffer(GLint srcX0,
+                             GLint srcY0,
+                             GLint srcX1,
+                             GLint srcY1,
+                             GLint dstX0,
+                             GLint dstY0,
+                             GLint dstX1,
+                             GLint dstY1,
+                             GLbitfield mask,
+                             GLenum filter);
+void HookedGlBlitNamedFramebuffer(GLuint readFramebuffer,
+                                  GLuint drawFramebuffer,
+                                  GLint srcX0,
+                                  GLint srcY0,
+                                  GLint srcX1,
+                                  GLint srcY1,
+                                  GLint dstX0,
+                                  GLint dstY0,
+                                  GLint dstX1,
+                                  GLint dstY1,
+                                  GLbitfield mask,
+                                  GLenum filter);
+
+void MaybeClearPendingCharRemapsForRebindDisable(const platform::config::LinuxscreenConfig& config);
 
 namespace {
 
@@ -146,6 +195,19 @@ using GlfwGetWaylandWindowFn = wl_surface* (*)(GLFWwindow*);
 using GlViewportFn = void (*)(GLint, GLint, GLsizei, GLsizei);
 using GlScissorFn = void (*)(GLint, GLint, GLsizei, GLsizei);
 using GlBindFramebufferFn = void (*)(GLenum, GLuint);
+using GlBlitFramebufferFn = void (*)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
+using GlBlitNamedFramebufferFn = void (*)(GLuint,
+                                          GLuint,
+                                          GLint,
+                                          GLint,
+                                          GLint,
+                                          GLint,
+                                          GLint,
+                                          GLint,
+                                          GLint,
+                                          GLint,
+                                          GLbitfield,
+                                          GLenum);
 #ifndef __APPLE__
 using GlXGetProcAddressFn = __GLXextFuncPtr (*)(const GLubyte*);
 #endif
@@ -203,6 +265,8 @@ std::atomic<GlfwGetWaylandWindowFn> g_realGlfwGetWaylandWindow{ nullptr };
 std::atomic<GlViewportFn> g_realGlViewport{ nullptr };
 std::atomic<GlScissorFn> g_realGlScissor{ nullptr };
 std::atomic<GlBindFramebufferFn> g_realGlBindFramebuffer{ nullptr };
+std::atomic<GlBlitFramebufferFn> g_realGlBlitFramebuffer{ nullptr };
+std::atomic<GlBlitNamedFramebufferFn> g_realGlBlitNamedFramebuffer{ nullptr };
 
 #ifndef __APPLE__
 std::atomic<GlXGetProcAddressFn> g_realGlXGetProcAddress{ nullptr };
@@ -687,6 +751,7 @@ bool ResolveResizeDispatchDimensionsForActiveMode(int incomingWidth,
                                                   ManagedDimensionSpace space,
                                                   int& outWidth,
                                                   int& outHeight);
+bool ShouldApplyActiveModeGlfwSizing();
 
 bool GetSizeFromLatestGlfwWindow(int& outWidth, int& outHeight) {
     outWidth = 0;
@@ -800,6 +865,15 @@ bool ShouldBypassGlfwSetWindowIconOnMac() {
     return IsJavaProcess();
 }
 #endif
+
+bool ShouldApplyActiveModeGlfwSizing() {
+#ifdef __APPLE__
+    return g_lastResizeRequestWidth.load(std::memory_order_relaxed) > 0 &&
+           g_lastResizeRequestHeight.load(std::memory_order_relaxed) > 0;
+#else
+    return true;
+#endif
+}
 
 bool GetCurrentPhysicalContainerSize(int& outWidth, int& outHeight) {
     outWidth = 0;
@@ -1183,7 +1257,7 @@ bool WindowToGame(double windowX, double windowY, double& outGameX, double& outG
     outGameY = windowY;
 
     PlacementTransform transform;
-    if (!ResolvePlacementTransform(transform)) {
+    if (!ShouldApplyActiveModeGlfwSizing() || !ResolvePlacementTransform(transform)) {
         return false;
     }
 
@@ -1200,7 +1274,7 @@ bool GameToWindow(double gameX, double gameY, double& outWindowX, double& outWin
     outWindowY = gameY;
 
     PlacementTransform transform;
-    if (!ResolvePlacementTransform(transform)) {
+    if (!ShouldApplyActiveModeGlfwSizing() || !ResolvePlacementTransform(transform)) {
         return false;
     }
 
@@ -1213,6 +1287,17 @@ bool GameToWindow(double gameX, double gameY, double& outWindowX, double& outWin
 }
 
 bool ResolveCurrentWindowCursorCenter(double& outX, double& outY) {
+    if (!ShouldApplyActiveModeGlfwSizing()) {
+        int width = 0;
+        int height = 0;
+        if (!GetSizeFromLatestGlfwWindow(width, height) || width <= 0 || height <= 0) {
+            return false;
+        }
+        outX = static_cast<double>(width) * 0.5;
+        outY = static_cast<double>(height) * 0.5;
+        return true;
+    }
+
     PlacementTransform transform;
     if (!ResolvePlacementTransform(transform) ||
         transform.logicalWidth <= 0 || transform.logicalHeight <= 0) {
@@ -1243,7 +1328,7 @@ bool TranslateMainViewport(GLint x, GLint y, GLsizei width, GLsizei height, GLin
     return transform.mainTranslateX != 0 || transform.mainTranslateY != 0;
 }
 
-bool IsCanonicalMainContentRect(GLint x, GLint y, GLsizei width, GLsizei height) {
+bool IsMainContentCoordinateRect(GLint x, GLint y, GLsizei width, GLsizei height) {
     if (x != 0 || y != 0 || width <= 0 || height <= 0) {
         return false;
     }
@@ -1294,6 +1379,17 @@ bool LoadTrackedCapturedCursorPosition(double& outX, double& outY) {
 }
 
 bool ResolveCurrentLogicalCursorCenter(double& outX, double& outY) {
+    if (!ShouldApplyActiveModeGlfwSizing()) {
+        int width = 0;
+        int height = 0;
+        if (!GetSizeFromLatestGlfwWindow(width, height) || width <= 0 || height <= 0) {
+            return false;
+        }
+        outX = static_cast<double>(width) * 0.5;
+        outY = static_cast<double>(height) * 0.5;
+        return true;
+    }
+
     PlacementTransform transform;
     if (!ResolvePlacementTransform(transform) || transform.logicalWidth <= 0 || transform.logicalHeight <= 0) {
         return false;

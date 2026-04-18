@@ -1,4 +1,71 @@
 #ifdef __APPLE__
+static int GetCurrentGlslVersionNumber() {
+    const GLubyte* versionBytes = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    const char* version = reinterpret_cast<const char*>(versionBytes);
+    if (!version) {
+        return 0;
+    }
+
+    int major = 0;
+    int minor = 0;
+    const char* numeric = version;
+    while (*numeric && !std::isdigit(static_cast<unsigned char>(*numeric))) {
+        ++numeric;
+    }
+    if (std::sscanf(numeric, "%d.%d", &major, &minor) != 2) {
+        return 0;
+    }
+    return major * 100 + (minor < 10 ? minor * 10 : minor);
+}
+
+static bool ShouldConvertShadersToGLSL120() {
+    static thread_local bool initialized = false;
+    static thread_local bool convert = false;
+    if (initialized) {
+        return convert;
+    }
+    initialized = true;
+
+    const int glslVersion = GetCurrentGlslVersionNumber();
+    convert = glslVersion > 0 && glslVersion < 130;
+    return convert;
+}
+
+static std::string ConvertShaderVersion(GLenum type, const char* src, int targetVersion) {
+    if (!src) { return {}; }
+    std::string s(src);
+    const char* replacement =
+        targetVersion >= 330 ? "#version 330 core" :
+        targetVersion >= 150 ? "#version 150" :
+        "#version 130";
+
+    {
+        auto pos = s.find("#version 330 core");
+        if (pos != std::string::npos) { s.replace(pos, 17, replacement); }
+        else {
+            pos = s.find("#version 330");
+            if (pos != std::string::npos) { s.replace(pos, 12, replacement); }
+        }
+    }
+
+    if (targetVersion >= 330) {
+        return s;
+    }
+
+    for (;;) {
+        auto pos = s.find("layout(location");
+        if (pos == std::string::npos) break;
+        auto endParen = s.find(')', pos);
+        if (endParen == std::string::npos) break;
+        size_t afterParen = endParen + 1;
+        while (afterParen < s.size() && (s[afterParen] == ' ' || s[afterParen] == '\t')) afterParen++;
+        s.erase(pos, afterParen - pos);
+    }
+
+    (void)type;
+    return s;
+}
+
 static std::string ConvertShaderToGLSL120(GLenum type, const char* src) {
     if (!src) { return {}; }
     std::string s(src);
@@ -86,8 +153,16 @@ GLuint CompileShader(GLenum type, const char* source) {
     GLuint shader = g_gl.createShader(type);
     if (!shader) { return 0; }
 #ifdef __APPLE__
-    std::string converted = ConvertShaderToGLSL120(type, source);
-    source = converted.c_str();
+    std::string converted;
+    if (ShouldConvertShadersToGLSL120()) {
+        converted = ConvertShaderToGLSL120(type, source);
+        source = converted.c_str();
+    } else {
+        const int glslVersion = GetCurrentGlslVersionNumber();
+        const int targetVersion = glslVersion >= 130 ? std::min(glslVersion, 330) : 330;
+        converted = ConvertShaderVersion(type, source, targetVersion);
+        source = converted.c_str();
+    }
 #endif
     g_gl.shaderSource(shader, 1, &source, nullptr);
     g_gl.compileShader(shader);

@@ -160,6 +160,53 @@ void MarkMacMirrorRedirectRenderedInternal() {
     g_macMirrorRedirect.renderedThisFrame = true;
 }
 
+void CaptureDefaultFramebufferToMacMirrorRedirectIfNeededInternal() {
+#ifdef __APPLE__
+    if (!IsMacMirrorRedirectActiveInternal() || g_macMirrorRedirect.renderedThisFrame) {
+        return;
+    }
+    if (!g_gl.bindFramebuffer || !g_gl.blitFramebuffer ||
+        g_macMirrorRedirect.width <= 0 || g_macMirrorRedirect.height <= 0) {
+        return;
+    }
+
+    GLint prevReadFbo = 0;
+    GLint prevDrawFbo = 0;
+    GLint prevReadBuffer = GL_BACK;
+    GLint prevDrawBuffer = GL_BACK;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
+    glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
+    glGetIntegerv(GL_DRAW_BUFFER, &prevDrawBuffer);
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+
+    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, g_macMirrorRedirect.fbo);
+    glDisable(GL_SCISSOR_TEST);
+    glReadBuffer(GL_BACK);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    g_gl.blitFramebuffer(0,
+                         0,
+                         g_macMirrorRedirect.width,
+                         g_macMirrorRedirect.height,
+                         0,
+                         0,
+                         g_macMirrorRedirect.width,
+                         g_macMirrorRedirect.height,
+                         GL_COLOR_BUFFER_BIT,
+                         GL_NEAREST);
+
+    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+    g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
+    glReadBuffer(static_cast<GLenum>(prevReadBuffer));
+    glDrawBuffer(static_cast<GLenum>(prevDrawBuffer));
+    if (scissorEnabled == GL_TRUE) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+    g_macMirrorRedirect.renderedThisFrame = true;
+#endif
+}
+
 void BlitMacMirrorRedirectToWindowInternal(int dstX,
                                            int dstY,
                                            int dstWidth,

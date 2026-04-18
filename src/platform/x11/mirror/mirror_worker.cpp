@@ -84,6 +84,26 @@ bool ShouldUseSourceSize(const platform::config::MirrorSourceConfig& source) {
            (IsImageSource(source) && source.useImageSize);
 }
 
+int ResolveMirrorGammaModeUniform(const std::string& gammaModeConfig, bool defaultLinear) {
+    if (gammaModeConfig.empty()) {
+        return defaultLinear ? 2 : 0;
+    }
+
+    std::string mode;
+    mode.reserve(gammaModeConfig.size());
+    for (char ch : gammaModeConfig) {
+        mode.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+
+    if (mode == "assumesrgb" || mode == "srgb" || mode == "s") {
+        return 1;
+    }
+    if (mode == "assumelinear" || mode == "linear" || mode == "l") {
+        return 2;
+    }
+    return 0;
+}
+
 void ApplyLiveRelativeSizeToOutput(platform::config::MirrorConfig& config,
                                    int screenWidth,
                                    int screenHeight);
@@ -454,6 +474,7 @@ void EnsureGameFrameTexture(int w, int h) {
     if (g_gameFrameTexture != 0 && g_gameFrameW == w && g_gameFrameH == h) { return; }
 
     if (g_gameFrameFbo) { g_gl.deleteFramebuffers(1, &g_gameFrameFbo); g_gameFrameFbo = 0; }
+    if (g_gameFrameCopyReadFbo) { g_gl.deleteFramebuffers(1, &g_gameFrameCopyReadFbo); g_gameFrameCopyReadFbo = 0; }
     if (g_gameFrameTexture) { glDeleteTextures(1, &g_gameFrameTexture); g_gameFrameTexture = 0; }
 
     // Save game context state before touching it (called on the game's render thread)
@@ -474,12 +495,115 @@ void EnsureGameFrameTexture(int w, int h) {
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex2d));
     glActiveTexture(prevActiveUnit);
 
+    {
+        GLint prevDrawFbo = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
+        g_gl.genFramebuffers(1, &g_gameFrameFbo);
+        g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, g_gameFrameFbo);
+        g_gl.framebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_gameFrameTexture, 0);
+        g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
+    }
+
     g_gameFrameW = w;
     g_gameFrameH = h;
 
     if (IsDebugEnabled()) {
         fprintf(stderr, "[Linuxscreen][mirror] Game frame texture created/resized: %dx%d\n", w, h);
     }
+}
+
+bool CopyPresentedGameTextureToCaptureTexture(int captureW, int captureH) {
+    EnsureGameFrameTexture(captureW, captureH);
+
+    bool copied = false;
+    const char* copySource = "none";
+    GLuint presentedTexture = 0;
+    int presentedWidth = 0;
+    int presentedHeight = 0;
+    GLuint presentedReadFbo = 0;
+    int presentedReadWidth = 0;
+    int presentedReadHeight = 0;
+    GLenum presentedReadBuffer = GL_COLOR_ATTACHMENT0;
+
+    GLint prevReadFbo = 0;
+    GLint prevDrawFbo = 0;
+    GLint prevReadBuffer = GL_BACK;
+    GLint prevDrawBuffer = GL_BACK;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
+    glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
+    glGetIntegerv(GL_DRAW_BUFFER, &prevDrawBuffer);
+
+    if (GetPresentedGameTextureInternal(presentedTexture, presentedWidth, presentedHeight)) {
+        if (!g_gameFrameCopyReadFbo) {
+            g_gl.genFramebuffers(1, &g_gameFrameCopyReadFbo);
+        }
+
+        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, g_gameFrameCopyReadFbo);
+        g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, g_gameFrameFbo);
+        g_gl.framebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, presentedTexture, 0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        g_gl.blitFramebuffer(0, 0, presentedWidth, presentedHeight,
+                             0, 0, g_gameFrameW, g_gameFrameH,
+                             GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        copied = true;
+        copySource = "texture";
+    } else if (GetPresentedGameFramebufferInternal(presentedReadFbo,
+                                                   presentedReadWidth,
+                                                   presentedReadHeight,
+                                                   presentedReadBuffer)) {
+        g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, presentedReadFbo);
+        const GLenum readStatus = g_gl.checkFramebufferStatus(GL_READ_FRAMEBUFFER);
+        if (readStatus == GL_FRAMEBUFFER_COMPLETE) {
+            g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, g_gameFrameFbo);
+            constexpr GLenum kMaxColorAttachment = GL_COLOR_ATTACHMENT0 + 31;
+            const GLenum sourceReadBuffer =
+                (presentedReadBuffer >= GL_COLOR_ATTACHMENT0 && presentedReadBuffer <= kMaxColorAttachment)
+                    ? presentedReadBuffer
+                    : GL_COLOR_ATTACHMENT0;
+            glReadBuffer(sourceReadBuffer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            g_gl.blitFramebuffer(0, 0, presentedReadWidth, presentedReadHeight,
+                                 0, 0, g_gameFrameW, g_gameFrameH,
+                                 GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            copied = true;
+            copySource = "framebuffer";
+        }
+    }
+
+    const GLenum copyError = glGetError();
+
+    g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+    g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
+    glReadBuffer(static_cast<GLenum>(prevReadBuffer));
+    glDrawBuffer(static_cast<GLenum>(prevDrawBuffer));
+
+    if (IsDebugEnabled()) {
+        static int debugFrame = 0;
+        if ((++debugFrame % 60) == 0 || !copied || copyError != GL_NO_ERROR) {
+            fprintf(stderr,
+                    "[Linuxscreen][mirror][debug] presented-copy source=%s copied=%d capture=%dx%d gameTex=%u %dx%d "
+                    "presentedTex=%u %dx%d presentedFbo=%u %dx%d readBuffer=0x%x glError=0x%x\n",
+                    copySource,
+                    copied ? 1 : 0,
+                    captureW,
+                    captureH,
+                    g_gameFrameTexture,
+                    g_gameFrameW,
+                    g_gameFrameH,
+                    presentedTexture,
+                    presentedWidth,
+                    presentedHeight,
+                    presentedReadFbo,
+                    presentedReadWidth,
+                    presentedReadHeight,
+                    static_cast<unsigned int>(presentedReadBuffer),
+                    static_cast<unsigned int>(copyError));
+        }
+    }
+
+    return copied;
 }
 
 void EnsureMirrorResources(const ResolvedMirrorRender& resolved, X11MirrorInstance& inst) {
@@ -661,13 +785,137 @@ struct GlStateSnapshot {
     GLboolean blend = GL_FALSE;
     GLint blendSrcRgb = 0, blendDstRgb = 0;
     GLint blendSrcAlpha = 0, blendDstAlpha = 0;
+    GLint blendEqRgb = GL_FUNC_ADD;
+    GLint blendEqAlpha = GL_FUNC_ADD;
+    GLint drawBuffer = GL_BACK;
+    GLint readBuffer = GL_BACK;
+    GLboolean depthMask = GL_TRUE;
+    GLint depthFunc = GL_LESS;
+    GLdouble depthRange[2] = {0.0, 1.0};
+    GLboolean cullFace = GL_FALSE;
+    GLint cullFaceMode = GL_BACK;
+    GLint frontFace = GL_CCW;
+    GLboolean stencilTest = GL_FALSE;
+    GLint stencilFunc = GL_ALWAYS;
+    GLint stencilRef = 0;
+    GLint stencilValueMask = ~0;
+    GLint stencilBackFunc = GL_ALWAYS;
+    GLint stencilBackRef = 0;
+    GLint stencilBackValueMask = ~0;
+    GLint stencilFail = GL_KEEP;
+    GLint stencilPassDepthFail = GL_KEEP;
+    GLint stencilPassDepthPass = GL_KEEP;
+    GLint stencilBackFail = GL_KEEP;
+    GLint stencilBackPassDepthFail = GL_KEEP;
+    GLint stencilBackPassDepthPass = GL_KEEP;
+    GLint stencilWriteMask = ~0;
+    GLint stencilBackWriteMask = ~0;
+#ifdef GL_ALPHA_TEST
+    GLboolean alphaTest = GL_FALSE;
+#endif
+#ifdef GL_RASTERIZER_DISCARD
+    GLboolean rasterizerDiscard = GL_FALSE;
+#endif
+#ifdef GL_FRAMEBUFFER_SRGB
+    GLboolean framebufferSrgb = GL_FALSE;
+#endif
+#ifdef GL_COLOR_LOGIC_OP
+    GLboolean colorLogicOp = GL_FALSE;
+#endif
     GLboolean depthTest = GL_FALSE;
     GLboolean scissorTest = GL_FALSE;
+    GLint scissorBox[4] = {};
     GLint activeTexUnit = 0;
     GLint tex2d = 0;
+    GLint tex2dUnit0 = 0;
+    GLint samplerUnit0 = 0;
+    GLint pixelPackBuffer = 0;
+    GLint pixelUnpackBuffer = 0;
     GLboolean colorMask[4] = {};
     GLfloat clearColor[4] = {};
 };
+
+#ifdef GL_ALPHA_TEST
+bool IsLegacyAlphaTestAvailable() {
+    static thread_local bool initialized = false;
+    static thread_local bool available = false;
+    if (initialized) {
+        return available;
+    }
+    initialized = true;
+
+    const GLubyte* versionBytes = glGetString(GL_VERSION);
+    const char* version = reinterpret_cast<const char*>(versionBytes);
+    if (!version || std::strstr(version, "OpenGL ES") || std::strstr(version, "OpenGL SC")) {
+        available = false;
+        return available;
+    }
+
+    int major = 0;
+    int minor = 0;
+    const char* numeric = version;
+    while (*numeric && !std::isdigit(static_cast<unsigned char>(*numeric))) {
+        ++numeric;
+    }
+    if (std::sscanf(numeric, "%d.%d", &major, &minor) != 2) {
+        available = true;
+        return available;
+    }
+
+    if (major > 3 || (major == 3 && minor >= 2)) {
+#ifdef GL_CONTEXT_PROFILE_MASK
+        GLint profileMask = 0;
+        glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &profileMask);
+#ifdef GL_CONTEXT_CORE_PROFILE_BIT
+        if ((profileMask & GL_CONTEXT_CORE_PROFILE_BIT) != 0) {
+            available = false;
+            return available;
+        }
+#endif
+#ifdef GL_CONTEXT_COMPATIBILITY_PROFILE_BIT
+        if ((profileMask & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) != 0) {
+            available = true;
+            return available;
+        }
+#endif
+        available = false;
+        return available;
+#else
+        available = false;
+        return available;
+#endif
+    }
+
+    available = true;
+    return available;
+}
+#else
+bool IsLegacyAlphaTestAvailable() {
+    return false;
+}
+#endif
+
+#ifdef GL_FRAMEBUFFER_SRGB
+bool IsFramebufferSrgbCapAvailable() {
+    static thread_local bool initialized = false;
+    static thread_local bool available = false;
+    if (initialized) {
+        return available;
+    }
+    initialized = true;
+
+    const GLubyte* versionBytes = glGetString(GL_VERSION);
+    const char* version = reinterpret_cast<const char*>(versionBytes);
+    available = version &&
+                !std::strstr(version, "OpenGL ES") &&
+                !std::strstr(version, "OpenGL SC");
+    return available;
+}
+#else
+bool IsFramebufferSrgbCapAvailable() {
+    return false;
+}
+#endif
 
 void SaveGlState(GlStateSnapshot& s) {
     glGetIntegerv(GL_CURRENT_PROGRAM, &s.program);
@@ -681,10 +929,90 @@ void SaveGlState(GlStateSnapshot& s) {
     glGetIntegerv(GL_BLEND_DST_RGB, &s.blendDstRgb);
     glGetIntegerv(GL_BLEND_SRC_ALPHA, &s.blendSrcAlpha);
     glGetIntegerv(GL_BLEND_DST_ALPHA, &s.blendDstAlpha);
+#ifdef GL_BLEND_EQUATION_RGB
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &s.blendEqRgb);
+#else
+    glGetIntegerv(GL_BLEND_EQUATION, &s.blendEqRgb);
+#endif
+#ifdef GL_BLEND_EQUATION_ALPHA
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &s.blendEqAlpha);
+#else
+    s.blendEqAlpha = s.blendEqRgb;
+#endif
+    glGetIntegerv(GL_DRAW_BUFFER, &s.drawBuffer);
+    glGetIntegerv(GL_READ_BUFFER, &s.readBuffer);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &s.depthMask);
+    glGetIntegerv(GL_DEPTH_FUNC, &s.depthFunc);
+    glGetDoublev(GL_DEPTH_RANGE, s.depthRange);
+    s.cullFace = glIsEnabled(GL_CULL_FACE);
+    glGetIntegerv(GL_CULL_FACE_MODE, &s.cullFaceMode);
+    glGetIntegerv(GL_FRONT_FACE, &s.frontFace);
+    s.stencilTest = glIsEnabled(GL_STENCIL_TEST);
+    glGetIntegerv(GL_STENCIL_FUNC, &s.stencilFunc);
+    glGetIntegerv(GL_STENCIL_REF, &s.stencilRef);
+    glGetIntegerv(GL_STENCIL_VALUE_MASK, &s.stencilValueMask);
+#ifdef GL_STENCIL_BACK_FUNC
+    glGetIntegerv(GL_STENCIL_BACK_FUNC, &s.stencilBackFunc);
+    glGetIntegerv(GL_STENCIL_BACK_REF, &s.stencilBackRef);
+    glGetIntegerv(GL_STENCIL_BACK_VALUE_MASK, &s.stencilBackValueMask);
+#else
+    s.stencilBackFunc = s.stencilFunc;
+    s.stencilBackRef = s.stencilRef;
+    s.stencilBackValueMask = s.stencilValueMask;
+#endif
+    glGetIntegerv(GL_STENCIL_FAIL, &s.stencilFail);
+    glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &s.stencilPassDepthFail);
+    glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &s.stencilPassDepthPass);
+#ifdef GL_STENCIL_BACK_FAIL
+    glGetIntegerv(GL_STENCIL_BACK_FAIL, &s.stencilBackFail);
+    glGetIntegerv(GL_STENCIL_BACK_PASS_DEPTH_FAIL, &s.stencilBackPassDepthFail);
+    glGetIntegerv(GL_STENCIL_BACK_PASS_DEPTH_PASS, &s.stencilBackPassDepthPass);
+#else
+    s.stencilBackFail = s.stencilFail;
+    s.stencilBackPassDepthFail = s.stencilPassDepthFail;
+    s.stencilBackPassDepthPass = s.stencilPassDepthPass;
+#endif
+    glGetIntegerv(GL_STENCIL_WRITEMASK, &s.stencilWriteMask);
+#ifdef GL_STENCIL_BACK_WRITEMASK
+    glGetIntegerv(GL_STENCIL_BACK_WRITEMASK, &s.stencilBackWriteMask);
+#else
+    s.stencilBackWriteMask = s.stencilWriteMask;
+#endif
+#ifdef GL_ALPHA_TEST
+    if (IsLegacyAlphaTestAvailable()) {
+        s.alphaTest = glIsEnabled(GL_ALPHA_TEST);
+    }
+#endif
+#ifdef GL_RASTERIZER_DISCARD
+    s.rasterizerDiscard = glIsEnabled(GL_RASTERIZER_DISCARD);
+#endif
+#ifdef GL_FRAMEBUFFER_SRGB
+    if (IsFramebufferSrgbCapAvailable()) {
+        s.framebufferSrgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
+    }
+#endif
+#ifdef GL_COLOR_LOGIC_OP
+    s.colorLogicOp = glIsEnabled(GL_COLOR_LOGIC_OP);
+#endif
     s.depthTest = glIsEnabled(GL_DEPTH_TEST);
     s.scissorTest = glIsEnabled(GL_SCISSOR_TEST);
+    glGetIntegerv(GL_SCISSOR_BOX, s.scissorBox);
     glGetIntegerv(GL_ACTIVE_TEXTURE, &s.activeTexUnit);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &s.tex2d);
+    g_gl.activeTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &s.tex2dUnit0);
+#ifdef GL_SAMPLER_BINDING
+    if (g_gl.bindSampler && g_gl.activeTexture) {
+        glGetIntegerv(GL_SAMPLER_BINDING, &s.samplerUnit0);
+    }
+#endif
+    g_gl.activeTexture(static_cast<GLenum>(s.activeTexUnit));
+#ifdef GL_PIXEL_PACK_BUFFER_BINDING
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &s.pixelPackBuffer);
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &s.pixelUnpackBuffer);
+#endif
     glGetBooleanv(GL_COLOR_WRITEMASK, s.colorMask);
     glGetFloatv(GL_COLOR_CLEAR_VALUE, s.clearColor);
 }
@@ -697,11 +1025,91 @@ void RestoreGlState(const GlStateSnapshot& s) {
     g_gl.bindFramebuffer(GL_DRAW_FRAMEBUFFER, s.drawFbo);
     glViewport(s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3]);
     if (s.blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (g_gl.blendEquationSeparate) {
+        g_gl.blendEquationSeparate(static_cast<GLenum>(s.blendEqRgb), static_cast<GLenum>(s.blendEqAlpha));
+    } else {
+        glBlendEquation(s.blendEqRgb);
+    }
     g_gl.blendFuncSeparate(s.blendSrcRgb, s.blendDstRgb, s.blendSrcAlpha, s.blendDstAlpha);
+    glDrawBuffer(s.drawBuffer);
+    glReadBuffer(s.readBuffer);
+    if (s.cullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+    glCullFace(s.cullFaceMode);
+    glFrontFace(s.frontFace);
+    if (s.stencilTest) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
+    if (g_gl.stencilFuncSeparate) {
+        g_gl.stencilFuncSeparate(GL_FRONT,
+                                 static_cast<GLenum>(s.stencilFunc),
+                                 s.stencilRef,
+                                 static_cast<GLuint>(s.stencilValueMask));
+        g_gl.stencilFuncSeparate(GL_BACK,
+                                 static_cast<GLenum>(s.stencilBackFunc),
+                                 s.stencilBackRef,
+                                 static_cast<GLuint>(s.stencilBackValueMask));
+    } else {
+        glStencilFunc(static_cast<GLenum>(s.stencilFunc), s.stencilRef, static_cast<GLuint>(s.stencilValueMask));
+    }
+    if (g_gl.stencilOpSeparate) {
+        g_gl.stencilOpSeparate(GL_FRONT,
+                               static_cast<GLenum>(s.stencilFail),
+                               static_cast<GLenum>(s.stencilPassDepthFail),
+                               static_cast<GLenum>(s.stencilPassDepthPass));
+        g_gl.stencilOpSeparate(GL_BACK,
+                               static_cast<GLenum>(s.stencilBackFail),
+                               static_cast<GLenum>(s.stencilBackPassDepthFail),
+                               static_cast<GLenum>(s.stencilBackPassDepthPass));
+    } else {
+        glStencilOp(static_cast<GLenum>(s.stencilFail),
+                    static_cast<GLenum>(s.stencilPassDepthFail),
+                    static_cast<GLenum>(s.stencilPassDepthPass));
+    }
+    if (g_gl.stencilMaskSeparate) {
+        g_gl.stencilMaskSeparate(GL_FRONT, static_cast<GLuint>(s.stencilWriteMask));
+        g_gl.stencilMaskSeparate(GL_BACK, static_cast<GLuint>(s.stencilBackWriteMask));
+    } else {
+        glStencilMask(static_cast<GLuint>(s.stencilWriteMask));
+    }
+#ifdef GL_ALPHA_TEST
+    if (IsLegacyAlphaTestAvailable()) {
+        if (s.alphaTest) glEnable(GL_ALPHA_TEST); else glDisable(GL_ALPHA_TEST);
+    }
+#endif
+#ifdef GL_RASTERIZER_DISCARD
+    if (s.rasterizerDiscard) glEnable(GL_RASTERIZER_DISCARD); else glDisable(GL_RASTERIZER_DISCARD);
+#endif
+#ifdef GL_FRAMEBUFFER_SRGB
+    if (IsFramebufferSrgbCapAvailable()) {
+        if (s.framebufferSrgb) glEnable(GL_FRAMEBUFFER_SRGB); else glDisable(GL_FRAMEBUFFER_SRGB);
+    }
+#endif
+#ifdef GL_COLOR_LOGIC_OP
+    if (s.colorLogicOp) glEnable(GL_COLOR_LOGIC_OP); else glDisable(GL_COLOR_LOGIC_OP);
+#endif
     if (s.depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    glDepthMask(s.depthMask);
+    glDepthFunc(static_cast<GLenum>(s.depthFunc));
+    glDepthRange(s.depthRange[0], s.depthRange[1]);
     if (s.scissorTest) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+    glScissor(s.scissorBox[0], s.scissorBox[1], s.scissorBox[2], s.scissorBox[3]);
+    g_gl.activeTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s.tex2dUnit0);
+#ifdef GL_SAMPLER_BINDING
+    if (g_gl.bindSampler) {
+        g_gl.bindSampler(0, static_cast<GLuint>(std::max(0, s.samplerUnit0)));
+    }
+#endif
     g_gl.activeTexture(s.activeTexUnit);
     glBindTexture(GL_TEXTURE_2D, s.tex2d);
+#ifdef GL_PIXEL_PACK_BUFFER_BINDING
+    if (g_gl.bindBuffer) {
+        g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(std::max(0, s.pixelPackBuffer)));
+    }
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+    if (g_gl.bindBuffer) {
+        g_gl.bindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(std::max(0, s.pixelUnpackBuffer)));
+    }
+#endif
     glColorMask(s.colorMask[0], s.colorMask[1], s.colorMask[2], s.colorMask[3]);
     glClearColor(s.clearColor[0], s.clearColor[1], s.clearColor[2], s.clearColor[3]);
 }
@@ -745,6 +1153,7 @@ void PostFrameSlot(int width,
                    int height,
                    GLsync fence,
                    std::uint64_t generation,
+                   bool gameCaptureFromPresentedTexture,
                    bool overscanActive,
                    const OverscanDimensions& overscanSnap,
                    int containerWidth,
@@ -778,6 +1187,7 @@ void PostFrameSlot(int width,
     g_slotPool[nextIdx].viewportHeight = viewportHeight;
     g_slotPool[nextIdx].textureOriginTopLeftX = textureOriginTopLeftX;
     g_slotPool[nextIdx].textureOriginTopLeftY = textureOriginTopLeftY;
+    g_slotPool[nextIdx].gameCaptureFromPresentedTexture = gameCaptureFromPresentedTexture;
     g_slotPool[nextIdx].overscanActive = overscanActive;
     g_slotPool[nextIdx].overscanWindowWidth = overscanSnap.windowWidth;
     g_slotPool[nextIdx].overscanWindowHeight = overscanSnap.windowHeight;
@@ -842,6 +1252,11 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
     // Disable depth test and scissor for our rendering
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_SCISSOR_TEST);
+#ifdef GL_ALPHA_TEST
+    if (IsLegacyAlphaTestAvailable()) {
+        glDisable(GL_ALPHA_TEST);
+    }
+#endif
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     // Bind quad VAO
@@ -931,10 +1346,18 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
         glClear(GL_COLOR_BUFFER_BIT);
 
         // Select shader based on mode
+        const bool isGameFramebufferSource =
+            !IsWindowCaptureSource(effectiveConfig.source) &&
+            !IsImageSource(effectiveConfig.source);
         const bool useRaw = effectiveConfig.rawOutput;
         const bool useColorPt = !useRaw && effectiveConfig.colorPassthrough;
         const bool useFilter = !useRaw && !useColorPt;
         const bool preserveSourceAlpha = IsImageSource(effectiveConfig.source);
+        const bool defaultLinearGamma =
+            isGameFramebufferSource &&
+            sourceSlot.gameCaptureFromPresentedTexture;
+        const int gammaModeUniform =
+            ResolveMirrorGammaModeUniform(effectiveConfig.gammaMode, defaultLinearGamma);
         (void)useFilter;
 
         // Bind active source texture on unit 0
@@ -999,7 +1422,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
                 g_gl.useProgram(g_shaders.filterPassthroughProgram);
                 g_gl.uniform1i(g_shaders.filterPassthroughLocs.screenTexture, 0);
                 g_gl.uniform4f(g_shaders.filterPassthroughLocs.sourceRect, sx, sy, sw, sh);
-                g_gl.uniform1i(g_shaders.filterPassthroughLocs.gammaMode, 1); // AssumeSRGB
+                g_gl.uniform1i(g_shaders.filterPassthroughLocs.gammaMode, gammaModeUniform);
                 const int nColors = static_cast<int>(effectiveConfig.colors.targetColors.size());
                 g_gl.uniform1i(g_shaders.filterPassthroughLocs.targetColorCount, nColors);
                 if (nColors > 0) {
@@ -1019,7 +1442,7 @@ void ProcessAllMirrorsWorker(int width, int height, const MirrorFrameSlot& slot)
                 g_gl.useProgram(g_shaders.filterProgram);
                 g_gl.uniform1i(g_shaders.filterLocs.screenTexture, 0);
                 g_gl.uniform4f(g_shaders.filterLocs.sourceRect, sx, sy, sw, sh);
-                g_gl.uniform1i(g_shaders.filterLocs.gammaMode, 1); // AssumeSRGB
+                g_gl.uniform1i(g_shaders.filterLocs.gammaMode, gammaModeUniform);
                 const int nColors = static_cast<int>(effectiveConfig.colors.targetColors.size());
                 g_gl.uniform1i(g_shaders.filterLocs.targetColorCount, nColors);
                 if (nColors > 0) {

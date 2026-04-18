@@ -2626,8 +2626,20 @@ void HookedGlfwWindowSizeCallback(GLFWwindow* window, int width, int height) {
     (void)GetSizeFromLatestGlfwWindow(windowWidth, windowHeight);
     (void)GetFramebufferSizeFromLatestGlfwWindow(framebufferWidth, framebufferHeight);
     platform::x11::RecordGlfwWindowMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight);
-    g_lastResizeRequestWidth.store(0, std::memory_order_relaxed);
-    g_lastResizeRequestHeight.store(0, std::memory_order_relaxed);
+    const int lastResizeRequestWidth = g_lastResizeRequestWidth.load(std::memory_order_relaxed);
+    const int lastResizeRequestHeight = g_lastResizeRequestHeight.load(std::memory_order_relaxed);
+    const bool matchesResizeRequest =
+        lastResizeRequestWidth > 0 &&
+        lastResizeRequestHeight > 0 &&
+        ((width == lastResizeRequestWidth && height == lastResizeRequestHeight) ||
+         (framebufferWidth == lastResizeRequestWidth && framebufferHeight == lastResizeRequestHeight));
+    if (!matchesResizeRequest) {
+        g_lastResizeRequestWidth.store(0, std::memory_order_relaxed);
+        g_lastResizeRequestHeight.store(0, std::memory_order_relaxed);
+        g_lastResizeBasisWidth.store(0, std::memory_order_relaxed);
+        g_lastResizeBasisHeight.store(0, std::memory_order_relaxed);
+    }
+    const bool applyModeSizing = ShouldApplyActiveModeGlfwSizing();
 
     GlfwWindowSizeCallback userCallback = nullptr;
     {
@@ -2641,18 +2653,22 @@ void HookedGlfwWindowSizeCallback(GLFWwindow* window, int width, int height) {
     if (userCallback) {
         int dispatchWidth = width;
         int dispatchHeight = height;
-        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
-                                                          height,
-                                                          ManagedDimensionSpace::WindowLogical,
-                                                          dispatchWidth,
-                                                          dispatchHeight);
+        if (applyModeSizing) {
+            (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                              height,
+                                                              ManagedDimensionSpace::WindowLogical,
+                                                              dispatchWidth,
+                                                              dispatchHeight);
+        }
         userCallback(window, dispatchWidth, dispatchHeight);
     } else {
         LogDebugOnce(g_loggedMissingGlfwWindowSizeUserCallback,
                      "hooked GLFW window-size callback had no user callback for this window");
     }
 
-    TickModeResolutionTransition();
+    if (applyModeSizing) {
+        TickModeResolutionTransition();
+    }
 }
 
 void HookedGlfwFramebufferSizeCallback(GLFWwindow* window, int width, int height) {
@@ -2668,8 +2684,20 @@ void HookedGlfwFramebufferSizeCallback(GLFWwindow* window, int width, int height
     (void)GetSizeFromLatestGlfwWindow(windowWidth, windowHeight);
     (void)GetFramebufferSizeFromLatestGlfwWindow(framebufferWidth, framebufferHeight);
     platform::x11::RecordGlfwWindowMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight);
-    g_lastResizeRequestWidth.store(0, std::memory_order_relaxed);
-    g_lastResizeRequestHeight.store(0, std::memory_order_relaxed);
+    const int lastResizeRequestWidth = g_lastResizeRequestWidth.load(std::memory_order_relaxed);
+    const int lastResizeRequestHeight = g_lastResizeRequestHeight.load(std::memory_order_relaxed);
+    const bool matchesResizeRequest =
+        lastResizeRequestWidth > 0 &&
+        lastResizeRequestHeight > 0 &&
+        ((width == lastResizeRequestWidth && height == lastResizeRequestHeight) ||
+         (framebufferWidth == lastResizeRequestWidth && framebufferHeight == lastResizeRequestHeight));
+    if (!matchesResizeRequest) {
+        g_lastResizeRequestWidth.store(0, std::memory_order_relaxed);
+        g_lastResizeRequestHeight.store(0, std::memory_order_relaxed);
+        g_lastResizeBasisWidth.store(0, std::memory_order_relaxed);
+        g_lastResizeBasisHeight.store(0, std::memory_order_relaxed);
+    }
+    const bool applyModeSizing = ShouldApplyActiveModeGlfwSizing();
 
     GlfwFramebufferSizeCallback userCallback = nullptr;
     {
@@ -2683,16 +2711,20 @@ void HookedGlfwFramebufferSizeCallback(GLFWwindow* window, int width, int height
     if (userCallback) {
         int dispatchWidth = width;
         int dispatchHeight = height;
-        (void)ResolveResizeDispatchDimensionsForActiveMode(width,
-                                                          height,
-                                                          ManagedDimensionSpace::FramebufferPhysical,
-                                                          dispatchWidth,
-                                                          dispatchHeight);
+        if (applyModeSizing) {
+            (void)ResolveResizeDispatchDimensionsForActiveMode(width,
+                                                              height,
+                                                              ManagedDimensionSpace::FramebufferPhysical,
+                                                              dispatchWidth,
+                                                              dispatchHeight);
+        }
         userCallback(window, dispatchWidth, dispatchHeight);
     } else {
         LogDebugOnce(g_loggedMissingGlfwFramebufferSizeUserCallback,
                      "hooked GLFW framebuffer-size callback had no user callback for this window");
     }
 
-    TickModeResolutionTransition();
+    if (applyModeSizing) {
+        TickModeResolutionTransition();
+    }
 }

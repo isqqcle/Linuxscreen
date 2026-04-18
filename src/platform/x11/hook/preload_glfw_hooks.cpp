@@ -650,7 +650,8 @@ extern "C" void glfwGetWindowSize(GLFWwindow* window, int* width, int* height) {
     int windowHeight = 0;
     int framebufferWidth = 0;
     int framebufferHeight = 0;
-    if (GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
+    if (ShouldApplyActiveModeGlfwSizing() &&
+        GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
         int logicalWidth = 0;
         int logicalHeight = 0;
         if (ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace::WindowLogical,
@@ -684,7 +685,8 @@ extern "C" void glfwGetFramebufferSize(GLFWwindow* window, int* width, int* heig
     int windowHeight = 0;
     int framebufferWidth = 0;
     int framebufferHeight = 0;
-    if (GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
+    if (ShouldApplyActiveModeGlfwSizing() &&
+        GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
         int physicalWidth = 0;
         int physicalHeight = 0;
         if (ResolveActiveModeTargetDimensionsForSpace(ManagedDimensionSpace::FramebufferPhysical,
@@ -814,15 +816,43 @@ extern "C" void* dlsym(void* handle, const char* symbolName) {
 #endif
 
     if (std::strcmp(symbolName, "glViewport") == 0) {
+#ifdef __APPLE__
+        return reinterpret_cast<void*>(HookedGlViewport);
+#else
         return reinterpret_cast<void*>(glViewport);
+#endif
     }
 
     if (std::strcmp(symbolName, "glScissor") == 0) {
+#ifdef __APPLE__
+        return reinterpret_cast<void*>(HookedGlScissor);
+#else
         return reinterpret_cast<void*>(glScissor);
+#endif
     }
 
     if (std::strcmp(symbolName, "glBindFramebuffer") == 0) {
+#ifdef __APPLE__
+        return reinterpret_cast<void*>(HookedGlBindFramebuffer);
+#else
         return reinterpret_cast<void*>(glBindFramebuffer);
+#endif
+    }
+
+    if (std::strcmp(symbolName, "glBlitFramebuffer") == 0) {
+#ifdef __APPLE__
+        return reinterpret_cast<void*>(HookedGlBlitFramebuffer);
+#else
+        return reinterpret_cast<void*>(glBlitFramebuffer);
+#endif
+    }
+
+    if (std::strcmp(symbolName, "glBlitNamedFramebuffer") == 0) {
+#ifdef __APPLE__
+        return reinterpret_cast<void*>(HookedGlBlitNamedFramebuffer);
+#else
+        return reinterpret_cast<void*>(glBlitNamedFramebuffer);
+#endif
     }
 
     if (std::strcmp(symbolName, "glfwSetWindowSizeCallback") == 0) {

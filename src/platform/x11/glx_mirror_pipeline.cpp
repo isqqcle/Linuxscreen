@@ -20,6 +20,26 @@ void SubmitGlxMirrorCapture(int width, int height) {
     SubmitGlxMirrorCaptureInternal(width, height);
 }
 
+void RecordPresentedGameTexture(GLuint texture, int width, int height) {
+    RecordPresentedGameTextureInternal(texture, width, height);
+}
+
+bool GetPresentedGameTexture(GLuint& texture, int& width, int& height) {
+    return GetPresentedGameTextureInternal(texture, width, height);
+}
+
+void RecordPresentedGameFramebuffer(GLuint framebuffer, int width, int height, GLenum readBuffer) {
+    RecordPresentedGameFramebufferInternal(framebuffer, width, height, readBuffer);
+}
+
+bool GetPresentedGameFramebuffer(GLuint& framebuffer, int& width, int& height) {
+    return GetPresentedGameFramebufferInternal(framebuffer, width, height);
+}
+
+void RecordPhysicalModeResizeTarget(int targetWidth, int targetHeight, int basisWidth, int basisHeight) {
+    RecordPhysicalModeResizeTargetInternal(targetWidth, targetHeight, basisWidth, basisHeight);
+}
+
 GLuint GetOverscanFboId() {
     return GetOverscanFboIdInternal();
 }
@@ -58,6 +78,10 @@ void MarkOverscanFboRendered() {
 
 void MarkMacMirrorRedirectRendered() {
     MarkMacMirrorRedirectRenderedInternal();
+}
+
+void CaptureDefaultFramebufferToMacMirrorRedirectIfNeeded() {
+    CaptureDefaultFramebufferToMacMirrorRedirectIfNeededInternal();
 }
 
 bool UpdateOverscanState(int windowWidth, int windowHeight) {

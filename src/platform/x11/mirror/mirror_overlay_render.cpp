@@ -634,15 +634,15 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
     int targetWidth = viewportWidth;
     int targetHeight = viewportHeight;
 #ifdef __APPLE__
+    bool targetIsMacRedirect = false;
     if (IsMacMirrorRedirectActiveInternal()) {
         int redirectWidth = 0;
         int redirectHeight = 0;
-        if (GetMacMirrorRedirectSizeInternal(redirectWidth, redirectHeight) &&
-            redirectWidth == viewportWidth &&
-            redirectHeight == viewportHeight) {
+        if (GetMacMirrorRedirectSizeInternal(redirectWidth, redirectHeight)) {
             targetFramebuffer = g_macMirrorRedirect.fbo;
             targetWidth = redirectWidth;
             targetHeight = redirectHeight;
+            targetIsMacRedirect = true;
         }
     }
 #endif
@@ -652,6 +652,13 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
 
     g_gl.bindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
     glViewport(0, 0, targetWidth, targetHeight);
+    if (targetFramebuffer == 0) {
+        glDrawBuffer(GL_BACK);
+        glReadBuffer(GL_BACK);
+    } else {
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+    }
 
     DrainDecodedModeBackgroundImages();
 
@@ -726,10 +733,27 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
         glViewport(0, 0, targetWidth, targetHeight);
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_STENCIL_TEST);
+#ifdef GL_ALPHA_TEST
+        if (IsLegacyAlphaTestAvailable()) {
+            glDisable(GL_ALPHA_TEST);
+        }
+#endif
+#ifdef GL_RASTERIZER_DISCARD
+        glDisable(GL_RASTERIZER_DISCARD);
+#endif
+#ifdef GL_COLOR_LOGIC_OP
+        glDisable(GL_COLOR_LOGIC_OP);
+#endif
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glEnable(GL_BLEND);
+        glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         g_gl.activeTexture(GL_TEXTURE0);
+        if (g_gl.bindSampler) {
+            g_gl.bindSampler(0, 0);
+        }
         g_gl.useProgram(g_overlayProgram);
         g_gl.uniform1i(g_overlayLocScreenTexture, 0);
         g_gl.uniform4f(g_overlayLocSourceRect, 0.0f, 0.0f, 1.0f, 1.0f);
@@ -822,6 +846,11 @@ void RenderGlxMirrorOverlay(int viewportWidth, int viewportHeight) {
                     viewportWidth, viewportHeight, renderedCount);
         }
     }
+#ifdef __APPLE__
+    if (targetIsMacRedirect) {
+        MarkMacMirrorRedirectRenderedInternal();
+    }
+#endif
     RestoreGlState(savedState);
 }
 
@@ -841,6 +870,7 @@ void ShutdownGlxMirrorPipeline() {
         CleanupMirrorShaders();
         ClearAllModeBackgroundGpuTextures();
         if (g_gameFrameFbo) { g_gl.deleteFramebuffers(1, &g_gameFrameFbo); g_gameFrameFbo = 0; }
+        if (g_gameFrameCopyReadFbo) { g_gl.deleteFramebuffers(1, &g_gameFrameCopyReadFbo); g_gameFrameCopyReadFbo = 0; }
         if (g_gameFrameTexture) { glDeleteTextures(1, &g_gameFrameTexture); g_gameFrameTexture = 0; }
         if (g_overlayVao) { g_gl.deleteVertexArrays(1, &g_overlayVao); g_overlayVao = 0; }
         if (g_overlayVbo) { g_gl.deleteBuffers(1, &g_overlayVbo); g_overlayVbo = 0; }
@@ -931,8 +961,11 @@ void ShutdownGlxMirrorPipelineForProcessExit() {
     g_modeBackgroundImages.clear();
     g_gameFrameTexture = 0;
     g_gameFrameFbo = 0;
+    g_gameFrameCopyReadFbo = 0;
     g_gameFrameW = 0;
     g_gameFrameH = 0;
+    RecordPresentedGameTextureInternal(0, 0, 0);
+    RecordPresentedGameFramebufferInternal(0, 0, 0, GL_COLOR_ATTACHMENT0);
     g_inlineRoundRobinIdx = 0;
     g_mirrorConfigs.clear();
     g_configsLoaded = false;
@@ -987,6 +1020,18 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
     if (cloneWidth % 2 != 0) cloneWidth = (cloneWidth / 2) * 2;
 
     if (g_gameFrameTexture == 0 || g_gameFrameW <= 0 || g_gameFrameH <= 0) {
+        if (IsDebugEnabled()) {
+            static int missingTextureFrame = 0;
+            if ((++missingTextureFrame % 60) == 0) {
+                fprintf(stderr,
+                        "[Linuxscreen][mirror][debug] eyezoom-render skipped: missing game texture tex=%u size=%dx%d viewport=%dx%d\n",
+                        g_gameFrameTexture,
+                        g_gameFrameW,
+                        g_gameFrameH,
+                        viewportWidth,
+                        viewportHeight);
+            }
+        }
         return;
     }
 
@@ -1072,6 +1117,27 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
 
     g_gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, viewportWidth, viewportHeight);
+    glDrawBuffer(GL_BACK);
+    glReadBuffer(GL_BACK);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_STENCIL_TEST);
+#ifdef GL_ALPHA_TEST
+    if (IsLegacyAlphaTestAvailable()) {
+        glDisable(GL_ALPHA_TEST);
+    }
+#endif
+#ifdef GL_RASTERIZER_DISCARD
+    glDisable(GL_RASTERIZER_DISCARD);
+#endif
+#ifdef GL_COLOR_LOGIC_OP
+    glDisable(GL_COLOR_LOGIC_OP);
+#endif
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (g_gl.bindSampler) {
+        g_gl.bindSampler(0, 0);
+    }
 
     int srcCenterX = g_gameFrameW / 2;
     int srcLeft = srcCenterX - cloneWidth / 2;
@@ -1095,8 +1161,89 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
     srcRight = std::min(g_gameFrameW, srcRight);
     srcTop = std::min(g_gameFrameH, srcTop);
     if (srcRight <= srcLeft || srcTop <= srcBottom) {
+        if (IsDebugEnabled()) {
+            fprintf(stderr,
+                    "[Linuxscreen][mirror][debug] eyezoom-render skipped: source rect empty tex=%u size=%dx%d "
+                    "src=(%d,%d)-(%d,%d) clone=%dx%d viewport=%dx%d output=%dx%d\n",
+                    g_gameFrameTexture,
+                    g_gameFrameW,
+                    g_gameFrameH,
+                    srcLeft,
+                    srcBottom,
+                    srcRight,
+                    srcTop,
+                    cloneWidth,
+                    zoomConfig.cloneHeight,
+                    viewportWidth,
+                    viewportHeight,
+                    zoomOutputWidth,
+                    zoomOutputHeight);
+        }
         RestoreGlState(savedState);
         return;
+    }
+
+    if (IsDebugEnabled()) {
+        static int renderFrame = 0;
+        if ((++renderFrame % 60) == 0) {
+            GLint prevReadFbo = 0;
+            GLint prevReadBuffer = GL_BACK;
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+            glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
+            unsigned int maxProbeRgb = 0;
+            unsigned char probe[4] = {};
+            const int probeXs[5] = {
+                (srcLeft + srcRight) / 2,
+                srcLeft,
+                std::max(srcLeft, srcRight - 1),
+                (srcLeft + srcRight) / 2,
+                (srcLeft + srcRight) / 2,
+            };
+            const int probeYs[5] = {
+                (srcBottom + srcTop) / 2,
+                (srcBottom + srcTop) / 2,
+                (srcBottom + srcTop) / 2,
+                srcBottom,
+                std::max(srcBottom, srcTop - 1),
+            };
+            g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, g_gameFrameFbo);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            for (int i = 0; i < 5; ++i) {
+                glReadPixels(probeXs[i], probeYs[i], 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, probe);
+                maxProbeRgb = std::max(maxProbeRgb,
+                                       static_cast<unsigned int>(probe[0]) +
+                                       static_cast<unsigned int>(probe[1]) +
+                                       static_cast<unsigned int>(probe[2]));
+            }
+            const GLenum probeError = glGetError();
+            g_gl.bindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+            glReadBuffer(static_cast<GLenum>(prevReadBuffer));
+
+            fprintf(stderr,
+                    "[Linuxscreen][mirror][debug] eyezoom-render draw tex=%u texSize=%dx%d src=(%d,%d)-(%d,%d) "
+                    "uv=(%.4f,%.4f %.4fx%.4f) output=(%d,%d %dx%d) viewport=%dx%d overscan=%d "
+                    "probeMaxRgb=%u probeError=0x%x\n",
+                    g_gameFrameTexture,
+                    g_gameFrameW,
+                    g_gameFrameH,
+                    srcLeft,
+                    srcBottom,
+                    srcRight,
+                    srcTop,
+                    static_cast<double>(static_cast<float>(srcLeft) / g_gameFrameW),
+                    static_cast<double>(static_cast<float>(srcBottom) / g_gameFrameH),
+                    static_cast<double>(static_cast<float>(srcRight - srcLeft) / g_gameFrameW),
+                    static_cast<double>(static_cast<float>(srcTop - srcBottom) / g_gameFrameH),
+                    zoomX,
+                    zoomY_gl,
+                    zoomOutputWidth,
+                    zoomOutputHeight,
+                    viewportWidth,
+                    viewportHeight,
+                    IsOverscanActive() ? 1 : 0,
+                    maxProbeRgb,
+                    static_cast<unsigned int>(probeError));
+        }
     }
 
     glDisable(GL_BLEND);
@@ -1130,6 +1277,44 @@ void RenderGlxEyeZoomOverlay(int viewportWidth, int viewportHeight) {
     g_gl.bindBuffer(GL_ARRAY_BUFFER, g_overlayVbo);
     g_gl.bufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quadVerts), quadVerts);
     glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    if (IsDebugEnabled()) {
+        static int postDrawProbeFrame = 0;
+        if ((++postDrawProbeFrame % 60) == 0) {
+            GLint prevPackBuffer = 0;
+#ifdef GL_PIXEL_PACK_BUFFER_BINDING
+            glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &prevPackBuffer);
+            if (g_gl.bindBuffer) {
+                g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            }
+#endif
+            unsigned char dstProbe[4] = {};
+            const int probeX = std::clamp(zoomX + (zoomOutputWidth / 2), 0, std::max(0, viewportWidth - 1));
+            const int probeY = std::clamp(zoomY_gl + (zoomOutputHeight / 2), 0, std::max(0, viewportHeight - 1));
+            glReadPixels(probeX, probeY, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, dstProbe);
+            const GLenum postDrawError = glGetError();
+#ifdef GL_PIXEL_PACK_BUFFER_BINDING
+            if (g_gl.bindBuffer) {
+                g_gl.bindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(std::max(0, prevPackBuffer)));
+            }
+#endif
+            fprintf(stderr,
+                    "[Linuxscreen][mirror][debug] eyezoom-postdraw pixel=(%d,%d) rgba=(%u,%u,%u,%u) error=0x%x alphaTestDisabled=%d\n",
+                    probeX,
+                    probeY,
+                    static_cast<unsigned int>(dstProbe[0]),
+                    static_cast<unsigned int>(dstProbe[1]),
+                    static_cast<unsigned int>(dstProbe[2]),
+                    static_cast<unsigned int>(dstProbe[3]),
+                    static_cast<unsigned int>(postDrawError),
+#ifdef GL_ALPHA_TEST
+                    IsLegacyAlphaTestAvailable() ? 1 : 0
+#else
+                    0
+#endif
+            );
+        }
+    }
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

@@ -79,9 +79,24 @@ typedef void (*PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
 #ifndef PFNGLACTIVETEXTUREPROC
 typedef void (*PFNGLACTIVETEXTUREPROC)(GLenum texture);
 #endif
+#ifndef PFNGLBINDSAMPLERPROC
+typedef void (*PFNGLBINDSAMPLERPROC)(GLuint unit, GLuint sampler);
+#endif
 // Blend
 #ifndef PFNGLBLENDFUNCSEPARATEPROC
 typedef void (*PFNGLBLENDFUNCSEPARATEPROC)(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
+#endif
+#ifndef PFNGLBLENDEQUATIONSEPARATEPROC
+typedef void (*PFNGLBLENDEQUATIONSEPARATEPROC)(GLenum modeRGB, GLenum modeAlpha);
+#endif
+#ifndef PFNGLSTENCILFUNCSEPARATEPROC
+typedef void (*PFNGLSTENCILFUNCSEPARATEPROC)(GLenum face, GLenum func, GLint ref, GLuint mask);
+#endif
+#ifndef PFNGLSTENCILOPSEPARATEPROC
+typedef void (*PFNGLSTENCILOPSEPARATEPROC)(GLenum face, GLenum sfail, GLenum dpfail, GLenum dppass);
+#endif
+#ifndef PFNGLSTENCILMASKSEPARATEPROC
+typedef void (*PFNGLSTENCILMASKSEPARATEPROC)(GLenum face, GLuint mask);
 #endif
 // Sync
 #ifndef PFNGLFENCESYNCPROC
@@ -140,6 +155,9 @@ typedef void (*PFNGLWAITSYNCPROC)(GLsync sync, GLbitfield flags, GLuint64 timeou
 namespace platform::x11 {
 
 namespace {
+
+bool IsOverscanActiveInternal();
+bool IsMacMirrorRedirectActiveInternal();
 
 static const char* kVertShader = R"(#version 330 core
 layout(location = 0) in vec2 aPos;
@@ -590,9 +608,14 @@ struct GlFunctions {
 
     // Texture
     PFNGLACTIVETEXTUREPROC activeTexture = nullptr;
+    PFNGLBINDSAMPLERPROC bindSampler = nullptr;
 
     // Blend
     PFNGLBLENDFUNCSEPARATEPROC blendFuncSeparate = nullptr;
+    PFNGLBLENDEQUATIONSEPARATEPROC blendEquationSeparate = nullptr;
+    PFNGLSTENCILFUNCSEPARATEPROC stencilFuncSeparate = nullptr;
+    PFNGLSTENCILOPSEPARATEPROC stencilOpSeparate = nullptr;
+    PFNGLSTENCILMASKSEPARATEPROC stencilMaskSeparate = nullptr;
 
     // Sync
     PFNGLFENCESYNCPROC fenceSync = nullptr;
@@ -750,8 +773,22 @@ int g_lastOverlayViewportHeight = 0;
 
 GLuint g_gameFrameTexture = 0;
 GLuint g_gameFrameFbo = 0;
+GLuint g_gameFrameCopyReadFbo = 0;
 int g_gameFrameW = 0;
 int g_gameFrameH = 0;
+std::atomic<GLuint> g_presentedGameTexture{0};
+std::atomic<int> g_presentedGameTextureWidth{0};
+std::atomic<int> g_presentedGameTextureHeight{0};
+std::atomic<GLuint> g_presentedGameFramebuffer{0};
+std::atomic<int> g_presentedGameFramebufferWidth{0};
+std::atomic<int> g_presentedGameFramebufferHeight{0};
+std::atomic<int> g_presentedGameFramebufferReadBuffer{GL_COLOR_ATTACHMENT0};
+std::mutex g_physicalModeResizeTargetMutex;
+std::string g_physicalModeResizeTargetMode;
+int g_physicalModeResizeTargetWidth = 0;
+int g_physicalModeResizeTargetHeight = 0;
+int g_physicalModeResizeBasisWidth = 0;
+int g_physicalModeResizeBasisHeight = 0;
 
 // Round-robin index for macOS inline path staggered mirror processing.
 // When multiple mirrors are active, only 1 is processed per frame to avoid
@@ -870,6 +907,7 @@ struct MirrorFrameSlot {
     int viewportHeight = 0;
     int textureOriginTopLeftX = 0;
     int textureOriginTopLeftY = 0;
+    bool gameCaptureFromPresentedTexture = false;
 
     bool overscanActive = false;
     int overscanWindowWidth = 0;
@@ -1084,6 +1122,131 @@ bool ResolveModeViewportRect(int containerWidth, int containerHeight, ModeViewpo
     return true;
 }
 
+void RecordPresentedGameTextureInternal(GLuint texture, int width, int height) {
+    if (texture == 0 || width <= 0 || height <= 0) {
+        g_presentedGameTexture.store(0, std::memory_order_release);
+        g_presentedGameTextureWidth.store(0, std::memory_order_release);
+        g_presentedGameTextureHeight.store(0, std::memory_order_release);
+        return;
+    }
+
+    g_presentedGameTextureWidth.store(width, std::memory_order_release);
+    g_presentedGameTextureHeight.store(height, std::memory_order_release);
+    g_presentedGameTexture.store(texture, std::memory_order_release);
+}
+
+bool GetPresentedGameTextureInternal(GLuint& texture, int& width, int& height) {
+    texture = g_presentedGameTexture.load(std::memory_order_acquire);
+    width = g_presentedGameTextureWidth.load(std::memory_order_acquire);
+    height = g_presentedGameTextureHeight.load(std::memory_order_acquire);
+    return texture != 0 && width > 0 && height > 0;
+}
+
+void RecordPresentedGameFramebufferInternal(GLuint framebuffer, int width, int height, GLenum readBuffer) {
+    if (framebuffer == 0 || width <= 0 || height <= 0) {
+        g_presentedGameFramebuffer.store(0, std::memory_order_release);
+        g_presentedGameFramebufferWidth.store(0, std::memory_order_release);
+        g_presentedGameFramebufferHeight.store(0, std::memory_order_release);
+        g_presentedGameFramebufferReadBuffer.store(GL_COLOR_ATTACHMENT0, std::memory_order_release);
+        return;
+    }
+
+    g_presentedGameFramebufferWidth.store(width, std::memory_order_release);
+    g_presentedGameFramebufferHeight.store(height, std::memory_order_release);
+    g_presentedGameFramebufferReadBuffer.store(static_cast<int>(readBuffer), std::memory_order_release);
+    g_presentedGameFramebuffer.store(framebuffer, std::memory_order_release);
+}
+
+bool GetPresentedGameFramebufferInternal(GLuint& framebuffer, int& width, int& height) {
+    framebuffer = g_presentedGameFramebuffer.load(std::memory_order_acquire);
+    width = g_presentedGameFramebufferWidth.load(std::memory_order_acquire);
+    height = g_presentedGameFramebufferHeight.load(std::memory_order_acquire);
+    return framebuffer != 0 && width > 0 && height > 0;
+}
+
+bool GetPresentedGameFramebufferInternal(GLuint& framebuffer, int& width, int& height, GLenum& readBuffer) {
+    framebuffer = g_presentedGameFramebuffer.load(std::memory_order_acquire);
+    width = g_presentedGameFramebufferWidth.load(std::memory_order_acquire);
+    height = g_presentedGameFramebufferHeight.load(std::memory_order_acquire);
+    readBuffer = static_cast<GLenum>(g_presentedGameFramebufferReadBuffer.load(std::memory_order_acquire));
+    return framebuffer != 0 && width > 0 && height > 0;
+}
+
+void RecordPhysicalModeResizeTargetInternal(int targetWidth, int targetHeight, int basisWidth, int basisHeight) {
+    std::lock_guard<std::mutex> lock(g_physicalModeResizeTargetMutex);
+    if (targetWidth <= 0 || targetHeight <= 0 || basisWidth <= 0 || basisHeight <= 0) {
+        g_physicalModeResizeTargetMode.clear();
+        g_physicalModeResizeTargetWidth = 0;
+        g_physicalModeResizeTargetHeight = 0;
+        g_physicalModeResizeBasisWidth = 0;
+        g_physicalModeResizeBasisHeight = 0;
+        return;
+    }
+
+    g_physicalModeResizeTargetMode = GetMirrorModeState().GetActiveModeName();
+    g_physicalModeResizeTargetWidth = targetWidth;
+    g_physicalModeResizeTargetHeight = targetHeight;
+    g_physicalModeResizeBasisWidth = basisWidth;
+    g_physicalModeResizeBasisHeight = basisHeight;
+}
+
+bool GetRecordedPhysicalModeResizeBasis(int containerWidth,
+                                        int containerHeight,
+                                        int& outBasisWidth,
+                                        int& outBasisHeight) {
+    outBasisWidth = 0;
+    outBasisHeight = 0;
+    if (containerWidth <= 0 || containerHeight <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(g_physicalModeResizeTargetMutex);
+    if (g_physicalModeResizeTargetMode.empty() ||
+        g_physicalModeResizeTargetMode != GetMirrorModeState().GetActiveModeName() ||
+        g_physicalModeResizeTargetWidth != containerWidth ||
+        g_physicalModeResizeTargetHeight != containerHeight ||
+        g_physicalModeResizeBasisWidth <= 0 ||
+        g_physicalModeResizeBasisHeight <= 0) {
+        return false;
+    }
+
+    outBasisWidth = g_physicalModeResizeBasisWidth;
+    outBasisHeight = g_physicalModeResizeBasisHeight;
+    return true;
+}
+
+bool GetPhysicalModeResizeBasisForCurrentContainer(int containerWidth,
+                                                   int containerHeight,
+                                                   int& outBasisWidth,
+                                                   int& outBasisHeight) {
+    outBasisWidth = 0;
+    outBasisHeight = 0;
+    if (IsOverscanActiveInternal() || IsMacMirrorRedirectActiveInternal()) {
+        return false;
+    }
+
+    return GetRecordedPhysicalModeResizeBasis(containerWidth, containerHeight, outBasisWidth, outBasisHeight);
+}
+
+bool IsLiveViewportPhysicalModeResizeTarget(int containerWidth,
+                                            int containerHeight,
+                                            int viewportTopLeftX,
+                                            int viewportTopLeftY,
+                                            int viewportWidth,
+                                            int viewportHeight) {
+    int basisWidth = 0;
+    int basisHeight = 0;
+    if (!GetPhysicalModeResizeBasisForCurrentContainer(containerWidth, containerHeight, basisWidth, basisHeight)) {
+        return false;
+    }
+
+    constexpr int kViewportTolerancePx = 1;
+    return std::abs(viewportTopLeftX) <= kViewportTolerancePx &&
+           std::abs(viewportTopLeftY) <= kViewportTolerancePx &&
+           std::abs(viewportWidth - containerWidth) <= kViewportTolerancePx &&
+           std::abs(viewportHeight - containerHeight) <= kViewportTolerancePx;
+}
+
 void ResolveMirrorConfigContainerSize(int fallbackWidth,
                                       int fallbackHeight,
                                       int& outWidth,
@@ -1160,6 +1323,17 @@ void ApplyModeSwitchWithResolvedContainer(const std::string& modeName,
     int resolvedWidth = fallbackWidth;
     int resolvedHeight = fallbackHeight;
     ResolveMirrorConfigContainerSize(fallbackWidth, fallbackHeight, resolvedWidth, resolvedHeight);
+
+    int resizeBasisWidth = 0;
+    int resizeBasisHeight = 0;
+    if (GetRecordedPhysicalModeResizeBasis(resolvedWidth,
+                                           resolvedHeight,
+                                           resizeBasisWidth,
+                                           resizeBasisHeight)) {
+        resolvedWidth = resizeBasisWidth;
+        resolvedHeight = resizeBasisHeight;
+    }
+
     GetMirrorModeState().ApplyModeSwitch(modeName, config, resolvedWidth, resolvedHeight);
 }
 
@@ -1418,9 +1592,14 @@ bool EnsureGlFunctions() {
 
     // Texture
     g_gl.activeTexture = reinterpret_cast<PFNGLACTIVETEXTUREPROC>(ResolveGlProc("glActiveTexture"));
+    g_gl.bindSampler = reinterpret_cast<PFNGLBINDSAMPLERPROC>(ResolveGlProc("glBindSampler"));
 
     // Blend
     g_gl.blendFuncSeparate = reinterpret_cast<PFNGLBLENDFUNCSEPARATEPROC>(ResolveGlProc("glBlendFuncSeparate"));
+    g_gl.blendEquationSeparate = reinterpret_cast<PFNGLBLENDEQUATIONSEPARATEPROC>(ResolveGlProc("glBlendEquationSeparate"));
+    g_gl.stencilFuncSeparate = reinterpret_cast<PFNGLSTENCILFUNCSEPARATEPROC>(ResolveGlProc("glStencilFuncSeparate"));
+    g_gl.stencilOpSeparate = reinterpret_cast<PFNGLSTENCILOPSEPARATEPROC>(ResolveGlProc("glStencilOpSeparate"));
+    g_gl.stencilMaskSeparate = reinterpret_cast<PFNGLSTENCILMASKSEPARATEPROC>(ResolveGlProc("glStencilMaskSeparate"));
 
     // Sync
     g_gl.fenceSync = reinterpret_cast<PFNGLFENCESYNCPROC>(ResolveGlProc("glFenceSync"));
