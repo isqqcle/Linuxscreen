@@ -33,7 +33,13 @@ void SaveThreadMain() {
         
         if (g_savePending) {
             auto configToSave = std::move(g_pendingConfig);
+            std::string pathToSave = g_pendingConfigPath;
+            if (pathToSave.empty()) {
+                pathToSave = GetConfigPathInternal();
+            }
             g_savePending = false;
+            g_pendingConfigPath.clear();
+            g_saveInProgress.store(true, std::memory_order_release);
             
             auto now = std::chrono::steady_clock::now();
             auto nextAllowedSave = g_lastSaveTime + kSaveThrottleMs;
@@ -46,18 +52,22 @@ void SaveThreadMain() {
                 });
                 
                 if (!g_saveThreadRunning.load(std::memory_order_acquire) && !g_savePending) {
+                    g_saveInProgress.store(false, std::memory_order_release);
                     break;
                 }
-                
+
                 if (interrupted && g_savePending) {
                     // We received a newer config snapshot while waiting! Discard the current one and loop
+                    g_saveInProgress.store(false, std::memory_order_release);
                     continue;
                 }
             }
 
             lock.unlock();
-            
-            DoSaveConfig(configToSave, GetConfigPathInternal());
+
+            DoSaveConfig(configToSave, pathToSave);
+
+            g_saveInProgress.store(false, std::memory_order_release);
             
             lock.lock();
             g_lastSaveTime = std::chrono::steady_clock::now();
@@ -66,8 +76,15 @@ void SaveThreadMain() {
     
     std::lock_guard<std::mutex> lock(g_saveMutex);
     if (g_savePending) {
-        DoSaveConfig(g_pendingConfig, GetConfigPathInternal());
+        std::string pathToSave = g_pendingConfigPath;
+        if (pathToSave.empty()) {
+            pathToSave = GetConfigPathInternal();
+        }
+        g_saveInProgress.store(true, std::memory_order_release);
+        DoSaveConfig(g_pendingConfig, pathToSave);
+        g_saveInProgress.store(false, std::memory_order_release);
         g_savePending = false;
+        g_pendingConfigPath.clear();
     }
 }
 

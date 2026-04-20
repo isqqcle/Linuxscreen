@@ -37,6 +37,8 @@ void TriggerImmediateModeResizeEnforcement();
 void ClearTempSensitivityOverride();
 bool ReleaseHeldSensitivityOverrideForInputReset();
 void UpdateSensitivityStateForModeSwitch(const std::string& targetMode, const config::LinuxscreenConfig& config);
+void ApplyRuntimeConfigAfterSnapshotPublish(const config::LinuxscreenConfig& config,
+                                            const std::string& preferredMode);
 
 void SetGuiHotkey(const std::vector<input::BindingKey>& keys);
 std::vector<input::BindingKey> GetGuiHotkey();

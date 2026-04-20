@@ -1,9 +1,12 @@
 #include "config_io.h"
 
 #include "config_toml.h"
+#include "toml_detail.h"
 #include "../font_scanner.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
@@ -12,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include <toml.hpp>
@@ -42,11 +46,16 @@ static std::mutex g_saveMutex;
 static std::condition_variable g_saveCV;
 static bool g_savePending = false;
 static LinuxscreenConfig g_pendingConfig;
+static std::string g_pendingConfigPath;
 static std::chrono::steady_clock::time_point g_lastSaveTime;
 static constexpr auto kSaveThrottleMs = std::chrono::milliseconds(1000);
 static std::thread g_saveThread;
 static std::atomic<bool> g_saveThreadRunning{false};
+static std::atomic<bool> g_saveInProgress{false};
 static std::once_flag g_saveThreadOnce;
+
+static std::mutex g_configPathOverrideMutex;
+static std::string g_configPathOverride;
 
 bool IsDebugEnabled() {
     static bool checked = false;

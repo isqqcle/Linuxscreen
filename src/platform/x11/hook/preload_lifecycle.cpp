@@ -30,14 +30,23 @@ __attribute__((constructor)) static void LinuxscreenX11PreloadInit() {
     }
 
     {
+        std::string profileInitError;
+        if (!platform::config::InitializeActiveConfigProfile(profileInitError)) {
+            LogAlways("WARNING: profile initialization failed: %s",
+                      profileInitError.empty() ? "unknown" : profileInitError.c_str());
+        }
+
         auto config = platform::config::LoadLinuxscreenConfig();
         platform::config::PublishConfigSnapshot(config);
         g_lastObservedRebindsEnabledState.store(config.keyRebinds.enabled ? 1 : 0, std::memory_order_release);
         ApplyGuiHotkeyFromConfig(config);
         ApplyRebindToggleHotkeyFromConfig(config);
-        LogAlways("config loaded: %zu mirrors, %zu modes, %zu hotkeys from %s",
+        LogAlways("config loaded: %zu mirrors, %zu modes, %zu hotkeys from %s (profile=%s)",
                   config.mirrors.size(), config.modes.size(), config.hotkeys.size(),
-                  platform::config::GetConfigPath().c_str());
+                  platform::config::GetConfigPath().c_str(),
+                  platform::config::GetActiveConfigProfileId().empty()
+                      ? "unknown"
+                      : platform::config::GetActiveConfigProfileId().c_str());
 
         std::string modeToActivate;
 

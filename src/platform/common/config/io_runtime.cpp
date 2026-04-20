@@ -45,28 +45,38 @@ LinuxscreenConfig LoadLinuxscreenConfig() {
 
 void SaveLinuxscreenConfig(const LinuxscreenConfig& cfg) {
     EnsureSaveThreadStarted();
-    
+
+    const std::string targetPath = GetConfigPath();
     std::lock_guard<std::mutex> lock(g_saveMutex);
     g_pendingConfig = cfg;
+    g_pendingConfigPath = targetPath;
     g_savePending = true;
     g_saveCV.notify_one();
 }
 
 void SaveLinuxscreenConfigImmediate(const LinuxscreenConfig& cfg) {
-    g_saveThreadRunning.store(false, std::memory_order_release);
-    g_saveCV.notify_all();
-    
-    {
-        std::unique_lock<std::mutex> lock(g_saveMutex);
-        auto timeout = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        while (g_savePending && std::chrono::steady_clock::now() < timeout) {
-            lock.unlock();
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            lock.lock();
+    SaveLinuxscreenConfigAtPathImmediate(cfg, GetConfigPath());
+}
+
+void SaveLinuxscreenConfigAtPathImmediate(const LinuxscreenConfig& cfg, const std::string& path) {
+    WaitForConfigSaveQueueIdle(3000);
+    DoSaveConfig(cfg, path);
+}
+
+void WaitForConfigSaveQueueIdle(std::uint64_t timeoutMs) {
+    const auto timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < timeout) {
+        bool pending = false;
+        {
+            std::lock_guard<std::mutex> lock(g_saveMutex);
+            pending = g_savePending;
         }
+        if (!pending && !g_saveInProgress.load(std::memory_order_acquire)) {
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    
-    DoSaveConfig(cfg, GetConfigPath());
 }
 
 void ShutdownConfigSaveThread() {

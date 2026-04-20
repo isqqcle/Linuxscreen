@@ -430,7 +430,76 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
             platform::x11::SetGuiVisible(false);
         }
 
+        static char s_newProfileName[128] = "Profile";
+        static bool s_duplicateCurrentProfile = true;
+        static bool s_focusNewProfileNameInput = false;
+        static std::string s_profileUiMessage;
+
+        auto profileRegistry = platform::config::GetConfigProfileRegistry();
+        const std::string activeProfileId = platform::config::GetActiveConfigProfileId();
+        const platform::config::ConfigProfile* activeProfile = nullptr;
+        for (const auto& profile : profileRegistry.profiles) {
+            if (profile.id == activeProfileId) {
+                activeProfile = &profile;
+                break;
+            }
+        }
+        if (!activeProfile && !profileRegistry.profiles.empty()) {
+            activeProfile = &profileRegistry.profiles.front();
+        }
+
+        if (ImGui::BeginPopupModal("Create Profile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Create a new config profile");
+            if (s_focusNewProfileNameInput) {
+                ImGui::SetKeyboardFocusHere();
+                s_focusNewProfileNameInput = false;
+            }
+            ImGui::InputText("Name", s_newProfileName, sizeof(s_newProfileName));
+            ImGui::Checkbox("Duplicate current profile", &s_duplicateCurrentProfile);
+
+            if (AnimatedButton("Create")) {
+                platform::config::ConfigProfile createdProfile;
+                std::string createError;
+                if (platform::config::CreateConfigProfile(s_newProfileName,
+                                                          s_duplicateCurrentProfile,
+                                                          createdProfile,
+                                                          createError)) {
+                    FlushPendingConfigSave(true);
+                    platform::config::LinuxscreenConfig switchedConfig;
+                    std::string switchError;
+                    if (platform::config::SwitchActiveConfigProfile(createdProfile.id, switchedConfig, switchError)) {
+                        platform::x11::ApplyRuntimeConfigAfterSnapshotPublish(switchedConfig, activeMode);
+                        activeMode = modeState.GetActiveModeName();
+                        config = platform::config::GetConfigSnapshot();
+                        s_profileUiMessage = switchError;
+                        ImGui::CloseCurrentPopup();
+                    } else {
+                        s_profileUiMessage = switchError.empty() ? "Profile created, but switch failed." : switchError;
+                    }
+                } else {
+                    s_profileUiMessage = createError.empty() ? "Failed to create profile." : createError;
+                }
+            }
+            ImGui::SameLine();
+            if (AnimatedButton("Cancel")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (!s_profileUiMessage.empty()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", s_profileUiMessage.c_str());
+        }
+
+        const ImVec2 tabsRowScreenPos = ImGui::GetCursorScreenPos();
+        const float tabsRowWidth = ImGui::GetContentRegionAvail().x;
+        const float createButtonWidth = 120.0f;
+        const float profileComboWidth = 240.0f;
+        const float profileRowWidth = createButtonWidth + ImGui::GetStyle().ItemSpacing.x + profileComboWidth;
+        const bool renderProfileInline = tabsRowWidth >= 760.0f;
+
         if (ImGui::BeginTabBar("LinuxscreenTabs")) {
+
             if (ImGui::BeginTabItem("Modes")) {
                 NotifyMainTabSelected(MainSettingsTab::Modes);
                 PushMainTabContentAnimationStyle();
@@ -496,8 +565,67 @@ ImGuiOverlayRenderResult RenderImGuiOverlayFrame(GLFWwindow* preferredWindow, co
                 ImGui::PopStyleVar();
                 ImGui::EndTabItem();
             }
-
             ImGui::EndTabBar();
+        }
+
+        if (renderProfileInline) {
+            const float clearStartX = tabsRowScreenPos.x + std::max(0.0f, tabsRowWidth - profileRowWidth - ImGui::GetStyle().ItemSpacing.x);
+            const float clearEndX = tabsRowScreenPos.x + tabsRowWidth;
+            const float clearEndY = tabsRowScreenPos.y + ImGui::GetFrameHeightWithSpacing();
+            if (clearEndX > clearStartX) {
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const ImU32 bgColor = ImGui::GetColorU32(ImGuiCol_WindowBg);
+                drawList->AddRectFilled(ImVec2(clearStartX, tabsRowScreenPos.y),
+                                        ImVec2(clearEndX, clearEndY),
+                                        bgColor);
+            }
+        }
+
+        if (renderProfileInline) {
+            ImGui::SetCursorScreenPos(ImVec2(tabsRowScreenPos.x + std::max(0.0f, tabsRowWidth - profileRowWidth),
+                                             tabsRowScreenPos.y + 1.0f));
+        } else {
+            const float rowOffset = ImGui::GetContentRegionAvail().x - profileRowWidth;
+            if (rowOffset > 0.0f) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + rowOffset);
+            }
+        }
+
+        if (AnimatedButton("New Profile", ImVec2(createButtonWidth, 0.0f))) {
+            std::snprintf(s_newProfileName, sizeof(s_newProfileName), "%s", "Profile");
+            s_duplicateCurrentProfile = true;
+            s_focusNewProfileNameInput = true;
+            ImGui::OpenPopup("Create Profile");
+        }
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(profileComboWidth);
+        const char* previewLabel = activeProfile ? activeProfile->name.c_str() : "[No profile]";
+        if (ImGui::BeginCombo("##active_profile", previewLabel)) {
+            for (const auto& profile : profileRegistry.profiles) {
+                const bool selected = activeProfile && profile.id == activeProfile->id;
+                if (ImGui::Selectable(profile.name.c_str(), selected)) {
+                    FlushPendingConfigSave(true);
+                    platform::config::LinuxscreenConfig switchedConfig;
+                    std::string switchError;
+                    if (platform::config::SwitchActiveConfigProfile(profile.id, switchedConfig, switchError)) {
+                        platform::x11::ApplyRuntimeConfigAfterSnapshotPublish(switchedConfig, activeMode);
+                        activeMode = modeState.GetActiveModeName();
+                        config = platform::config::GetConfigSnapshot();
+                        s_profileUiMessage = switchError;
+                    } else {
+                        s_profileUiMessage = switchError.empty() ? "Failed to switch profile." : switchError;
+                    }
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+                if (ImGui::IsItemHovered()) {
+                    const std::string resolvedPath = platform::config::ResolvePathFromConfigRootDir(profile.path);
+                    ImGui::SetTooltip("%s", resolvedPath.c_str());
+                }
+            }
+            ImGui::EndCombo();
         }
     }
     

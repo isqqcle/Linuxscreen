@@ -476,6 +476,8 @@ std::atomic<int64_t> g_lastRebindToggleTimeMs{ 0 };
 std::atomic<int> g_lastObservedRebindsEnabledState{ -1 };
 std::atomic<int> g_lastResizeRequestWidth{ 0 };
 std::atomic<int> g_lastResizeRequestHeight{ 0 };
+std::atomic<int> g_lastResizeBasisWidth{ 0 };
+std::atomic<int> g_lastResizeBasisHeight{ 0 };
 std::atomic<int> g_lastSwapViewportWidth{ 0 };
 std::atomic<int> g_lastSwapViewportHeight{ 0 };
 std::atomic<int> g_lastSwapViewportX{ 0 };
@@ -568,6 +570,8 @@ void ClearTempSensitivityOverrideInternal();
 void UpdateSensitivityStateForModeSwitchInternal(const std::string& targetMode,
                                                  const platform::config::LinuxscreenConfig& config);
 GlfwGetCursorPosProc GetRealGlfwGetCursorPos();
+void ApplyGuiHotkeyFromConfig(const platform::config::LinuxscreenConfig& config);
+void ApplyRebindToggleHotkeyFromConfig(const platform::config::LinuxscreenConfig& config);
 void StoreTrackedRawCursorPosition(double rawX, double rawY);
 bool IsCursorDisabledForGameInput();
 void ResetCursorSensitivityState();
@@ -614,6 +618,61 @@ bool ReleaseHeldSensitivityOverrideForInputReset() {
 
 void UpdateSensitivityStateForModeSwitch(const std::string& targetMode, const config::LinuxscreenConfig& config) {
     UpdateSensitivityStateForModeSwitchInternal(targetMode, config);
+}
+
+void ApplyRuntimeConfigAfterSnapshotPublish(const config::LinuxscreenConfig& config,
+                                            const std::string& preferredMode) {
+    std::vector<platform::config::HotkeyConfig> hotkeys;
+    hotkeys.reserve(config.hotkeys.size());
+    for (const auto& hk : config.hotkeys) {
+        hotkeys.push_back(hk);
+    }
+    g_hotkeyDispatcher().SetHotkeys(std::move(hotkeys));
+    g_hotkeyDispatcher().ResetSecondaryModes();
+    g_hotkeyDispatcherInitialized.store(true, std::memory_order_release);
+    g_lastHotkeyConfigVersion.store(platform::config::GetConfigSnapshotVersion(), std::memory_order_relaxed);
+
+    ApplyGuiHotkeyFromConfig(config);
+    ApplyRebindToggleHotkeyFromConfig(config);
+    MaybeClearPendingCharRemapsForRebindDisable(config);
+
+    std::string modeToActivate;
+    if (!preferredMode.empty()) {
+        for (const auto& mode : config.modes) {
+            if (mode.name == preferredMode) {
+                modeToActivate = preferredMode;
+                break;
+            }
+        }
+    }
+
+    if (modeToActivate.empty() && !config.defaultMode.empty()) {
+        for (const auto& mode : config.modes) {
+            if (mode.name == config.defaultMode) {
+                modeToActivate = config.defaultMode;
+                break;
+            }
+        }
+    }
+
+    if (modeToActivate.empty()) {
+        for (const auto& mode : config.modes) {
+            if (!mode.name.empty()) {
+                modeToActivate = mode.name;
+                break;
+            }
+        }
+    }
+
+    if (!modeToActivate.empty()) {
+        if (GetMirrorModeState().GetActiveModeName() != modeToActivate) {
+            UpdateSensitivityStateForModeSwitch(modeToActivate, config);
+        }
+        GetMirrorModeState().ApplyModeSwitch(modeToActivate, config);
+        TriggerImmediateModeResizeEnforcement();
+    } else {
+        GetMirrorModeState().Reset();
+    }
 }
 
 bool PollGuiWindowCursorPosition(GLFWwindow* preferredWindow, double& outX, double& outY) {
@@ -1000,6 +1059,21 @@ bool ResolveResizeDispatchDimensionsForActiveMode(int incomingWidth,
     int framebufferHeight = 0;
     if (!GetCurrentPlacementContainerMetrics(windowWidth, windowHeight, framebufferWidth, framebufferHeight)) {
         return false;
+    }
+
+    const int lastResizeRequestWidth = g_lastResizeRequestWidth.load(std::memory_order_relaxed);
+    const int lastResizeRequestHeight = g_lastResizeRequestHeight.load(std::memory_order_relaxed);
+    if (lastResizeRequestWidth > 0 && lastResizeRequestHeight > 0) {
+        const bool incomingMatchesRequest =
+            space == ManagedDimensionSpace::FramebufferPhysical &&
+            incomingWidth == lastResizeRequestWidth &&
+            incomingHeight == lastResizeRequestHeight;
+        const bool framebufferMatchesRequest =
+            framebufferWidth == lastResizeRequestWidth &&
+            framebufferHeight == lastResizeRequestHeight;
+        if (incomingMatchesRequest || framebufferMatchesRequest) {
+            return false;
+        }
     }
 
     int targetWidth = 0;

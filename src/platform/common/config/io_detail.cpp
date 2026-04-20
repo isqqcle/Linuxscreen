@@ -14,10 +14,15 @@ std::mutex g_saveMutex;
 std::condition_variable g_saveCV;
 bool g_savePending = false;
 LinuxscreenConfig g_pendingConfig;
+std::string g_pendingConfigPath;
 std::chrono::steady_clock::time_point g_lastSaveTime;
 std::thread g_saveThread;
 std::atomic<bool> g_saveThreadRunning{false};
+std::atomic<bool> g_saveInProgress{false};
 std::once_flag g_saveThreadOnce;
+
+std::mutex g_configPathOverrideMutex;
+std::string g_configPathOverride;
 
 bool IsDebugEnabled() {
     static bool checked = false;

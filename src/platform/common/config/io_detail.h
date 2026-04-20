@@ -20,11 +20,16 @@ extern std::mutex g_saveMutex;
 extern std::condition_variable g_saveCV;
 extern bool g_savePending;
 extern LinuxscreenConfig g_pendingConfig;
+extern std::string g_pendingConfigPath;
 extern std::chrono::steady_clock::time_point g_lastSaveTime;
 inline constexpr auto kSaveThrottleMs = std::chrono::milliseconds(1000);
 extern std::thread g_saveThread;
 extern std::atomic<bool> g_saveThreadRunning;
+extern std::atomic<bool> g_saveInProgress;
 extern std::once_flag g_saveThreadOnce;
+
+extern std::mutex g_configPathOverrideMutex;
+extern std::string g_configPathOverride;
 
 bool IsDebugEnabled();
 void LogDebug(const char* format, ...);

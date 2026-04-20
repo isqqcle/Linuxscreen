@@ -1,3 +1,4 @@
+#include "config/toml_detail.cpp"
 #include "config/toml_helpers.cpp"
 #include "config/toml_color.cpp"
 #include "config/toml_mirror.cpp"
